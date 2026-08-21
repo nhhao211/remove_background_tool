@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import archiver from 'archiver';
+import { EditorUtils } from './public/js/editor-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +40,54 @@ const upload = multer({
   storage,
   limits: { fileSize: 500 * 1024 * 1024 } // 500MB
 });
+
+function parsePlaybackSpeed(value) {
+  if (value === undefined || value === null || value === '') return 1;
+  const speed = Number(value);
+  if (!Number.isFinite(speed) || speed < EditorUtils.MIN_SPEED || speed > EditorUtils.MAX_SPEED) {
+    const error = new Error(`playbackSpeed must be between ${EditorUtils.MIN_SPEED} and ${EditorUtils.MAX_SPEED}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return speed;
+}
+
+function removeFileIfExists(filePath) {
+  if (!filePath) return;
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (_) {
+    // Periodic cleanup remains as a fallback for locked files.
+  }
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const process = spawn('ffmpeg', args);
+    let stderr = '';
+    let settled = false;
+
+    process.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+    process.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      error.stderr = stderr;
+      reject(error);
+    });
+    process.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      if (code === 0) resolve({ stderr });
+      else {
+        const error = new Error(`FFmpeg exited with code ${code}`);
+        error.stderr = stderr;
+        reject(error);
+      }
+    });
+  });
+}
 
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
@@ -92,26 +141,30 @@ app.post('/api/upload-video', upload.single('video'), (req, res) => {
 app.post('/api/extract-audio', upload.single('video'), async (req, res) => {
   let inputPath = null;
   let shouldDeleteInput = false;
+  let outputPath = null;
 
   try {
-    const startTime = parseFloat(req.body.startTime) || 0;
-    const endTime = parseFloat(req.body.endTime) || 0;
-    const downloadName = (req.body.downloadName || 'audio').replace(/[^a-zA-Z0-9_-]/g, '_');
-
     if (req.file) {
       inputPath = req.file.path;
       shouldDeleteInput = true;
-    } else if (req.body.videoFilename) {
+    }
+
+    const startTime = parseFloat(req.body.startTime) || 0;
+    const endTime = parseFloat(req.body.endTime) || 0;
+    const playbackSpeed = parsePlaybackSpeed(req.body.playbackSpeed);
+    const downloadName = (req.body.downloadName || 'audio').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    if (!inputPath && req.body.videoFilename) {
       inputPath = path.join(uploadsDir, path.basename(req.body.videoFilename));
       if (!fs.existsSync(inputPath)) {
         return res.status(404).json({ error: 'Referenced video file not found on server' });
       }
-    } else {
+    } else if (!inputPath) {
       return res.status(400).json({ error: 'No video provided for audio extraction' });
     }
 
     const outputFilename = `audio-${Date.now()}-${Math.round(Math.random() * 1e6)}.mp3`;
-    const outputPath = path.join(tempDir, outputFilename);
+    outputPath = path.join(tempDir, outputFilename);
 
     // Build FFmpeg command
     const ffmpegArgs = [];
@@ -134,49 +187,39 @@ app.post('/api/extract-audio', upload.single('video'), async (req, res) => {
       '-y',
       outputPath
     );
+    const tempo = EditorUtils.atempoFilter(playbackSpeed);
+    if (tempo) ffmpegArgs.splice(ffmpegArgs.indexOf('-vn'), 0, '-filter:a', tempo);
 
-    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+    try {
+      await runFfmpeg(ffmpegArgs);
+    } catch (error) {
+      console.error('FFmpeg audio extraction error:', error.stderr || error.message);
+      const ffmpegError = new Error('Failed to extract audio with FFmpeg');
+      ffmpegError.cause = error;
+      throw ffmpegError;
+    }
 
-    let stderrData = '';
-    ffmpegProcess.stderr.on('data', (data) => {
-      stderrData += data.toString();
-    });
+    const stat = fs.statSync(outputPath);
+    if (stat.size === 0) {
+      const error = new Error('No audio stream detected in video');
+      error.statusCode = 400;
+      throw error;
+    }
 
-    ffmpegProcess.on('close', (code) => {
-      if (code !== 0) {
-        console.error('FFmpeg audio extraction error:', stderrData);
-        if (shouldDeleteInput && inputPath && fs.existsSync(inputPath)) {
-          fs.unlinkSync(inputPath);
-        }
-        return res.status(500).json({ error: 'Failed to extract audio with FFmpeg', details: stderrData });
-      }
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}.mp3"`);
 
-      // Check if output file has size > 0
-      const stat = fs.statSync(outputPath);
-      if (stat.size === 0) {
-        if (shouldDeleteInput && inputPath && fs.existsSync(inputPath)) {
-          fs.unlinkSync(inputPath);
-        }
-        return res.status(400).json({ error: 'No audio stream detected in video' });
-      }
-
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Content-Disposition', `attachment; filename="${downloadName}.mp3"`);
-
-      const readStream = fs.createReadStream(outputPath);
-      readStream.pipe(res);
-
-      readStream.on('close', () => {
-        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-        if (shouldDeleteInput && inputPath && fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      });
+    const readStream = fs.createReadStream(outputPath);
+    readStream.pipe(res);
+    readStream.on('close', () => {
+      removeFileIfExists(outputPath);
+      if (shouldDeleteInput) removeFileIfExists(inputPath);
     });
   } catch (err) {
     console.error('Audio extraction exception:', err);
-    if (shouldDeleteInput && inputPath && fs.existsSync(inputPath)) {
-      try { fs.unlinkSync(inputPath); } catch (_) {}
-    }
-    res.status(500).json({ error: err.message });
+    removeFileIfExists(outputPath);
+    if (shouldDeleteInput) removeFileIfExists(inputPath);
+    if (!res.headersSent) res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
@@ -184,6 +227,17 @@ app.post('/api/extract-audio', upload.single('video'), async (req, res) => {
 app.post('/api/export-bundle', upload.single('video'), async (req, res) => {
   let videoPath = null;
   let shouldDeleteVideo = false;
+  let tempAudioFile = null;
+
+  if (req.file) {
+    videoPath = req.file.path;
+    shouldDeleteVideo = true;
+  }
+
+  const cleanupBundleFiles = () => {
+    removeFileIfExists(tempAudioFile);
+    if (shouldDeleteVideo) removeFileIfExists(videoPath);
+  };
 
   try {
     const {
@@ -192,40 +246,27 @@ app.post('/api/export-bundle', upload.single('video'), async (req, res) => {
       downloadName = 'spritesheet',
       startTime = '0',
       endTime = '0',
+      playbackSpeed = '1',
       videoFilename
     } = req.body;
 
     const baseName = (downloadName || 'spritesheet').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const validatedPlaybackSpeed = parsePlaybackSpeed(playbackSpeed);
     const ext = spriteFormat.toLowerCase() === 'webp' ? 'webp' : 'png';
     const spriteFilename = `${baseName}.${ext}`;
     const audioFilename = `${baseName}.mp3`;
 
-    if (req.file) {
-      videoPath = req.file.path;
-      shouldDeleteVideo = true;
-    } else if (videoFilename) {
+    if (!videoPath && videoFilename) {
       videoPath = path.join(uploadsDir, path.basename(videoFilename));
     }
 
-    // Prepare archive
-    const archive = archiver('zip', { zlib: { level: 6 } });
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${baseName}_bundle.zip"`);
-
-    archive.pipe(res);
-
-    // 1. Add Sprite Sheet image to zip
-    if (spriteDataUrl) {
-      const base64Data = spriteDataUrl.replace(/^data:image\/\w+;base64,/, '');
-      const imageBuffer = Buffer.from(base64Data, 'base64');
-      archive.append(imageBuffer, { name: spriteFilename });
-    }
-
-    // 2. Extract and add MP3 if video is available
+    // Extract audio before starting the HTTP response. If this fails, the client
+    // receives a normal error and can use its separate-download fallback.
     if (videoPath && fs.existsSync(videoPath)) {
-      const tempAudioFile = path.join(tempDir, `bundle-audio-${Date.now()}.mp3`);
+      tempAudioFile = path.join(tempDir, `bundle-audio-${Date.now()}.mp3`);
       const sTime = parseFloat(startTime) || 0;
       const eTime = parseFloat(endTime) || 0;
+      const speed = validatedPlaybackSpeed;
 
       const ffmpegArgs = [];
       if (sTime > 0) ffmpegArgs.push('-ss', sTime.toString());
@@ -234,37 +275,42 @@ app.post('/api/export-bundle', upload.single('video'), async (req, res) => {
         ffmpegArgs.push('-t', (eTime - sTime).toString());
       }
       ffmpegArgs.push('-vn', '-acodec', 'libmp3lame', '-q:a', '2', '-y', tempAudioFile);
+      const tempo = EditorUtils.atempoFilter(speed);
+      if (tempo) ffmpegArgs.splice(ffmpegArgs.indexOf('-vn'), 0, '-filter:a', tempo);
 
-      await new Promise((resolve) => {
-        const proc = spawn('ffmpeg', ffmpegArgs);
-        proc.on('close', (code) => {
-          if (code === 0 && fs.existsSync(tempAudioFile)) {
-            const stat = fs.statSync(tempAudioFile);
-            if (stat.size > 0) {
-              archive.file(tempAudioFile, { name: audioFilename });
-            }
-          }
-          resolve();
-        });
-        proc.on('error', () => resolve());
-      });
-
-      // Cleanup temp audio file after archive finishes
-      archive.on('end', () => {
-        if (fs.existsSync(tempAudioFile)) {
-          try { fs.unlinkSync(tempAudioFile); } catch (_) {}
-        }
-        if (shouldDeleteVideo && videoPath && fs.existsSync(videoPath)) {
-          try { fs.unlinkSync(videoPath); } catch (_) {}
-        }
-      });
+      try {
+        await runFfmpeg(ffmpegArgs);
+        const stat = fs.statSync(tempAudioFile);
+        if (stat.size === 0) throw new Error('FFmpeg produced an empty audio file');
+      } catch (error) {
+        console.error('FFmpeg bundle audio error:', error.stderr || error.message);
+        throw new Error('Failed to extract audio for bundle', { cause: error });
+      }
     }
+
+    // Prepare archive only after all fallible media processing has completed.
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.on('error', (error) => {
+      if (res.headersSent) res.destroy(error);
+    });
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}_bundle.zip"`);
+    res.once('close', cleanupBundleFiles);
+    archive.pipe(res);
+
+    if (spriteDataUrl) {
+      const base64Data = spriteDataUrl.replace(/^data:image\/\w+;base64,/, '');
+      const imageBuffer = Buffer.from(base64Data, 'base64');
+      archive.append(imageBuffer, { name: spriteFilename });
+    }
+    if (tempAudioFile) archive.file(tempAudioFile, { name: audioFilename });
 
     await archive.finalize();
   } catch (err) {
     console.error('Export bundle error:', err);
+    cleanupBundleFiles();
     if (!res.headersSent) {
-      res.status(500).json({ error: err.message });
+      res.status(err.statusCode || 500).json({ error: err.message });
     }
   }
 });

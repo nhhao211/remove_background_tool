@@ -135,13 +135,13 @@
                 <i data-lucide="gauge" style="width: 14px; height: 14px; color: #a3a3a3;"></i>
                 <span class="speed-label">Speed</span>
                 <div class="speed-presets" id="speedPresets">
-                  <button type="button" class="speed-preset-btn" data-speed="0.5">0.5x</button>
-                  <button type="button" class="speed-preset-btn" data-speed="0.75">0.75x</button>
-                  <button type="button" class="speed-preset-btn active" data-speed="1">1x</button>
-                  <button type="button" class="speed-preset-btn" data-speed="1.5">1.5x</button>
-                  <button type="button" class="speed-preset-btn" data-speed="2">2x</button>
-                  <button type="button" class="speed-preset-btn" data-speed="3">3x</button>
-                  <button type="button" class="speed-preset-btn" data-speed="4">4x</button>
+                  <button type="button" id="speedPreset05" class="speed-preset-btn" data-speed="0.5">0.5x</button>
+                  <button type="button" id="speedPreset075" class="speed-preset-btn" data-speed="0.75">0.75x</button>
+                  <button type="button" id="speedPreset1" class="speed-preset-btn active" data-speed="1">1x</button>
+                  <button type="button" id="speedPreset15" class="speed-preset-btn" data-speed="1.5">1.5x</button>
+                  <button type="button" id="speedPreset2" class="speed-preset-btn" data-speed="2">2x</button>
+                  <button type="button" id="speedPreset3" class="speed-preset-btn" data-speed="3">3x</button>
+                  <button type="button" id="speedPreset4" class="speed-preset-btn" data-speed="4">4x</button>
                 </div>
                 <input type="number" id="inputSpeedCustom" class="speed-custom-input" min="0.1" max="16" step="0.05" value="1" title="Nhập tốc độ tùy chỉnh (0.1x – 16x)">
                 <span class="speed-unit">x</span>
@@ -175,8 +175,8 @@
               <div class="editor-clip selected" id="editorClip">
                 <div class="clip-label" id="editorClipLabel">No video</div>
                 <div class="clip-filmstrip" id="editorFilmstrip"></div>
-                <div class="clip-handle clip-handle-left" id="trimHandleLeft" title="Kéo để cắt đầu video"></div>
-                <div class="clip-handle clip-handle-right" id="trimHandleRight" title="Kéo để cắt cuối video"></div>
+                <div class="clip-handle clip-handle-left" id="trimHandleLeft" title="Kéo để cắt đầu video" role="slider" tabindex="0" aria-label="Trim start"><span class="trim-handle-tooltip"></span></div>
+                <div class="clip-handle clip-handle-right" id="trimHandleRight" title="Kéo để cắt cuối video" role="slider" tabindex="0" aria-label="Trim end"><span class="trim-handle-tooltip"></span></div>
               </div>
               <div class="clip-dim clip-dim-left" id="clipDimLeft"></div>
               <div class="clip-dim clip-dim-right" id="clipDimRight"></div>
@@ -191,11 +191,11 @@
           <div class="trim-inputs">
             <div class="trim-time-group">
               <span>Trim Start:</span>
-              <input type="number" id="trimStartInput" class="form-input" style="width: 75px; padding: 2px 6px; height: 24px; font-size: 0.75rem;" step="0.05" min="0" value="0.00">
+            <input type="number" id="trimStartInput" class="form-input compact-number" step="0.05" min="0" value="0.00">
             </div>
             <div class="trim-time-group">
               <span>Trim End:</span>
-              <input type="number" id="trimEndInput" class="form-input" style="width: 75px; padding: 2px 6px; height: 24px; font-size: 0.75rem;" step="0.05" min="0" value="0.00">
+            <input type="number" id="trimEndInput" class="form-input compact-number" step="0.05" min="0" value="0.00">
             </div>
           </div>
 
@@ -296,7 +296,7 @@
           <span id="activeFilenameLabel" class="file-info-title">Sprite sheet settings</span>
         </div>
 
-        <button id="btnToggleCollapse" class="btn-collapse">
+        <button id="btnToggleCollapse" class="btn-collapse" type="button" aria-expanded="true" aria-controls="settingsBody">
           <i data-lucide="chevron-up" id="iconCollapse" style="width: 14px; height: 14px;"></i>
           <span id="lblCollapse">Collapse</span>
         </button>
@@ -334,7 +334,7 @@
                 <span>Frames</span>
                 <span class="hint">Total sampled frames</span>
               </label>
-              <input type="number" id="inputFrames" class="form-input" min="1" max="500" value="24">
+              <input type="number" id="inputFrames" class="form-input compact-number" min="1" max="500" value="24">
             </div>
 
             <div class="form-group">
@@ -350,17 +350,17 @@
                 <span>Rows</span>
                 <span class="hint">Grid height</span>
               </label>
-              <input type="number" id="inputRows" class="form-input" min="1" max="100" value="4">
+              <input type="number" id="inputRows" class="form-input compact-number" min="1" max="100" value="4">
             </div>
 
             <div class="form-group">
               <label class="form-label" for="inputCropBottom">Crop bottom (px)</label>
-              <input type="number" id="inputCropBottom" class="form-input" min="0" value="0">
+              <input type="number" id="inputCropBottom" class="form-input compact-number" min="0" value="0">
             </div>
 
             <div class="form-group">
               <label class="form-label" for="inputCropRight">Crop right (px)</label>
-              <input type="number" id="inputCropRight" class="form-input" min="0" value="0">
+              <input type="number" id="inputCropRight" class="form-input compact-number" min="0" value="0">
             </div>
 
             <div class="form-group">
@@ -389,7 +389,7 @@
                   </label>
                   
                   <div style="display: flex; align-items: center; gap: 6px;">
-                    <select id="selectFormat" class="form-input" style="width: 90px; padding: 2px 6px; height: 28px; font-size: 0.75rem;">
+                    <select id="selectFormat" class="form-input compact-select">
                       <option value="webp" selected>WebP</option>
                       <option value="png">PNG</option>
                     </select>
@@ -404,10 +404,19 @@
                   </button>
 
                   <div style="display: flex; align-items: center; gap: 4px;">
-                    <input type="color" id="manualColorInput" value="#0024f5" style="width: 28px; height: 28px; border: none; border-radius: 4px; cursor: pointer; background: transparent;">
+                    <input type="color" id="manualColorInput" value="#0024f5" class="manual-color-input">
                     <button id="btnAddManualColor" class="time-btn" style="height: 28px; padding: 0 8px;">+ Add</button>
                   </div>
                 </div>
+                <div class="color-value-editor" role="group" aria-label="Color value">
+                  <input id="inputColorHex" class="form-input color-text-input" value="#0024f5" placeholder="#RRGGBB" aria-label="HEX color">
+                  <input id="inputColorRgb" class="form-input color-text-input" placeholder="rgb(0, 36, 245)" aria-label="RGB color">
+                  <button id="btnApplyColorValue" class="time-btn" type="button">Apply</button>
+                  <button id="btnCopyColor" class="time-btn" type="button" title="Copy color">Copy</button>
+                  <button id="btnPasteColor" class="time-btn" type="button" title="Paste color">Paste</button>
+                </div>
+                <div id="colorInputError" class="color-input-error" role="alert" aria-live="polite"></div>
+                <div class="recent-colors-row"><span>Recent</span><div id="recentColorsList" class="recent-colors-list"></div></div>
 
                 <!-- Active Key Colors List -->
                 <div id="swatchesList" class="color-swatches">
@@ -426,7 +435,7 @@
                 <span>Cell (native)</span>
                 <span class="hint">Cell width/height (px)</span>
               </label>
-              <input type="number" id="inputCellNative" class="form-input" min="16" max="4096" value="512">
+              <input type="number" id="inputCellNative" class="form-input compact-number" min="16" max="4096" value="512">
             </div>
 
             <div class="form-group">
@@ -434,17 +443,17 @@
                 <span>Cols</span>
                 <span class="hint">Grid width</span>
               </label>
-              <input type="number" id="inputCols" class="form-input" min="1" max="100" value="6">
+              <input type="number" id="inputCols" class="form-input compact-number" min="1" max="100" value="6">
             </div>
 
             <div class="form-group">
               <label class="form-label" for="inputCropTop">Crop top (px)</label>
-              <input type="number" id="inputCropTop" class="form-input" min="0" value="0">
+              <input type="number" id="inputCropTop" class="form-input compact-number" min="0" value="0">
             </div>
 
             <div class="form-group">
               <label class="form-label" for="inputCropLeft">Crop left (px)</label>
-              <input type="number" id="inputCropLeft" class="form-input" min="0" value="0">
+              <input type="number" id="inputCropLeft" class="form-input compact-number" min="0" value="0">
             </div>
 
             <div class="form-group">
@@ -483,10 +492,11 @@
                 <span>Video Speed</span>
                 <span class="hint">Speed up / slow down source playback</span>
               </label>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <input type="number" id="inputSpeedCustomSettings" class="form-input" min="0.1" max="16" step="0.05" value="1" style="width: 80px;">
+              <div class="number-field-row">
+                <input type="number" id="inputSpeedCustomSettings" class="form-input compact-speed" min="0.1" max="16" step="0.05" value="1">
                 <span style="font-size: 0.8rem; color: #94a3b8;">x</span>
-                <span id="lblSpeedSettings" class="slider-value">1.00x</span>
+                <span id="lblSpeedSettings" class="slider-value">1x</span>
+                <button id="btnResetSpeed" class="time-btn" type="button" title="Reset speed về 1x">Reset</button>
               </div>
             </div>
 
@@ -495,8 +505,8 @@
                 <span>Preview FPS</span>
                 <span class="hint">Sprite playback (Auto FPS tính theo Speed)</span>
               </label>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <input type="number" id="inputFps" class="form-input" min="1" max="60" value="12" style="width: 80px;">
+              <div class="number-field-row">
+                <input type="number" id="inputFps" class="form-input compact-fps" min="1" max="60" value="12">
                 <button id="btnAutoFps" class="time-btn" style="height: 36px; padding: 0 10px;" title="Tính FPS theo độ dài trim và Video Speed">Auto FPS</button>
               </div>
             </div>
@@ -512,7 +522,7 @@
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- App Script -->
-  <script src="js/app.js"></script>
+  <script type="module" src="js/app.js"></script>
   <script>
     lucide.createIcons();
   </script>

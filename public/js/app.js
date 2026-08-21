@@ -2,6 +2,8 @@
  * Video to Sprite Sheet Studio & Background Remover
  */
 
+import { EditorUtils as U } from './editor-utils.js';
+
 document.addEventListener('DOMContentLoaded', () => {
   // === DOM ELEMENTS ===
   const video = document.getElementById('sourceVideo');
@@ -71,6 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const inputSpeedCustom = document.getElementById('inputSpeedCustom');
   const inputSpeedCustomSettings = document.getElementById('inputSpeedCustomSettings');
   const lblSpeedSettings = document.getElementById('lblSpeedSettings');
+  const btnResetSpeed = document.getElementById('btnResetSpeed');
   const speedEffectiveHint = document.getElementById('speedEffectiveHint');
 
   // Preview
@@ -141,12 +144,63 @@ document.addEventListener('DOMContentLoaded', () => {
   const manualColorInput = document.getElementById('manualColorInput');
   const btnAddManualColor = document.getElementById('btnAddManualColor');
   const swatchesList = document.getElementById('swatchesList');
+  const inputColorHex = document.getElementById('inputColorHex');
+  const inputColorRgb = document.getElementById('inputColorRgb');
+  const btnApplyColorValue = document.getElementById('btnApplyColorValue');
+  const btnCopyColor = document.getElementById('btnCopyColor');
+  const btnPasteColor = document.getElementById('btnPasteColor');
+  const colorInputError = document.getElementById('colorInputError');
+  const recentColorsList = document.getElementById('recentColorsList');
   const toastContainer = document.getElementById('toastContainer');
+
+  // Keep keyboard navigation predictable across the separate preview/editor/settings cards.
+  // Positive tabindex is intentionally limited to the primary workflow controls; decorative
+  // canvas/video elements stay out of the sequence.
+  function applyTabOrder() {
+    const orderedIds = [
+      'btnLoadDemo', 'btnToggleChecker',
+      'btnVideoPlayPause', 'btnVideoStepBack', 'btnVideoStepForward',
+      'btnResetEyedropperZoom', 'btnCancelEyedropper',
+      'btnEditorSplit', 'btnEditorDuplicate', 'btnEditorDelete', 'btnEditorMute',
+      ...Array.from(document.querySelectorAll('#speedPresets .speed-preset-btn')).map((element) => element.id || null),
+      'inputSpeedCustom', 'btnEditorSkipBack', 'btnEditorPlay', 'btnEditorSkipForward',
+      'btnSetTrimStart', 'btnSetTrimEnd', 'btnResetTrim', 'trimHandleLeft', 'trimHandleRight',
+      'trimStartInput', 'trimEndInput',
+      'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'btnCancelPreviewEyedropper',
+      'btnGenerate', 'btnDownloadMain', 'btnDownloadBundleZip', 'btnDownloadSpriteOnly', 'btnDownloadAudioOnly',
+      'btnBrowseFile', 'btnToggleCollapse', 'btnBrowseSecondary',
+      // Settings are ordered row-by-row: left column, then right column.
+      'inputFrames', 'inputCellNative',
+      'chkKeepSourceSize', 'inputCols',
+      'inputRows', 'inputCropTop',
+      'inputCropBottom', 'inputCropLeft',
+      'inputCropRight', 'inputDownloadName',
+      'sliderSimilarity', 'sliderBlend',
+      'chkTransparentFormat', 'sliderSpill',
+      'selectFormat', 'inputSpeedCustomSettings', 'btnResetSpeed',
+      'btnPickColor', 'inputFps', 'btnAutoFps',
+      'manualColorInput', 'btnAddManualColor',
+      'inputColorHex', 'inputColorRgb', 'btnApplyColorValue', 'btnCopyColor', 'btnPasteColor'
+    ];
+    let index = 1;
+    orderedIds.forEach((id) => {
+      if (!id) return;
+      const element = document.getElementById(id);
+      if (element) element.tabIndex = index++;
+    });
+    ['sourceVideo', 'videoFileInput'].forEach((id) => {
+      const element = document.getElementById(id);
+      if (element) element.tabIndex = -1;
+    });
+  }
+
+  applyTabOrder();
 
   // === STATE ===
   let state = {
     currentVideoFile: null,
     currentVideoUrl: '',
+    sourceId: '',
     videoLoaded: false,
     duration: 0,
     videoWidth: 0,
@@ -184,11 +238,67 @@ document.addEventListener('DOMContentLoaded', () => {
     filmstripReady: false,
     savedTrimBackup: null, // for duplicate
     isMuted: false,
-    playbackSpeed: 1
+    playbackSpeed: 1,
+    activeColorIndex: null,
+    timelinePointerId: null,
+    videoLoadToken: 0
   };
+
+  const CLIP_STATE_KEY = 'video-editor:clip-states:v1';
+  const RECENT_COLORS_KEY = 'video-editor:recent-colors:v1';
+  let saveStateTimer = null;
+
+  function readJsonStorage(key, fallback) {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) || 'null');
+      return value && typeof value === 'object' ? value : fallback;
+    } catch (_) { return fallback; }
+  }
+
+  function loadClipState() {
+    if (!state.sourceId) return null;
+    const stored = readJsonStorage(CLIP_STATE_KEY, {});
+    const states = Array.isArray(stored) ? {} : stored;
+    const saved = states[state.sourceId];
+    if (!saved || saved.schemaVersion !== 1) return null;
+    return saved;
+  }
+
+  function saveClipState() {
+    if (!state.sourceId || !state.videoLoaded) return;
+    const stored = readJsonStorage(CLIP_STATE_KEY, {});
+    const states = Array.isArray(stored) ? {} : stored;
+    states[state.sourceId] = {
+      schemaVersion: 1,
+      sourceId: state.sourceId,
+      trimStart: state.trimStart,
+      trimEnd: state.trimEnd,
+      playbackSpeed: state.playbackSpeed,
+      previewFps: parseInt(inputFps.value, 10) || 12,
+      keyColors: state.keyColors,
+      updatedAt: Date.now()
+    };
+    try { localStorage.setItem(CLIP_STATE_KEY, JSON.stringify(states)); } catch (_) { /* storage is optional */ }
+  }
+
+  function saveClipStateDebounced() {
+    clearTimeout(saveStateTimer);
+    saveStateTimer = setTimeout(saveClipState, 180);
+  }
+
+  function saveRecentColor(color) {
+    const stored = readJsonStorage(RECENT_COLORS_KEY, []);
+    const recent = Array.isArray(stored)
+      ? stored.map((item) => U.normalizeColor(item?.hex || '')).filter(Boolean)
+      : [];
+    const next = [color, ...recent.filter((item) => item.hex !== color.hex)].slice(0, 12);
+    try { localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(next)); } catch (_) { /* optional */ }
+    return next;
+  }
 
   // === INITIALIZATION ===
   renderSwatches();
+  renderRecentColors();
   updateFormatLabels();
   initCanvasContexts();
 
@@ -208,7 +318,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (type === 'success') icon = 'check-circle';
     if (type === 'error') icon = 'alert-triangle';
     
-    toast.innerHTML = `<i data-lucide="${icon}" style="width: 16px; height: 16px;"></i><span>${message}</span>`;
+    const iconElement = document.createElement('i');
+    iconElement.setAttribute('data-lucide', icon);
+    iconElement.style.width = '16px';
+    iconElement.style.height = '16px';
+    const messageElement = document.createElement('span');
+    messageElement.textContent = String(message);
+    toast.append(iconElement, messageElement);
     toastContainer.appendChild(toast);
     lucide.createIcons({ root: toast });
 
@@ -222,8 +338,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // === FILE LOADING ===
   function loadVideoSource(source, fileName = 'video.mp4') {
+    clearTimeout(saveStateTimer);
+    saveClipState();
     state.videoLoaded = false;
+    state.videoLoadToken += 1;
+    state.activeColorIndex = null;
+    stopAnimationPreview();
+    state.generatedFrames = [];
+    state.fullSheetCanvas = null;
+    state.currentFrameIndex = 0;
+    updatePreviewViewport();
     state.currentVideoFile = (source instanceof File) ? source : null;
+    state.playbackSpeed = 1;
+    state.keyColors = [{ r: 0, g: 36, b: 245, hex: '#0024f5' }];
     
     if (typeof source === 'string') {
       state.currentVideoUrl = source;
@@ -235,6 +362,7 @@ document.addEventListener('DOMContentLoaded', () => {
       state.currentVideoUrl = URL.createObjectURL(source);
       video.src = state.currentVideoUrl;
     }
+    state.sourceId = U.sourceId(source, fileName);
 
     dropZoneFilename.textContent = fileName;
     activeFilenameLabel.textContent = fileName;
@@ -253,9 +381,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatTime(seconds) {
     if (isNaN(seconds) || seconds < 0) seconds = 0;
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    const ms = Math.floor((seconds % 1) * 100);
+    const totalCentiseconds = Math.round(seconds * 100);
+    const m = Math.floor(totalCentiseconds / 6000);
+    const s = Math.floor((totalCentiseconds % 6000) / 100);
+    const ms = totalCentiseconds % 100;
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
   }
 
@@ -346,12 +475,17 @@ document.addEventListener('DOMContentLoaded', () => {
     state.videoWidth = video.videoWidth || 640;
     state.videoHeight = video.videoHeight || 360;
     
-    state.trimStart = 0;
-    state.trimEnd = state.duration;
+    const saved = loadClipState();
+    const range = U.clampTrimRange(saved?.trimStart ?? 0, saved?.trimEnd ?? state.duration, state.duration, U.MIN_TRIM_DURATION);
+    state.trimStart = range.start;
+    state.trimEnd = range.end;
+    if (Array.isArray(saved?.keyColors)) {
+      state.keyColors = saved.keyColors.map((color) => U.normalizeColor(color?.hex || '')).filter(Boolean);
+    }
 
-    trimStartInput.value = (0).toFixed(2);
+    trimStartInput.value = state.trimStart.toFixed(2);
     trimStartInput.max = state.duration.toFixed(2);
-    trimEndInput.value = state.duration.toFixed(2);
+    trimEndInput.value = state.trimEnd.toFixed(2);
     trimEndInput.max = state.duration.toFixed(2);
 
     sourceVideoInfo.textContent = `${state.videoWidth}x${state.videoHeight} • ${state.duration.toFixed(2)}s`;
@@ -362,12 +496,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     updateTrimUI();
+    renderRuler();
     updateCropOverlay();
-    setPlaybackSpeed(state.playbackSpeed || 1, { toast: false });
-    autoComputeFPS();
+    setPlaybackSpeed(saved?.playbackSpeed ?? 1, { toast: false, persist: false });
+    if (saved?.previewFps) inputFps.value = String(Math.max(1, Math.min(60, Number(saved.previewFps) || 12)));
+    else autoComputeFPS();
+    renderSwatches();
     updateVideoTimeDisplay();
     updateVideoPlayPauseBtn();
     generateFilmstrip();
+    saveClipState();
     showToast(`Video loaded (${state.videoWidth}x${state.videoHeight}, ${state.duration.toFixed(2)}s)`, 'success');
   });
 
@@ -523,8 +661,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     updatePlayheadPosition();
-    renderRuler();
     updateSpeedEffectiveHint();
+    if (trimHandleLeft) {
+      trimHandleLeft.querySelector('.trim-handle-tooltip').textContent = formatTime(state.trimStart);
+      trimHandleLeft.setAttribute('aria-valuemin', '0');
+      trimHandleLeft.setAttribute('aria-valuemax', String(Math.max(0, state.trimEnd - U.MIN_TRIM_DURATION)));
+      trimHandleLeft.setAttribute('aria-valuenow', String(state.trimStart));
+      trimHandleLeft.setAttribute('aria-valuetext', formatTime(state.trimStart));
+    }
+    if (trimHandleRight) {
+      trimHandleRight.querySelector('.trim-handle-tooltip').textContent = formatTime(state.trimEnd);
+      trimHandleRight.setAttribute('aria-valuemin', String(Math.min(state.duration, state.trimStart + U.MIN_TRIM_DURATION)));
+      trimHandleRight.setAttribute('aria-valuemax', String(state.duration));
+      trimHandleRight.setAttribute('aria-valuenow', String(state.trimEnd));
+      trimHandleRight.setAttribute('aria-valuetext', formatTime(state.trimEnd));
+    }
   }
 
   function renderRuler() {
@@ -573,6 +724,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function generateFilmstrip() {
     if (!state.videoLoaded || !editorFilmstrip || state.duration <= 0) return;
+    const loadToken = state.videoLoadToken;
 
     editorFilmstrip.innerHTML = '';
     state.filmstripReady = false;
@@ -593,6 +745,7 @@ document.addEventListener('DOMContentLoaded', () => {
     for (let i = 0; i < thumbCount; i++) {
       const t = (i / Math.max(1, thumbCount - 1)) * state.duration;
       await seekVideoAsync(video, t);
+      if (loadToken !== state.videoLoadToken) return;
       ctx.fillStyle = '#111';
       ctx.fillRect(0, 0, thumbW, thumbH);
 
@@ -627,6 +780,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.filmstripReady = true;
 
     await seekVideoAsync(video, restoreTime);
+    if (loadToken !== state.videoLoadToken) return;
     if (!wasPaused) {
       // keep paused after filmstrip build so user controls playback
     }
@@ -641,38 +795,42 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function applyTrimStart(val, seek = true) {
-    val = Math.max(0, Math.min(val, state.trimEnd - 0.05));
-    state.trimStart = val;
-    trimStartInput.value = val.toFixed(2);
-    if (seek) video.currentTime = val;
+    const snapped = U.snapTime(val, state.duration, { step: 0.1, playhead: video.currentTime, threshold: Math.max(0.04, state.duration / 150) });
+    state.trimStart = U.clampTrimStart(snapped, state.trimEnd, state.duration, U.MIN_TRIM_DURATION);
+    trimStartInput.value = state.trimStart.toFixed(2);
+    if (seek) requestVideoSeek(state.trimStart);
     updateTrimUI();
-    autoComputeFPS();
+    if (!state.timelineDrag) autoComputeFPS();
   }
 
   function applyTrimEnd(val, seek = true) {
-    val = Math.max(state.trimStart + 0.05, Math.min(val, state.duration));
-    state.trimEnd = val;
-    trimEndInput.value = val.toFixed(2);
-    if (seek) video.currentTime = val;
+    const snapped = U.snapTime(val, state.duration, { step: 0.1, playhead: video.currentTime, threshold: Math.max(0.04, state.duration / 150) });
+    state.trimEnd = U.clampTrimEnd(state.trimStart, snapped, state.duration, U.MIN_TRIM_DURATION);
+    trimEndInput.value = state.trimEnd.toFixed(2);
+    if (seek) requestVideoSeek(state.trimEnd);
     updateTrimUI();
-    autoComputeFPS();
+    if (!state.timelineDrag) autoComputeFPS();
   }
 
   trimStartInput.addEventListener('change', () => {
     let val = parseFloat(trimStartInput.value) || 0;
     applyTrimStart(val, true);
+    saveClipStateDebounced();
   });
 
   trimEndInput.addEventListener('change', () => {
-    let val = parseFloat(trimEndInput.value) || state.duration;
+    const parsed = parseFloat(trimEndInput.value);
+    const val = Number.isFinite(parsed) ? parsed : state.duration;
     applyTrimEnd(val, true);
+    saveClipStateDebounced();
   });
 
   btnSetTrimStart.addEventListener('click', () => {
     if (!state.videoLoaded) return;
     const cur = video.currentTime;
-    if (cur < state.trimEnd) {
+    if (cur < state.trimEnd - U.MIN_TRIM_DURATION) {
       applyTrimStart(cur, false);
+      saveClipStateDebounced();
       showToast(`Trim Start set to ${cur.toFixed(2)}s`, 'info');
     }
   });
@@ -680,20 +838,21 @@ document.addEventListener('DOMContentLoaded', () => {
   btnSetTrimEnd.addEventListener('click', () => {
     if (!state.videoLoaded) return;
     const cur = video.currentTime;
-    if (cur > state.trimStart) {
+    if (cur > state.trimStart + U.MIN_TRIM_DURATION) {
       applyTrimEnd(cur, false);
+      saveClipStateDebounced();
       showToast(`Trim End set to ${cur.toFixed(2)}s`, 'info');
     }
   });
 
   btnResetTrim.addEventListener('click', () => {
     if (!state.videoLoaded) return;
-    state.trimStart = 0;
-    state.trimEnd = state.duration;
+    ({ start: state.trimStart, end: state.trimEnd } = U.clampTrimRange(0, state.duration, state.duration));
     trimStartInput.value = (0).toFixed(2);
     trimEndInput.value = state.duration.toFixed(2);
     updateTrimUI();
     autoComputeFPS();
+    saveClipStateDebounced();
     showToast('Trim reset to full video', 'info');
   });
 
@@ -708,155 +867,106 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Drag trim handles / playhead / move clip ---
-  function beginTimelineDrag(mode, e) {
+  // --- Pointer-based trim interaction (mouse, pen and touch) ---
+  let trimRaf = 0;
+  let pendingTimelineEvent = null;
+  function requestVideoSeek(time) {
+    const target = Math.max(0, Math.min(state.duration || 0, Number(time) || 0));
+    if (Math.abs((video.currentTime || 0) - target) < 0.005) return;
+    video.currentTime = target;
+  }
+  function beginTimelineDrag(mode, event) {
     if (!state.videoLoaded || !state.duration) return;
-    e.preventDefault();
-    e.stopPropagation();
+    event.preventDefault(); event.stopPropagation();
     state.timelineDrag = mode;
-    if (mode === 'left') trimHandleLeft.classList.add('dragging');
-    if (mode === 'right') trimHandleRight.classList.add('dragging');
-    video.pause();
-    updateVideoPlayPauseBtn();
-  }
-
-  trimHandleLeft.addEventListener('mousedown', (e) => beginTimelineDrag('left', e));
-  trimHandleRight.addEventListener('mousedown', (e) => beginTimelineDrag('right', e));
-
-  // Drag clip body to shift trim window, or click to scrub
-  editorClip.addEventListener('mousedown', (e) => {
-    if (e.target.closest('.clip-handle')) return;
-    if (!state.videoLoaded) return;
-    e.preventDefault();
-    e.stopPropagation();
-    state._clipPointer = {
-      startX: e.clientX,
-      moved: false,
-      trimStart: state.trimStart,
-      trimEnd: state.trimEnd,
-      duration: state.trimEnd - state.trimStart
-    };
-    state.timelineDrag = 'clip-pending';
-    video.pause();
-    updateVideoPlayPauseBtn();
-  });
-
-  // Click / drag on track background to scrub playhead
-  editorTrack.addEventListener('mousedown', (e) => {
-    if (e.target.closest('.clip-handle') || e.target.closest('.editor-clip') || e.target.closest('.clip-dim')) return;
-    if (!state.videoLoaded) return;
-    e.preventDefault();
-    state.timelineDrag = 'playhead';
-    video.pause();
-    updateVideoPlayPauseBtn();
-    const t = timeFromTrackClientX(e.clientX);
-    video.currentTime = t;
-    updatePlayheadPosition();
-    updateVideoTimeDisplay();
-  });
-
-  // Scrub by clicking the dimmed regions
-  [clipDimLeft, clipDimRight].forEach((el) => {
-    if (!el) return;
-    el.style.pointerEvents = 'auto';
-    el.style.cursor = 'pointer';
-    el.addEventListener('mousedown', (e) => {
-      if (!state.videoLoaded) return;
-      e.preventDefault();
-      e.stopPropagation();
-      state.timelineDrag = 'playhead';
-      video.pause();
-      updateVideoPlayPauseBtn();
-      const t = timeFromTrackClientX(e.clientX);
-      video.currentTime = t;
-      updatePlayheadPosition();
-      updateVideoTimeDisplay();
-    });
-  });
-
-  // Allow dragging the playhead knob
-  if (editorPlayhead) {
-    editorPlayhead.style.pointerEvents = 'auto';
-    editorPlayhead.style.cursor = 'ew-resize';
-    const knob = editorPlayhead.querySelector('.playhead-knob');
-    if (knob) {
-      knob.style.pointerEvents = 'auto';
-      knob.style.cursor = 'ew-resize';
-      knob.addEventListener('mousedown', (e) => {
-        if (!state.videoLoaded) return;
-        e.preventDefault();
-        e.stopPropagation();
-        state.timelineDrag = 'playhead';
-        video.pause();
-        updateVideoPlayPauseBtn();
-      });
+    state.timelinePointerId = event.pointerId;
+    if (mode === 'left' || mode === 'right') {
+      const handle = mode === 'left' ? trimHandleLeft : trimHandleRight;
+      handle.classList.add('dragging'); handle.setPointerCapture?.(event.pointerId);
+      handle.querySelector('.trim-handle-tooltip').classList.add('visible');
     }
+    if (mode === 'clip-pending') editorClip.setPointerCapture?.(event.pointerId);
+    video.pause(); updateVideoPlayPauseBtn();
   }
-
-  window.addEventListener('mousemove', (e) => {
-    if (!state.timelineDrag || !state.duration) return;
-    const t = timeFromTrackClientX(e.clientX);
-
-    if (state.timelineDrag === 'left') {
-      applyTrimStart(t, true);
-    } else if (state.timelineDrag === 'right') {
-      applyTrimEnd(t, true);
-    } else if (state.timelineDrag === 'playhead') {
-      video.currentTime = t;
-      updatePlayheadPosition();
-      updateVideoTimeDisplay();
-    } else if (state.timelineDrag === 'clip-pending' || state.timelineDrag === 'move') {
-      const ptr = state._clipPointer;
-      if (!ptr) return;
-      const dx = e.clientX - ptr.startX;
+  function queueTimelineEvent(event) {
+    if (event.pointerId !== state.timelinePointerId) return;
+    pendingTimelineEvent = event;
+    if (!trimRaf) trimRaf = requestAnimationFrame(processTimelineEvent);
+  }
+  function processTimelineEvent() {
+    trimRaf = 0;
+    const event = pendingTimelineEvent; pendingTimelineEvent = null;
+    if (!event || !state.timelineDrag || !state.duration) return;
+    const t = timeFromTrackClientX(event.clientX);
+    if (state.timelineDrag === 'left') { applyTrimStart(t, true); }
+    else if (state.timelineDrag === 'right') { applyTrimEnd(t, true); }
+    else if (state.timelineDrag === 'playhead') { requestVideoSeek(t); updatePlayheadPosition(); updateVideoTimeDisplay(); }
+    else if (state.timelineDrag === 'clip-pending' || state.timelineDrag === 'move') {
+      const ptr = state._clipPointer; if (!ptr) return;
+      const dx = event.clientX - ptr.startX;
       if (state.timelineDrag === 'clip-pending' && Math.abs(dx) < 4) return;
       state.timelineDrag = 'move';
-      const rect = editorTrack.getBoundingClientRect();
-      const dt = (dx / rect.width) * state.duration;
-      let newStart = ptr.trimStart + dt;
-      let newEnd = newStart + ptr.duration;
-      if (newStart < 0) {
-        newStart = 0;
-        newEnd = ptr.duration;
-      }
-      if (newEnd > state.duration) {
-        newEnd = state.duration;
-        newStart = state.duration - ptr.duration;
-      }
-      state.trimStart = Math.max(0, newStart);
-      state.trimEnd = Math.min(state.duration, newEnd);
-      trimStartInput.value = state.trimStart.toFixed(2);
-      trimEndInput.value = state.trimEnd.toFixed(2);
-      updateTrimUI();
-      ptr.moved = true;
+      const dt = (dx / editorTrack.getBoundingClientRect().width) * state.duration;
+      const range = U.shiftTrimRange(ptr.trimStart, ptr.trimEnd, dt, state.duration);
+      state.trimStart = range.start; state.trimEnd = range.end;
+      trimStartInput.value = range.start.toFixed(2); trimEndInput.value = range.end.toFixed(2);
+      updateTrimUI(); ptr.moved = true;
     }
-  });
-
-  window.addEventListener('mouseup', (e) => {
+  }
+  function finishTimelineDrag(event) {
     if (!state.timelineDrag) return;
-    const mode = state.timelineDrag;
-    state.timelineDrag = null;
-    trimHandleLeft.classList.remove('dragging');
-    trimHandleRight.classList.remove('dragging');
-
-    if (mode === 'clip-pending' && state._clipPointer && !state._clipPointer.moved) {
-      // Click inside clip → scrub playhead
-      const t = timeFromTrackClientX(e.clientX);
-      video.currentTime = Math.max(state.trimStart, Math.min(state.trimEnd, t));
-      updatePlayheadPosition();
-      updateVideoTimeDisplay();
-    } else if (mode === 'move') {
-      autoComputeFPS();
+    if (event?.pointerId != null && event.pointerId !== state.timelinePointerId) return;
+    if (pendingTimelineEvent) processTimelineEvent();
+    const mode = state.timelineDrag; state.timelineDrag = null;
+    trimHandleLeft.classList.remove('dragging'); trimHandleRight.classList.remove('dragging');
+    trimHandleLeft.querySelector('.trim-handle-tooltip').classList.remove('visible');
+    trimHandleRight.querySelector('.trim-handle-tooltip').classList.remove('visible');
+    if (mode === 'clip-pending' && state._clipPointer && !state._clipPointer.moved && Number.isFinite(event?.clientX)) {
+      requestVideoSeek(Math.max(state.trimStart, Math.min(state.trimEnd, timeFromTrackClientX(event.clientX))));
+      updatePlayheadPosition(); updateVideoTimeDisplay();
     }
-    state._clipPointer = null;
+    state.timelinePointerId = null;
+    autoComputeFPS(); saveClipStateDebounced(); state._clipPointer = null;
+  }
+  [trimHandleLeft, trimHandleRight].forEach((handle, index) => {
+    handle.addEventListener('pointerdown', (event) => beginTimelineDrag(index ? 'right' : 'left', event));
+    handle.addEventListener('pointermove', (event) => { if (state.timelineDrag) queueTimelineEvent(event); });
+    handle.addEventListener('pointerup', finishTimelineDrag);
+    handle.addEventListener('pointercancel', finishTimelineDrag);
+    handle.addEventListener('keydown', (event) => {
+      if (!state.videoLoaded) return;
+      const delta = event.key === 'ArrowLeft' ? -0.1 : event.key === 'ArrowRight' ? 0.1 : 0;
+      if (!delta) return; event.preventDefault();
+      if (index) applyTrimEnd(state.trimEnd + delta, false); else applyTrimStart(state.trimStart + delta, false);
+      saveClipStateDebounced();
+    });
   });
+  editorClip.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('.clip-handle') || !state.videoLoaded) return;
+    state._clipPointer = { startX: event.clientX, moved: false, trimStart: state.trimStart, trimEnd: state.trimEnd };
+    beginTimelineDrag('clip-pending', event);
+  });
+  editorTrack.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('.clip-handle, .editor-clip, .clip-dim, .playhead-knob') || !state.videoLoaded) return;
+    beginTimelineDrag('playhead', event); queueTimelineEvent(event);
+  });
+  [clipDimLeft, clipDimRight].forEach((el) => el?.addEventListener('pointerdown', (event) => {
+    if (!state.videoLoaded) return; beginTimelineDrag('playhead', event); queueTimelineEvent(event);
+  }));
+  const playheadKnob = editorPlayhead?.querySelector('.playhead-knob');
+  playheadKnob?.addEventListener('pointerdown', (event) => { beginTimelineDrag('playhead', event); });
+  window.addEventListener('pointermove', (event) => { if (state.timelineDrag) queueTimelineEvent(event); });
+  window.addEventListener('pointerup', finishTimelineDrag);
+  window.addEventListener('pointercancel', finishTimelineDrag);
+  window.addEventListener('blur', finishTimelineDrag);
+  window.addEventListener('keydown', (event) => { if (event.key === 'Escape') finishTimelineDrag(event); });
 
   // --- Editor toolbar actions ---
   btnEditorPlay.addEventListener('click', () => {
     if (!state.videoLoaded) return;
     if (video.paused || video.ended) {
       // Loop within trim range
-      if (video.currentTime < state.trimStart || video.currentTime >= state.trimEnd - 0.02) {
+      if (video.currentTime < state.trimStart || video.currentTime >= state.trimEnd - 0.01) {
         video.currentTime = state.trimStart;
       }
       video.play();
@@ -883,7 +993,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Keep playback inside trim window
   video.addEventListener('timeupdate', () => {
     if (!state.videoLoaded || video.paused) return;
-    if (video.currentTime >= state.trimEnd - 0.04) {
+    if (video.currentTime >= state.trimEnd - 0.01) {
       video.pause();
       video.currentTime = state.trimEnd;
       updateVideoPlayPauseBtn();
@@ -903,13 +1013,14 @@ document.addEventListener('DOMContentLoaded', () => {
   btnEditorSplit.addEventListener('click', () => {
     if (!state.videoLoaded) return;
     const cur = video.currentTime;
-    if (cur <= state.trimStart + 0.05 || cur >= state.trimEnd - 0.05) {
+    if (cur <= state.trimStart + U.MIN_TRIM_DURATION || cur >= state.trimEnd - U.MIN_TRIM_DURATION) {
       showToast('Đặt playhead vào giữa đoạn cắt để Split', 'error');
       return;
     }
     // Save backup for "duplicate" restore of right half conceptually
     state.savedTrimBackup = { start: state.trimStart, end: state.trimEnd };
     applyTrimEnd(cur, false);
+    saveClipStateDebounced();
     showToast(`Đã cắt tại ${cur.toFixed(2)}s — giữ đoạn bên trái`, 'success');
   });
 
@@ -920,11 +1031,12 @@ document.addEventListener('DOMContentLoaded', () => {
       // After a split, "duplicate" restores the right half as the new selection
       const mid = state.trimEnd;
       const rightEnd = state.savedTrimBackup.end;
-      if (rightEnd - mid > 0.05) {
+      if (rightEnd - mid > U.MIN_TRIM_DURATION) {
         applyTrimStart(mid, false);
         applyTrimEnd(rightEnd, false);
         video.currentTime = mid;
         state.savedTrimBackup = null;
+        saveClipStateDebounced();
         showToast('Đã chuyển sang đoạn bên phải (nhân bản sau khi cắt)', 'success');
         return;
       }
@@ -939,13 +1051,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Delete: reset trim to full video
   btnEditorDelete.addEventListener('click', () => {
     if (!state.videoLoaded) return;
-    state.trimStart = 0;
-    state.trimEnd = state.duration;
+    ({ start: state.trimStart, end: state.trimEnd } = U.clampTrimRange(0, state.duration, state.duration));
     trimStartInput.value = (0).toFixed(2);
     trimEndInput.value = state.duration.toFixed(2);
     state.savedTrimBackup = null;
     updateTrimUI();
     autoComputeFPS();
+    saveClipStateDebounced();
     showToast('Đã xóa đoạn cắt — reset về full video', 'info');
   });
 
@@ -955,10 +1067,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function autoComputeFPS() {
     const frames = parseInt(inputFrames.value, 10) || 24;
-    const sourceDuration = Math.max(0.1, state.trimEnd - state.trimStart);
-    const speed = Math.max(0.1, state.playbackSpeed || 1);
-    // Faster speed → shorter wall-clock playback → higher FPS for same frame count
-    const effectiveDuration = sourceDuration / speed;
+    const sourceDuration = Math.max(U.MIN_TRIM_DURATION, state.trimEnd - state.trimStart);
+    const speed = Math.max(U.MIN_SPEED, state.playbackSpeed || 1);
+    const effectiveDuration = U.effectiveDuration(state.trimStart, state.trimEnd, speed);
     const computedFps = Math.max(1, Math.min(60, Math.round(frames / effectiveDuration)));
     inputFps.value = computedFps;
     updateSpeedEffectiveHint();
@@ -972,21 +1083,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const sourceDuration = Math.max(0, state.trimEnd - state.trimStart);
     const speed = Math.max(0.1, state.playbackSpeed || 1);
-    const effective = sourceDuration / speed;
+    const effective = U.effectiveDuration(state.trimStart, state.trimEnd, speed);
     speedEffectiveHint.textContent = `Eff. ${effective.toFixed(2)}s @ ${formatSpeedLabel(speed)}`;
     speedEffectiveHint.title = `Độ dài phát thực tế sau Speed: ${sourceDuration.toFixed(2)}s ÷ ${formatSpeedLabel(speed)} = ${effective.toFixed(2)}s`;
   }
 
-  function formatSpeedLabel(speed) {
-    const n = Number(speed);
-    if (!Number.isFinite(n)) return '1x';
-    return `${parseFloat(n.toFixed(2))}x`;
-  }
+  function formatSpeedLabel(speed) { return U.formatSpeed(speed); }
 
-  function setPlaybackSpeed(rawSpeed, { toast = false, syncInputs = true } = {}) {
+  function setPlaybackSpeed(rawSpeed, { toast = false, syncInputs = true, persist = true } = {}) {
     let speed = parseFloat(rawSpeed);
     if (!Number.isFinite(speed)) speed = 1;
-    speed = Math.max(0.1, Math.min(16, speed));
+    speed = Math.max(U.MIN_SPEED, Math.min(U.MAX_SPEED, speed));
     // Snap near-integers for cleaner display (e.g. 1.0001 → 1)
     if (Math.abs(speed - Math.round(speed)) < 0.001) speed = Math.round(speed);
 
@@ -1017,6 +1124,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (toast) {
       showToast(`Speed: ${formatSpeedLabel(speed)}`, 'info');
     }
+    if (persist) saveClipStateDebounced();
   }
 
   // Speed preset buttons
@@ -1042,6 +1150,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   onSpeedInputChange(inputSpeedCustom);
   onSpeedInputChange(inputSpeedCustomSettings);
+  btnResetSpeed?.addEventListener('click', () => setPlaybackSpeed(1, { toast: true }));
 
   // Keep settings field live-synced while typing (without toast spam)
   if (inputSpeedCustom) {
@@ -1066,6 +1175,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnAutoFps.addEventListener('click', () => {
     autoComputeFPS();
+    saveClipStateDebounced();
     showToast(`FPS set to ${inputFps.value} fps (Speed ${formatSpeedLabel(state.playbackSpeed)})`, 'info');
   });
 
@@ -1442,9 +1552,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const pixel = sampleCtx.getImageData(px, py, 1, 1).data;
     const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
 
-    addColor(pixel[0], pixel[1], pixel[2], hex);
+    const added = addColor(pixel[0], pixel[1], pixel[2], hex);
     deactivateEyedropper();
-    showToast(`Đã nhận diện & thêm màu nền: ${hex}`, 'success');
+    showToast(added ? `Đã nhận diện & thêm màu nền: ${hex}` : `Màu ${hex} đã có trong danh sách`, added ? 'success' : 'info');
   });
 
   // Prevent legacy click handler from double-firing — handled via mouseup above
@@ -1554,9 +1664,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
-    addColor(pixel[0], pixel[1], pixel[2], hex);
+    const added = addColor(pixel[0], pixel[1], pixel[2], hex);
     deactivateEyedropper();
-    showToast(`Đã pick từ Preview: ${hex}`, 'success');
+    showToast(added ? `Đã pick từ Preview: ${hex}` : `Màu ${hex} đã có trong danh sách`, added ? 'success' : 'info');
     return true;
   }
 
@@ -1631,54 +1741,121 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function rgbToHex(r, g, b) {
-    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+    return `#${[r, g, b].map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}`;
   }
 
   function hexToRgb(hex) {
-    const cleanHex = hex.replace('#', '');
-    const num = parseInt(cleanHex, 16);
-    return {
-      r: (num >> 16) & 255,
-      g: (num >> 8) & 255,
-      b: num & 255
-    };
+    return U.normalizeColor(hex);
   }
 
   function addColor(r, g, b, hex) {
-    // Avoid duplicate colors within delta <= 5
-    const exists = state.keyColors.some(c => Math.abs(c.r - r) + Math.abs(c.g - g) + Math.abs(c.b - b) < 10);
-    if (!exists) {
-      state.keyColors.push({ r, g, b, hex });
-      renderSwatches();
+    const normalized = U.normalizeColor(hex) || U.normalizeColor(`rgb(${r},${g},${b})`);
+    if (!normalized) return false;
+    const next = U.dedupeColor(state.keyColors, normalized);
+    const added = next.length > state.keyColors.length;
+    state.keyColors = next;
+    if (added) {
+      saveRecentColor(normalized); renderSwatches(); renderRecentColors(); saveClipStateDebounced();
     }
+    return added;
   }
 
   btnAddManualColor.addEventListener('click', () => {
-    const hex = manualColorInput.value;
-    const { r, g, b } = hexToRgb(hex);
-    addColor(r, g, b, hex);
-    showToast(`Color ${hex} added to Chroma Key`, 'info');
+    const color = U.normalizeColor(inputColorHex?.dataset.lastEdited === 'rgb' ? inputColorRgb.value : (inputColorHex?.value || manualColorInput.value));
+    if (!color) { if (colorInputError) colorInputError.textContent = 'Enter a valid HEX or RGB color.'; return; }
+    if (colorInputError) colorInputError.textContent = '';
+    manualColorInput.value = color.hex; inputColorHex.value = color.hex; inputColorRgb.value = `rgb(${color.r}, ${color.g}, ${color.b})`;
+    const applied = applyColorValue(color.hex);
+    if (applied) showToast(`Color ${color.hex} applied to Chroma Key`, 'info');
   });
+  manualColorInput?.addEventListener('input', () => {
+    const color = U.normalizeColor(manualColorInput.value);
+    if (color && inputColorHex && inputColorRgb) {
+      inputColorHex.dataset.lastEdited = 'hex';
+      inputColorHex.value = color.hex;
+      inputColorRgb.value = `rgb(${color.r}, ${color.g}, ${color.b})`;
+    }
+  });
+
+  function applyColorValue(value) {
+    const color = U.normalizeColor(value);
+    if (!color) { if (colorInputError) colorInputError.textContent = 'Invalid color. Use #RGB, #RRGGBB or rgb(...).'; return null; }
+    if (colorInputError) colorInputError.textContent = '';
+    manualColorInput.value = color.hex; inputColorHex.value = color.hex; inputColorRgb.value = `rgb(${color.r}, ${color.g}, ${color.b})`;
+    if (Number.isInteger(state.activeColorIndex) && state.keyColors[state.activeColorIndex]) {
+      const duplicate = state.keyColors.some((item, index) => index !== state.activeColorIndex
+        && Math.abs(item.r - color.r) + Math.abs(item.g - color.g) + Math.abs(item.b - color.b) < 10);
+      if (duplicate) {
+        if (colorInputError) colorInputError.textContent = 'This color is already in the chroma-key list.';
+        return null;
+      }
+      state.keyColors[state.activeColorIndex] = color;
+      state.activeColorIndex = null;
+      renderSwatches(); saveRecentColor(color); renderRecentColors(); saveClipStateDebounced();
+    } else if (!addColor(color.r, color.g, color.b, color.hex)) {
+      if (colorInputError) colorInputError.textContent = 'This color is already in the chroma-key list.';
+      return null;
+    }
+    return color;
+  }
+  inputColorHex?.addEventListener('input', () => { inputColorHex.dataset.lastEdited = 'hex'; });
+  inputColorRgb?.addEventListener('input', () => { inputColorHex.dataset.lastEdited = 'rgb'; });
+  btnApplyColorValue?.addEventListener('click', () => applyColorValue(inputColorHex.dataset.lastEdited === 'rgb' ? inputColorRgb.value : inputColorHex.value));
+  inputColorHex?.addEventListener('keydown', (event) => { if (event.key === 'Enter') applyColorValue(inputColorHex.value); });
+  inputColorRgb?.addEventListener('keydown', (event) => { if (event.key === 'Enter') applyColorValue(inputColorRgb.value); });
+  btnCopyColor?.addEventListener('click', async () => {
+    const value = inputColorHex.value || manualColorInput.value;
+    try { await navigator.clipboard.writeText(value); showToast('Color copied', 'info'); } catch (_) { showToast(value, 'info'); }
+  });
+  btnPasteColor?.addEventListener('click', async () => {
+    try { const value = await navigator.clipboard.readText(); applyColorValue(value); } catch (_) { showToast('Clipboard access unavailable', 'error'); }
+  });
+
+  function renderRecentColors() {
+    if (!recentColorsList) return;
+    recentColorsList.innerHTML = '';
+    const stored = readJsonStorage(RECENT_COLORS_KEY, []);
+    const colors = Array.isArray(stored) ? stored.map((item) => U.normalizeColor(item?.hex || '')).filter(Boolean) : [];
+    colors.forEach((color) => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'recent-color'; button.title = color.hex;
+      button.tabIndex = 120 + recentColorsList.children.length;
+      button.style.backgroundColor = color.hex; button.addEventListener('click', () => applyColorValue(color.hex)); recentColorsList.appendChild(button);
+    });
+  }
 
   function renderSwatches() {
     swatchesList.innerHTML = '';
     state.keyColors.forEach((color, index) => {
       const item = document.createElement('div');
       item.className = 'swatch-item';
+      item.tabIndex = 100 + index;
+      item.setAttribute('role', 'button');
+      item.setAttribute('aria-label', `Select key color ${color.hex}`);
       item.innerHTML = `
         <span class="swatch-color-box" style="background-color: ${color.hex}"></span>
         <span>${color.hex}</span>
         <button class="swatch-remove" data-index="${index}" title="Remove color">&times;</button>
       `;
       swatchesList.appendChild(item);
+      item.addEventListener('click', (event) => {
+        if (event.target.closest('.swatch-remove')) return;
+        state.activeColorIndex = index;
+        inputColorHex.dataset.lastEdited = 'hex';
+        if (inputColorHex && inputColorRgb) { inputColorHex.value = color.hex; inputColorRgb.value = `rgb(${color.r}, ${color.g}, ${color.b})`; }
+        swatchesList.querySelectorAll('.swatch-item').forEach((node, nodeIndex) => node.classList.toggle('active', nodeIndex === index));
+      });
     });
 
     // Attach remove handlers
     swatchesList.querySelectorAll('.swatch-remove').forEach((btn) => {
+      btn.tabIndex = 110 + Number(btn.getAttribute('data-index'));
       btn.addEventListener('click', (e) => {
         const idx = parseInt(e.target.getAttribute('data-index'), 10);
         state.keyColors.splice(idx, 1);
+        if (state.activeColorIndex === idx) state.activeColorIndex = null;
+        else if (Number.isInteger(state.activeColorIndex) && state.activeColorIndex > idx) state.activeColorIndex -= 1;
         renderSwatches();
+        saveClipStateDebounced();
       });
     });
   }
@@ -1709,6 +1886,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btnToggleCollapse.addEventListener('click', () => {
     const isHidden = settingsBody.style.display === 'none';
     settingsBody.style.display = isHidden ? 'block' : 'none';
+    btnToggleCollapse.setAttribute('aria-expanded', String(isHidden));
     lblCollapse.textContent = isHidden ? 'Collapse' : 'Expand';
     iconCollapse.setAttribute('data-lucide', isHidden ? 'chevron-up' : 'chevron-down');
     lucide.createIcons({ root: btnToggleCollapse });
@@ -2031,6 +2209,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.isPlaying) {
       startAnimationPreview();
     }
+    saveClipStateDebounced();
   });
 
   // Update viewport canvas render
@@ -2218,6 +2397,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       formData.append('startTime', state.trimStart.toString());
       formData.append('endTime', state.trimEnd.toString());
+      formData.append('playbackSpeed', String(state.playbackSpeed || 1));
       formData.append('downloadName', baseName);
 
       const resp = await fetch('/api/extract-audio', {
@@ -2275,6 +2455,7 @@ document.addEventListener('DOMContentLoaded', () => {
       formData.append('downloadName', baseName);
       formData.append('startTime', state.trimStart.toString());
       formData.append('endTime', state.trimEnd.toString());
+      formData.append('playbackSpeed', String(state.playbackSpeed || 1));
 
       const resp = await fetch('/api/export-bundle', {
         method: 'POST',

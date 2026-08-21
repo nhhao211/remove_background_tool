@@ -8,6 +8,8 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 5. **Sprite Sheet Preview Player**: Chạy animation preview trực tiếp với tính năng Play/Pause, Frame counter (VD: `9/24`), chuyển đổi xem Animation vs Full Sheet Grid, Zoom In/Out/Fit và Pan kéo chuột.
 6. **Export Audio dưới dạng MP3**: Tự động trích xuất âm thanh tương ứng với đoạn video đã cắt.
 7. **Download linh hoạt**: Tải về định dạng WebP / PNG trong suốt + Audio MP3 riêng lẻ hoặc tải trọn bộ gói file `.zip`.
+8. **Tốc độ phát nhất quán**: Speed (0.1x–16x) được lưu theo từng video, dùng cho preview/FPS và áp dụng tempo tương ứng khi xuất MP3/ZIP.
+9. **Bộ màu chroma key**: Nhập HEX/RGB, copy/paste, dùng lại màu gần đây và eyedropper; màu được lưu an toàn theo video.
 
 ---
 
@@ -45,6 +47,7 @@ Truy cập: **[http://localhost:3000](http://localhost:3000)**
 2. **Cắt ngắn video (Video Trim):**
    - Di chuyển thanh trượt trên Source Video hoặc nhập số giây vào ô **Trim Start** và **Trim End**.
    - Sử dụng các nút `[ Set Start ]` / `[ Set End ]` để gán nhanh thời điểm video đang phát.
+   - Kéo handle bằng chuột/touch; vùng cắt tối thiểu là 0.2 giây và có snap nhẹ theo mốc thời gian.
 
 3. **Xóa phông nền (Remove Background / Chroma Key):**
    - Nhấn nút **🎯 Pick Color from Video** và rê chuột lên video -> Một kính lúp phóng to sẽ hiện lên -> Click vào màu nền để tự động phát hiện mã màu và thêm vào danh sách.
@@ -60,6 +63,7 @@ Truy cập: **[http://localhost:3000](http://localhost:3000)**
    - **Crop (top, bottom, left, right)**: Cắt viền thừa xung quanh nhân vật.
    - **Download name**: Đặt tên file xuất ra (VD: `Lily_attack`).
    - **Auto FPS**: Tự động tính toán tốc độ khung hình phù hợp với độ dài video.
+   - **Video Speed** và **Reset** điều khiển tốc độ preview; state được khôi phục khi mở lại cùng video.
 
 5. **Tạo và Preview:**
    - Nhấn nút **⚙ Generate** màu xanh dương.
