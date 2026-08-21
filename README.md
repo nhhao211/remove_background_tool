@@ -1,0 +1,71 @@
+# Video Background Remover & Sprite Sheet Studio 🎬✨
+
+Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
+1. **Remove background từ video** với tính năng Chroma Key nâng cao, hỗ trợ đa màu sắc (multi-color), có công cụ Eyedropper click-to-detect trực tiếp trên video.
+2. **Cắt ngắn video tùy chỉnh (Trim Video)** với thanh timeline trực quan, hỗ trợ thiết lập Start Time và End Time.
+3. **Chuyển video thành Sprite Sheet** với số lượng **Columns (Cols)**, **Rows**, **Frames**, **Cell Size (px)** và **Crop (Top, Bottom, Left, Right)** hoàn toàn tùy chỉnh.
+4. **Cho phép đặt tên file (Download name)** khi xuất kết quả.
+5. **Sprite Sheet Preview Player**: Chạy animation preview trực tiếp với tính năng Play/Pause, Frame counter (VD: `9/24`), chuyển đổi xem Animation vs Full Sheet Grid, Zoom In/Out/Fit và Pan kéo chuột.
+6. **Export Audio dưới dạng MP3**: Tự động trích xuất âm thanh tương ứng với đoạn video đã cắt.
+7. **Download linh hoạt**: Tải về định dạng WebP / PNG trong suốt + Audio MP3 riêng lẻ hoặc tải trọn bộ gói file `.zip`.
+
+---
+
+## 🚀 Hướng dẫn cài đặt và khởi chạy
+
+### Yêu cầu hệ thống:
+- **NodeJS** (>= v18)
+- **FFmpeg** (đã được cài đặt trên hệ thống để trích xuất âm thanh MP3 chất lượng cao)
+
+### 1. Cài đặt thư viện:
+```bash
+npm install
+```
+
+### 2. Khởi chạy server:
+```bash
+npm start
+```
+Hoặc chế độ phát triển (auto reload):
+```bash
+npm run dev
+```
+
+### 3. Mở trên trình duyệt:
+Truy cập: **[http://localhost:3000](http://localhost:3000)**
+
+---
+
+## 🎯 Hướng dẫn sử dụng chi tiết
+
+1. **Tải video lên:**
+   - Kéo & thả video (.mp4, .webm, .mov, ...) vào vùng *Drag & drop video* hoặc nhấn nút **Browse**.
+   - Có thể nhấn **Load Demo Video** để thử nghiệm ngay lập tức với video mẫu có sẵn.
+
+2. **Cắt ngắn video (Video Trim):**
+   - Di chuyển thanh trượt trên Source Video hoặc nhập số giây vào ô **Trim Start** và **Trim End**.
+   - Sử dụng các nút `[ Set Start ]` / `[ Set End ]` để gán nhanh thời điểm video đang phát.
+
+3. **Xóa phông nền (Remove Background / Chroma Key):**
+   - Nhấn nút **🎯 Pick Color from Video** và rê chuột lên video -> Một kính lúp phóng to sẽ hiện lên -> Click vào màu nền để tự động phát hiện mã màu và thêm vào danh sách.
+   - Có thể click chọn thêm nhiều màu nền khác nhau nếu video có phông nền gradient hoặc bóng đổ.
+   - Điều chỉnh thanh trượt **Similarity (Color Tolerance)** để loại bỏ dải màu nền rộng hơn.
+   - Điều chỉnh **Blend (Edge Feathering)** để làm mịn rìa ảnh nhân vật, chống răng cưa.
+   - Điều chỉnh **Spill Suppression** để khử viền màu ám lên nhân vật.
+
+4. **Tùy chỉnh Sprite Sheet:**
+   - **Frames**: Số lượng frame cần trích xuất (VD: 24).
+   - **Cols & Rows**: Số cột và số hàng của sprite sheet (VD: 6 cột x 4 hàng = 24 frames).
+   - **Cell (native)**: Kích thước pixel mỗi ô (VD: 512px).
+   - **Crop (top, bottom, left, right)**: Cắt viền thừa xung quanh nhân vật.
+   - **Download name**: Đặt tên file xuất ra (VD: `Lily_attack`).
+   - **Auto FPS**: Tự động tính toán tốc độ khung hình phù hợp với độ dài video.
+
+5. **Tạo và Preview:**
+   - Nhấn nút **⚙ Generate** màu xanh dương.
+   - Xem chuyển động nhân vật trong khung **Sprite sheet preview** (nút `▶ Play / ⏸ Pause`).
+   - Nhấn nút `▦ Sheet` để xem toàn bộ lưới sprite sheet.
+
+6. **Tải về:**
+   - Nhấn **📥 Download WebP/PNG + audio** để tải gói `.zip` gồm cả Sprite Sheet và file `.mp3`.
+   - Hoặc mở menu thả xuống để tải riêng Sprite Sheet hoặc file Audio MP3.

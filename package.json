@@ -1,0 +1,17 @@
+{
+  "name": "video-background-remover-spritesheet",
+  "version": "1.0.0",
+  "description": "Remove background from video, convert to sprite sheet with customizable cols/rows, preview animation, video trimming, and audio extraction.",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}

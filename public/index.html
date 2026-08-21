@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video to Sprite Sheet & Background Remover</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <!-- Full-screen Drag & Drop Overlay -->
+  <div id="fullPageDropOverlay" class="fullpage-drop-overlay">
+    <div class="drop-modal-content">
+      <div class="drop-modal-icon">
+        <i data-lucide="upload-cloud" style="width: 48px; height: 48px; color: #3b82f6;"></i>
+      </div>
+      <h2>Thả file Video vào đây</h2>
+      <p>Hỗ trợ các định dạng .mp4, .webm, .mov, .avi, .mkv</p>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand-title">
+      <i data-lucide="layers" style="color: #3b82f6; width: 24px; height: 24px;"></i>
+      <span>SpriteSheet Studio</span>
+      <span class="brand-badge">PRO Chroma Key</span>
+    </div>
+    <div class="header-actions">
+      <button id="btnLoadDemo" class="sample-btn" title="Load sample video with audio">
+        <i data-lucide="play-circle" style="width: 16px; height: 16px;"></i>
+        <span>Load Demo Video</span>
+      </button>
+      <button id="btnToggleChecker" class="sample-btn" title="Toggle preview background style">
+        <i data-lucide="grid" style="width: 16px; height: 16px;"></i>
+        <span>Grid / Dark BG</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace Grid -->
+  <main class="main-workspace">
+    <!-- Top Row: Source Video & Sprite Sheet Preview -->
+    <div class="preview-grid">
+      
+      <!-- Source Video Card -->
+      <section class="preview-card" id="sourceVideoCard">
+        <div class="card-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="card-title">
+              <i data-lucide="video" style="width: 18px; height: 18px; color: #38bdf8;"></i>
+              Source video
+            </span>
+            <!-- Custom Playback Controls in Header -->
+            <div class="video-header-controls">
+              <button id="btnVideoPlayPause" class="btn-ctrl" title="Play/Pause Video (Space)">
+                <i data-lucide="play" id="iconVideoPlayPause" style="width: 13px; height: 13px;"></i>
+              </button>
+              <button id="btnVideoStepBack" class="btn-ctrl" title="Step -1 frame (Left Arrow)">
+                <i data-lucide="skip-back" style="width: 13px; height: 13px;"></i>
+              </button>
+              <button id="btnVideoStepForward" class="btn-ctrl" title="Step +1 frame (Right Arrow)">
+                <i data-lucide="skip-forward" style="width: 13px; height: 13px;"></i>
+              </button>
+              <span id="videoCurrentTimeDisplay" class="time-display-badge">00:00.00 / 00:00.00</span>
+            </div>
+          </div>
+          <span id="sourceVideoInfo" class="card-subtitle-info">No video loaded</span>
+        </div>
+        
+        <div class="video-viewport" id="videoViewport">
+          <video id="sourceVideo" class="video-element" playsinline crossOrigin="anonymous"></video>
+          
+          <!-- Viewport Drop Highlight -->
+          <div id="viewportDropOverlay" class="viewport-drop-overlay">
+            <i data-lucide="upload" style="width: 32px; height: 32px; color: #38bdf8;"></i>
+            <span>Thả để tải video này</span>
+          </div>
+
+          <!-- Eyedropper Active Notice Banner -->
+          <div id="eyedropperBanner" class="eyedropper-banner">
+            <div class="eyedropper-banner-left">
+              <i data-lucide="crosshair" style="width: 16px; height: 16px; color: #38bdf8;"></i>
+              <span>Click Video/Preview để lấy màu · Cuộn để zoom · Kéo để pan</span>
+              <span id="eyedropperZoomBadge" class="eyedropper-zoom-badge">100%</span>
+            </div>
+            <div class="eyedropper-banner-right">
+              <button id="btnResetEyedropperZoom" class="time-btn" title="Reset zoom về 100%">Reset Zoom</button>
+              <button id="btnCancelEyedropper" class="time-btn" style="padding: 2px 8px; color: #f87171;">✕ Thoát</button>
+            </div>
+          </div>
+
+          <!-- Eyedropper Interaction Surface Layer -->
+          <div id="eyedropperOverlay" class="eyedropper-overlay"></div>
+
+          <!-- Crop Boundary Box Overlay -->
+          <div id="cropOverlay" class="crop-overlay"></div>
+
+          <!-- Eyedropper Magnifier Loupe -->
+          <div id="eyedropperLoupe" class="eyedropper-loupe">
+            <canvas id="eyedropperCanvas" class="eyedropper-canvas" width="60" height="60"></canvas>
+            <div class="eyedropper-crosshair"></div>
+            <div class="eyedropper-info-box">
+              <div id="eyedropperColorBadge" class="eyedropper-color-badge"></div>
+              <div class="eyedropper-text-values">
+                <span id="eyedropperHex" class="eyedropper-hex">#000000</span>
+                <span id="eyedropperRgb" class="eyedropper-rgb">rgb(0,0,0)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CapCut-style Video Editor Timeline -->
+        <div class="video-editor-panel">
+          <!-- Toolbar: cut / duplicate / delete / mute + playback -->
+          <div class="editor-toolbar">
+            <div class="editor-tools-left">
+              <button id="btnEditorSplit" class="editor-tool-btn" title="Cắt tại vị trí playhead (Split)">
+                <i data-lucide="scissors" style="width: 16px; height: 16px;"></i>
+              </button>
+              <button id="btnEditorDuplicate" class="editor-tool-btn" title="Nhân bản đoạn cắt hiện tại">
+                <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
+              </button>
+              <button id="btnEditorDelete" class="editor-tool-btn" title="Xóa đoạn cắt (reset về full video)">
+                <i data-lucide="trash-2" style="width: 16px; height: 16px;"></i>
+              </button>
+              <div class="editor-toolbar-divider"></div>
+              <button id="btnEditorMute" class="editor-tool-btn" title="Tắt / bật tiếng">
+                <i data-lucide="volume-2" id="iconEditorMute" style="width: 16px; height: 16px;"></i>
+              </button>
+              <div class="editor-toolbar-divider"></div>
+              <!-- Speed up control -->
+              <div class="speed-control" title="Tốc độ phát video (Speed up / Slow down)">
+                <i data-lucide="gauge" style="width: 14px; height: 14px; color: #a3a3a3;"></i>
+                <span class="speed-label">Speed</span>
+                <div class="speed-presets" id="speedPresets">
+                  <button type="button" class="speed-preset-btn" data-speed="0.5">0.5x</button>
+                  <button type="button" class="speed-preset-btn" data-speed="0.75">0.75x</button>
+                  <button type="button" class="speed-preset-btn active" data-speed="1">1x</button>
+                  <button type="button" class="speed-preset-btn" data-speed="1.5">1.5x</button>
+                  <button type="button" class="speed-preset-btn" data-speed="2">2x</button>
+                  <button type="button" class="speed-preset-btn" data-speed="3">3x</button>
+                  <button type="button" class="speed-preset-btn" data-speed="4">4x</button>
+                </div>
+                <input type="number" id="inputSpeedCustom" class="speed-custom-input" min="0.1" max="16" step="0.05" value="1" title="Nhập tốc độ tùy chỉnh (0.1x – 16x)">
+                <span class="speed-unit">x</span>
+              </div>
+            </div>
+            <div class="editor-tools-center">
+              <span id="editorCurrentTime" class="editor-time-label">00:00.00</span>
+              <button id="btnEditorSkipBack" class="editor-tool-btn editor-play-btn" title="Lùi 1 giây">
+                <i data-lucide="chevrons-left" style="width: 18px; height: 18px;"></i>
+              </button>
+              <button id="btnEditorPlay" class="editor-tool-btn editor-play-main" title="Play / Pause">
+                <i data-lucide="play" id="iconEditorPlay" style="width: 18px; height: 18px;"></i>
+              </button>
+              <button id="btnEditorSkipForward" class="editor-tool-btn editor-play-btn" title="Tới 1 giây">
+                <i data-lucide="chevrons-right" style="width: 18px; height: 18px;"></i>
+              </button>
+              <span id="editorTotalTime" class="editor-time-label">00:00.00</span>
+            </div>
+            <div class="editor-tools-right">
+              <span id="speedEffectiveHint" class="speed-effective-hint">Eff. 0.00s</span>
+              <button id="btnSetTrimStart" class="time-btn" title="Gán Trim Start = thời điểm hiện tại">[ Set Start ]</button>
+              <button id="btnSetTrimEnd" class="time-btn" title="Gán Trim End = thời điểm hiện tại">[ Set End ]</button>
+              <button id="btnResetTrim" class="time-btn" title="Reset trim về full video">Reset</button>
+            </div>
+          </div>
+
+          <!-- Timeline: ruler + filmstrip clip + playhead -->
+          <div class="editor-timeline-wrap" id="editorTimelineWrap">
+            <div class="editor-ruler" id="editorRuler"></div>
+            <div class="editor-track" id="editorTrack">
+              <div class="editor-clip selected" id="editorClip">
+                <div class="clip-label" id="editorClipLabel">No video</div>
+                <div class="clip-filmstrip" id="editorFilmstrip"></div>
+                <div class="clip-handle clip-handle-left" id="trimHandleLeft" title="Kéo để cắt đầu video"></div>
+                <div class="clip-handle clip-handle-right" id="trimHandleRight" title="Kéo để cắt cuối video"></div>
+              </div>
+              <div class="clip-dim clip-dim-left" id="clipDimLeft"></div>
+              <div class="clip-dim clip-dim-right" id="clipDimRight"></div>
+              <div class="editor-playhead" id="editorPlayhead">
+                <div class="playhead-knob"></div>
+                <div class="playhead-line"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Numeric trim inputs (synced with drag handles) -->
+          <div class="trim-inputs">
+            <div class="trim-time-group">
+              <span>Trim Start:</span>
+              <input type="number" id="trimStartInput" class="form-input" style="width: 75px; padding: 2px 6px; height: 24px; font-size: 0.75rem;" step="0.05" min="0" value="0.00">
+            </div>
+            <div class="trim-time-group">
+              <span>Trim End:</span>
+              <input type="number" id="trimEndInput" class="form-input" style="width: 75px; padding: 2px 6px; height: 24px; font-size: 0.75rem;" step="0.05" min="0" value="0.00">
+            </div>
+          </div>
+
+          <!-- Legacy hooks kept for JS compatibility (hidden) -->
+          <div id="trimTimeline" class="trim-timeline" style="display:none;" aria-hidden="true">
+            <div id="trimProgress" class="trim-progress"></div>
+            <div id="trimPlayhead" class="trim-playhead"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sprite Sheet Preview Card -->
+      <section class="preview-card">
+        <div class="card-header">
+          <div class="preview-controls">
+            <button id="btnPlayPause" class="btn-ctrl active">
+              <i data-lucide="play" id="iconPlayPause" style="width: 14px; height: 14px;"></i>
+              <span id="textPlayPause">Play</span>
+            </button>
+            <button id="btnToggleMode" class="btn-ctrl">
+              <i data-lucide="layout-grid" style="width: 14px; height: 14px;"></i>
+              <span id="textToggleMode">Sheet</span>
+            </button>
+            <span id="frameCounter" class="frame-badge">0/0</span>
+            <button id="btnZoomOut" class="btn-ctrl" title="Zoom Out">-</button>
+            <span id="zoomLevel" class="zoom-indicator">100%</span>
+            <button id="btnZoomIn" class="btn-ctrl" title="Zoom In">+</button>
+            <button id="btnZoomFit" class="btn-ctrl" title="Fit to View">Fit</button>
+          </div>
+          <span class="card-subtitle-info">Auto-play · wheel to zoom</span>
+        </div>
+        <div class="sprite-viewport checkerboard-bg" id="spriteViewport">
+          <canvas id="previewCanvas" class="sprite-canvas"></canvas>
+
+          <!-- Eyedropper on Preview -->
+          <div id="previewEyedropperBanner" class="eyedropper-banner preview-eyedropper-banner">
+            <div class="eyedropper-banner-left">
+              <i data-lucide="pipette" style="width: 16px; height: 16px; color: #38bdf8;"></i>
+              <span>Pick từ Preview · Cuộn để zoom · Click để lấy màu</span>
+            </div>
+            <button id="btnCancelPreviewEyedropper" class="time-btn" style="padding: 2px 8px; color: #f87171;">✕ Thoát</button>
+          </div>
+          <div id="previewEyedropperOverlay" class="eyedropper-overlay"></div>
+          <div id="previewEyedropperLoupe" class="eyedropper-loupe">
+            <canvas id="previewEyedropperCanvas" class="eyedropper-canvas" width="60" height="60"></canvas>
+            <div class="eyedropper-crosshair"></div>
+            <div class="eyedropper-info-box">
+              <div id="previewEyedropperColorBadge" class="eyedropper-color-badge"></div>
+              <div class="eyedropper-text-values">
+                <span id="previewEyedropperHex" class="eyedropper-hex">#000000</span>
+                <span id="previewEyedropperRgb" class="eyedropper-rgb">rgb(0,0,0)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Bottom Section: Sprite Sheet Settings Panel -->
+    <section class="settings-card">
+      <!-- Action Bar -->
+      <div class="settings-action-bar">
+        <div class="action-buttons-group">
+          <button id="btnGenerate" class="btn-primary-blue">
+            <i data-lucide="settings" style="width: 16px; height: 16px;"></i>
+            <span>Generate</span>
+          </button>
+
+          <!-- Download Button with Dropdown -->
+          <div class="download-dropdown">
+            <button id="btnDownloadMain" class="btn-primary-green">
+              <i data-lucide="download" style="width: 16px; height: 16px;"></i>
+              <span id="lblDownloadBtn">Download WebP + audio</span>
+              <i data-lucide="chevron-down" style="width: 14px; height: 14px; margin-left: 2px;"></i>
+            </button>
+            <div id="downloadDropdownMenu" class="dropdown-menu">
+              <button class="dropdown-item" id="btnDownloadBundleZip">
+                <i data-lucide="archive" style="width: 15px; height: 15px; color: #10b981;"></i>
+                <span>Download All (.zip bundle)</span>
+              </button>
+              <button class="dropdown-item" id="btnDownloadSpriteOnly">
+                <i data-lucide="image" style="width: 15px; height: 15px; color: #38bdf8;"></i>
+                <span id="lblSpriteOnly">Download Sprite Sheet Only</span>
+              </button>
+              <button class="dropdown-item" id="btnDownloadAudioOnly">
+                <i data-lucide="music" style="width: 15px; height: 15px; color: #f59e0b;"></i>
+                <span>Download Audio Only (.mp3)</span>
+              </button>
+            </div>
+          </div>
+
+          <button id="btnBrowseFile" class="btn-browse">
+            <i data-lucide="folder-open" style="width: 15px; height: 15px;"></i>
+            <span>Browse</span>
+          </button>
+
+          <span id="activeFilenameLabel" class="file-info-title">Sprite sheet settings</span>
+        </div>
+
+        <button id="btnToggleCollapse" class="btn-collapse">
+          <i data-lucide="chevron-up" id="iconCollapse" style="width: 14px; height: 14px;"></i>
+          <span id="lblCollapse">Collapse</span>
+        </button>
+      </div>
+
+      <!-- Hidden Video File Input -->
+      <input type="file" id="videoFileInput" accept="video/*" style="display: none;">
+
+      <!-- Drag & Drop Zone -->
+      <div id="dropZone" class="drop-zone">
+        <div class="drop-content">
+          <i data-lucide="clapperboard" style="width: 20px; height: 20px; color: #64748b;"></i>
+          <span>Drag & drop video <strong id="dropZoneFilename" class="drop-file-name">No file selected</strong></span>
+        </div>
+        <button id="btnBrowseSecondary" class="btn-browse" style="padding: 4px 10px; font-size: 0.8rem;">
+          <i data-lucide="folder-open" style="width: 14px; height: 14px;"></i>
+          <span>Browse</span>
+        </button>
+      </div>
+
+      <!-- Generation Progress Bar -->
+      <div id="progressBarContainer" class="progress-bar-container" style="margin: 0 16px 10px 16px;">
+        <div id="progressBarFill" class="progress-bar-fill"></div>
+      </div>
+
+      <!-- Settings Grid Body -->
+      <div id="settingsBody" class="settings-body">
+        <div class="settings-grid">
+          
+          <!-- Column 1: Frames, Original Resolution, Rows, Crop Bottom, Crop Right, Similarity, Green Screen -->
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            
+            <div class="form-group">
+              <label class="form-label" for="inputFrames">
+                <span>Frames</span>
+                <span class="hint">Total sampled frames</span>
+              </label>
+              <input type="number" id="inputFrames" class="form-input" min="1" max="500" value="24">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Original resolution</label>
+              <label class="checkbox-row">
+                <input type="checkbox" id="chkKeepSourceSize" checked>
+                <span>Keep source size</span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="inputRows">
+                <span>Rows</span>
+                <span class="hint">Grid height</span>
+              </label>
+              <input type="number" id="inputRows" class="form-input" min="1" max="100" value="4">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="inputCropBottom">Crop bottom (px)</label>
+              <input type="number" id="inputCropBottom" class="form-input" min="0" value="0">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="inputCropRight">Crop right (px)</label>
+              <input type="number" id="inputCropRight" class="form-input" min="0" value="0">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="sliderSimilarity">
+                <span>Similarity (Color Tolerance)</span>
+                <span class="hint">Higher = removes more background shades</span>
+              </label>
+              <div class="slider-group">
+                <input type="range" id="sliderSimilarity" min="0" max="1" step="0.01" value="0.92">
+                <span id="lblSimilarityVal" class="slider-value">0.92</span>
+              </div>
+            </div>
+
+            <!-- Chroma Key / Green Screen Removal Options -->
+            <div class="form-group">
+              <label class="form-label">
+                <span>Green screen / Chroma key</span>
+                <span class="hint">Multi-color background removal</span>
+              </label>
+              
+              <div class="color-key-container">
+                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                  <label class="checkbox-row" style="height: auto;">
+                    <input type="checkbox" id="chkTransparentFormat" checked>
+                    <span id="lblFormatName">Transparent WebP</span>
+                  </label>
+                  
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <select id="selectFormat" class="form-input" style="width: 90px; padding: 2px 6px; height: 28px; font-size: 0.75rem;">
+                      <option value="webp" selected>WebP</option>
+                      <option value="png">PNG</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Eyedropper & Color Swatches -->
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
+                  <button id="btnPickColor" class="eyedropper-trigger-btn" title="Pick màu từ Source Video hoặc Sprite Preview">
+                    <i data-lucide="pipette" style="width: 13px; height: 13px;"></i>
+                    <span>Pick Color from Video / Preview</span>
+                  </button>
+
+                  <div style="display: flex; align-items: center; gap: 4px;">
+                    <input type="color" id="manualColorInput" value="#0024f5" style="width: 28px; height: 28px; border: none; border-radius: 4px; cursor: pointer; background: transparent;">
+                    <button id="btnAddManualColor" class="time-btn" style="height: 28px; padding: 0 8px;">+ Add</button>
+                  </div>
+                </div>
+
+                <!-- Active Key Colors List -->
+                <div id="swatchesList" class="color-swatches">
+                  <!-- Swatches dynamically injected here -->
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Column 2: Cell Native, Cols, Crop Top, Crop Left, Download Name, Blend, Spill Suppression -->
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            
+            <div class="form-group">
+              <label class="form-label" for="inputCellNative">
+                <span>Cell (native)</span>
+                <span class="hint">Cell width/height (px)</span>
+              </label>
+              <input type="number" id="inputCellNative" class="form-input" min="16" max="4096" value="512">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="inputCols">
+                <span>Cols</span>
+                <span class="hint">Grid width</span>
+              </label>
+              <input type="number" id="inputCols" class="form-input" min="1" max="100" value="6">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="inputCropTop">Crop top (px)</label>
+              <input type="number" id="inputCropTop" class="form-input" min="0" value="0">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="inputCropLeft">Crop left (px)</label>
+              <input type="number" id="inputCropLeft" class="form-input" min="0" value="0">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="inputDownloadName">
+                <span>Download name</span>
+                <span class="hint">Output file name</span>
+              </label>
+              <input type="text" id="inputDownloadName" class="form-input" value="Lily_attack" placeholder="sprite_output">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="sliderBlend">
+                <span>Blend (Edge Feathering)</span>
+                <span class="hint">Smooths alpha transitions</span>
+              </label>
+              <div class="slider-group">
+                <input type="range" id="sliderBlend" min="0" max="1" step="0.01" value="0.25">
+                <span id="lblBlendVal" class="slider-value">0.25</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="sliderSpill">
+                <span>Spill Suppression</span>
+                <span class="hint">Removes colored halos from character edges</span>
+              </label>
+              <div class="slider-group">
+                <input type="range" id="sliderSpill" min="0" max="1" step="0.01" value="0.40">
+                <span id="lblSpillVal" class="slider-value">0.40</span>
+              </div>
+            </div>
+
+            <!-- Video Speed + Preview FPS -->
+            <div class="form-group">
+              <label class="form-label" for="inputSpeedCustomSettings">
+                <span>Video Speed</span>
+                <span class="hint">Speed up / slow down source playback</span>
+              </label>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="number" id="inputSpeedCustomSettings" class="form-input" min="0.1" max="16" step="0.05" value="1" style="width: 80px;">
+                <span style="font-size: 0.8rem; color: #94a3b8;">x</span>
+                <span id="lblSpeedSettings" class="slider-value">1.00x</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="inputFps">
+                <span>Preview FPS</span>
+                <span class="hint">Sprite playback (Auto FPS tính theo Speed)</span>
+              </label>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="number" id="inputFps" class="form-input" min="1" max="60" value="12" style="width: 80px;">
+                <button id="btnAutoFps" class="time-btn" style="height: 36px; padding: 0 10px;" title="Tính FPS theo độ dài trim và Video Speed">Auto FPS</button>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- App Script -->
+  <script src="js/app.js"></script>
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>
