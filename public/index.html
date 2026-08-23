@@ -224,6 +224,10 @@
             <span id="zoomLevel" class="zoom-indicator">100%</span>
             <button id="btnZoomIn" class="btn-ctrl" title="Zoom In">+</button>
             <button id="btnZoomFit" class="btn-ctrl" title="Fit to View">Fit</button>
+            <label class="preview-bg-picker" title="Preview background color">
+              <span>BG</span>
+              <input type="color" id="inputPreviewBgColor" value="#111827" aria-label="Preview background color">
+            </label>
           </div>
           <span class="card-subtitle-info">Auto-play · wheel to zoom</span>
         </div>
@@ -255,8 +259,8 @@
 
     </div>
 
-    <!-- Bottom Section: Sprite Sheet Settings Panel -->
-    <section class="settings-card">
+    <!-- Left Sidebar: Sprite Sheet Settings Panel -->
+    <section class="settings-card settings-sidebar">
       <!-- Action Bar -->
       <div class="settings-action-bar">
         <div class="action-buttons-group">
@@ -322,17 +326,12 @@
         <div id="progressBarFill" class="progress-bar-fill"></div>
       </div>
 
-      <!-- Settings Grid Body -->
+      <!-- Settings Sidebar Body -->
       <div id="settingsBody" class="settings-body">
-        <div class="settings-grid">
-          
-          <!-- Column 1: Frames, Original Resolution, Rows, Crop Bottom, Crop Right, Similarity, Green Screen -->
-          <div style="display: flex; flex-direction: column; gap: 14px;">
-            
+        <div class="settings-grid settings-sidebar-grid">
             <div class="form-group">
               <label class="form-label" for="inputFrames">
                 <span>Frames</span>
-                <span class="hint">Total sampled frames</span>
               </label>
               <input type="number" id="inputFrames" class="form-input compact-number" min="1" max="500" value="24">
             </div>
@@ -348,102 +347,22 @@
             <div class="form-group">
               <label class="form-label" for="inputRows">
                 <span>Rows</span>
-                <span class="hint">Grid height</span>
               </label>
               <input type="number" id="inputRows" class="form-input compact-number" min="1" max="100" value="4">
             </div>
 
             <div class="form-group">
-              <label class="form-label" for="inputCropBottom">Crop bottom (px)</label>
-              <input type="number" id="inputCropBottom" class="form-input compact-number" min="0" value="0">
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="inputCropRight">Crop right (px)</label>
-              <input type="number" id="inputCropRight" class="form-input compact-number" min="0" value="0">
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="sliderSimilarity">
-                <span>Similarity (Color Tolerance)</span>
-                <span class="hint">Higher = removes more background shades</span>
+              <label class="form-label" for="inputCols">
+                <span>Cols</span>
               </label>
-              <div class="slider-group">
-                <input type="range" id="sliderSimilarity" min="0" max="1" step="0.01" value="0.92">
-                <span id="lblSimilarityVal" class="slider-value">0.92</span>
-              </div>
+              <input type="number" id="inputCols" class="form-input compact-number" min="1" max="100" value="6">
             </div>
 
-            <!-- Chroma Key / Green Screen Removal Options -->
-            <div class="form-group">
-              <label class="form-label">
-                <span>Green screen / Chroma key</span>
-                <span class="hint">Multi-color background removal</span>
-              </label>
-              
-              <div class="color-key-container">
-                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                  <label class="checkbox-row" style="height: auto;">
-                    <input type="checkbox" id="chkTransparentFormat" checked>
-                    <span id="lblFormatName">Transparent WebP</span>
-                  </label>
-                  
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <select id="selectFormat" class="form-input compact-select">
-                      <option value="webp" selected>WebP</option>
-                      <option value="png">PNG</option>
-                    </select>
-                  </div>
-                </div>
-
-                <!-- Eyedropper & Color Swatches -->
-                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
-                  <button id="btnPickColor" class="eyedropper-trigger-btn" title="Pick màu từ Source Video hoặc Sprite Preview">
-                    <i data-lucide="pipette" style="width: 13px; height: 13px;"></i>
-                    <span>Pick Color from Video / Preview</span>
-                  </button>
-
-                  <div style="display: flex; align-items: center; gap: 4px;">
-                    <input type="color" id="manualColorInput" value="#0024f5" class="manual-color-input">
-                    <button id="btnAddManualColor" class="time-btn" style="height: 28px; padding: 0 8px;">+ Add</button>
-                  </div>
-                </div>
-                <div class="color-value-editor" role="group" aria-label="Color value">
-                  <input id="inputColorHex" class="form-input color-text-input" value="#0024f5" placeholder="#RRGGBB" aria-label="HEX color">
-                  <input id="inputColorRgb" class="form-input color-text-input" placeholder="rgb(0, 36, 245)" aria-label="RGB color">
-                  <button id="btnApplyColorValue" class="time-btn" type="button">Apply</button>
-                  <button id="btnCopyColor" class="time-btn" type="button" title="Copy color">Copy</button>
-                  <button id="btnPasteColor" class="time-btn" type="button" title="Paste color">Paste</button>
-                </div>
-                <div id="colorInputError" class="color-input-error" role="alert" aria-live="polite"></div>
-                <div class="recent-colors-row"><span>Recent</span><div id="recentColorsList" class="recent-colors-list"></div></div>
-
-                <!-- Active Key Colors List -->
-                <div id="swatchesList" class="color-swatches">
-                  <!-- Swatches dynamically injected here -->
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          <!-- Column 2: Cell Native, Cols, Crop Top, Crop Left, Download Name, Blend, Spill Suppression -->
-          <div style="display: flex; flex-direction: column; gap: 14px;">
-            
             <div class="form-group">
               <label class="form-label" for="inputCellNative">
                 <span>Cell (native)</span>
-                <span class="hint">Cell width/height (px)</span>
               </label>
               <input type="number" id="inputCellNative" class="form-input compact-number" min="16" max="4096" value="512">
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="inputCols">
-                <span>Cols</span>
-                <span class="hint">Grid width</span>
-              </label>
-              <input type="number" id="inputCols" class="form-input compact-number" min="1" max="100" value="6">
             </div>
 
             <div class="form-group">
@@ -452,45 +371,31 @@
             </div>
 
             <div class="form-group">
+              <label class="form-label" for="inputCropBottom">Crop bottom (px)</label>
+              <input type="number" id="inputCropBottom" class="form-input compact-number" min="0" value="0">
+            </div>
+
+            <div class="form-group">
               <label class="form-label" for="inputCropLeft">Crop left (px)</label>
               <input type="number" id="inputCropLeft" class="form-input compact-number" min="0" value="0">
             </div>
 
             <div class="form-group">
+              <label class="form-label" for="inputCropRight">Crop right (px)</label>
+              <input type="number" id="inputCropRight" class="form-input compact-number" min="0" value="0">
+            </div>
+
+            <div class="form-group">
               <label class="form-label" for="inputDownloadName">
                 <span>Download name</span>
-                <span class="hint">Output file name</span>
               </label>
               <input type="text" id="inputDownloadName" class="form-input" value="Lily_attack" placeholder="sprite_output">
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="sliderBlend">
-                <span>Blend (Edge Feathering)</span>
-                <span class="hint">Smooths alpha transitions</span>
-              </label>
-              <div class="slider-group">
-                <input type="range" id="sliderBlend" min="0" max="1" step="0.01" value="0.25">
-                <span id="lblBlendVal" class="slider-value">0.25</span>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="sliderSpill">
-                <span>Spill Suppression</span>
-                <span class="hint">Removes colored halos from character edges</span>
-              </label>
-              <div class="slider-group">
-                <input type="range" id="sliderSpill" min="0" max="1" step="0.01" value="0.40">
-                <span id="lblSpillVal" class="slider-value">0.40</span>
-              </div>
             </div>
 
             <!-- Video Speed + Preview FPS -->
             <div class="form-group">
               <label class="form-label" for="inputSpeedCustomSettings">
                 <span>Video Speed</span>
-                <span class="hint">Speed up / slow down source playback</span>
               </label>
               <div class="number-field-row">
                 <input type="number" id="inputSpeedCustomSettings" class="form-input compact-speed" min="0.1" max="16" step="0.05" value="1">
@@ -503,16 +408,104 @@
             <div class="form-group">
               <label class="form-label" for="inputFps">
                 <span>Preview FPS</span>
-                <span class="hint">Sprite playback (Auto FPS tính theo Speed)</span>
               </label>
               <div class="number-field-row">
                 <input type="number" id="inputFps" class="form-input compact-fps" min="1" max="60" value="12">
-                <button id="btnAutoFps" class="time-btn" style="height: 36px; padding: 0 10px;" title="Tính FPS theo độ dài trim và Video Speed">Auto FPS</button>
+                <button id="btnAutoFps" class="time-btn" title="Tính FPS theo độ dài trim và Video Speed">Auto FPS</button>
               </div>
             </div>
+        </div>
+      </div>
+    </section>
 
+    <!-- Bottom Section: Chroma Key Settings Panel -->
+    <section class="settings-card chroma-card">
+      <div class="settings-body chroma-body">
+        <div class="settings-grid chroma-grid">
+          <div class="form-group">
+            <label class="form-label" for="sliderSimilarity">
+              <span>Similarity (Color Tolerance)</span>
+              <span class="hint">Higher = removes more background shades</span>
+            </label>
+            <div class="slider-group">
+              <input type="range" id="sliderSimilarity" min="0" max="1" step="0.01" value="0.92">
+              <span id="lblSimilarityVal" class="slider-value">0.92</span>
+            </div>
           </div>
 
+          <div class="form-group">
+            <label class="form-label" for="sliderBlend">
+              <span>Blend (Edge Feathering)</span>
+              <span class="hint">Smooths alpha transitions</span>
+            </label>
+            <div class="slider-group">
+              <input type="range" id="sliderBlend" min="0" max="1" step="0.01" value="0.25">
+              <span id="lblBlendVal" class="slider-value">0.25</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="sliderSpill">
+              <span>Spill Suppression</span>
+              <span class="hint">Removes colored halos from character edges</span>
+            </label>
+            <div class="slider-group">
+              <input type="range" id="sliderSpill" min="0" max="1" step="0.01" value="0.40">
+              <span id="lblSpillVal" class="slider-value">0.40</span>
+            </div>
+          </div>
+
+          <!-- Chroma Key / Green Screen Removal Options -->
+          <div class="form-group chroma-key-group">
+            <label class="form-label">
+              <span>Green screen / Chroma key</span>
+              <span class="hint">Multi-color background removal</span>
+            </label>
+            
+            <div class="color-key-container">
+              <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <label class="checkbox-row" style="height: auto;">
+                  <input type="checkbox" id="chkTransparentFormat" checked>
+                  <span id="lblFormatName">Transparent WebP</span>
+                </label>
+                
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <select id="selectFormat" class="form-input compact-select">
+                    <option value="webp" selected>WebP</option>
+                    <option value="png">PNG</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Eyedropper & Color Swatches -->
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
+                <button id="btnPickColor" class="eyedropper-trigger-btn" title="Pick màu từ Source Video hoặc Sprite Preview">
+                  <i data-lucide="pipette" style="width: 13px; height: 13px;"></i>
+                  <span>Pick Color from Video / Preview</span>
+                </button>
+
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <input type="color" id="manualColorInput" value="#0024f5" class="manual-color-input">
+                  <button id="btnAddManualColor" class="time-btn" style="height: 28px; padding: 0 8px;">+ Add</button>
+                  <button id="btnClearKeyColors" class="time-btn color-clear-btn" type="button" title="Clear all picked chroma-key colors">Clear all</button>
+                </div>
+              </div>
+              <div class="color-value-editor" role="group" aria-label="Color value">
+                <input id="inputColorHex" class="form-input color-text-input" value="#0024f5" placeholder="#RRGGBB" aria-label="HEX color">
+                <input id="inputColorRgb" class="form-input color-text-input" placeholder="rgb(0, 36, 245)" aria-label="RGB color">
+                <button id="btnApplyColorValue" class="time-btn" type="button">Apply</button>
+                <button id="btnCopyColor" class="time-btn" type="button" title="Copy color">Copy</button>
+                <button id="btnPasteColor" class="time-btn" type="button" title="Paste color">Paste</button>
+              </div>
+              <div id="colorInputError" class="color-input-error" role="alert" aria-live="polite"></div>
+              <div class="recent-colors-row"><span>Recent</span><div id="recentColorsList" class="recent-colors-list"></div></div>
+
+              <!-- Active Key Colors List -->
+              <div id="swatchesList" class="color-swatches">
+                <!-- Swatches dynamically injected here -->
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>

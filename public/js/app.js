@@ -5,6 +5,8 @@
 import { EditorUtils as U } from './editor-utils.js';
 
 document.addEventListener('DOMContentLoaded', () => {
+  const DEFAULT_AUTO_FPS = 12;
+
   // === DOM ELEMENTS ===
   const video = document.getElementById('sourceVideo');
   const videoViewport = document.getElementById('videoViewport');
@@ -90,6 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnZoomFit = document.getElementById('btnZoomFit');
   const zoomLevel = document.getElementById('zoomLevel');
   const btnToggleChecker = document.getElementById('btnToggleChecker');
+  const inputPreviewBgColor = document.getElementById('inputPreviewBgColor');
 
   // Actions & Inputs
   const btnGenerate = document.getElementById('btnGenerate');
@@ -143,6 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnPickColor = document.getElementById('btnPickColor');
   const manualColorInput = document.getElementById('manualColorInput');
   const btnAddManualColor = document.getElementById('btnAddManualColor');
+  const btnClearKeyColors = document.getElementById('btnClearKeyColors');
   const swatchesList = document.getElementById('swatchesList');
   const inputColorHex = document.getElementById('inputColorHex');
   const inputColorRgb = document.getElementById('inputColorRgb');
@@ -166,20 +170,21 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputSpeedCustom', 'btnEditorSkipBack', 'btnEditorPlay', 'btnEditorSkipForward',
       'btnSetTrimStart', 'btnSetTrimEnd', 'btnResetTrim', 'trimHandleLeft', 'trimHandleRight',
       'trimStartInput', 'trimEndInput',
-      'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'btnCancelPreviewEyedropper',
+      'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'inputPreviewBgColor', 'btnCancelPreviewEyedropper',
       'btnGenerate', 'btnDownloadMain', 'btnDownloadBundleZip', 'btnDownloadSpriteOnly', 'btnDownloadAudioOnly',
       'btnBrowseFile', 'btnToggleCollapse', 'btnBrowseSecondary',
-      // Settings are ordered row-by-row: left column, then right column.
-      'inputFrames', 'inputCellNative',
-      'chkKeepSourceSize', 'inputCols',
-      'inputRows', 'inputCropTop',
-      'inputCropBottom', 'inputCropLeft',
-      'inputCropRight', 'inputDownloadName',
-      'sliderSimilarity', 'sliderBlend',
-      'chkTransparentFormat', 'sliderSpill',
-      'selectFormat', 'inputSpeedCustomSettings', 'btnResetSpeed',
-      'btnPickColor', 'inputFps', 'btnAutoFps',
-      'manualColorInput', 'btnAddManualColor',
+      // Sprite Sheet Settings (sidebar)
+      'inputFrames', 'chkKeepSourceSize',
+      'inputRows', 'inputCols', 'inputCellNative',
+      'inputCropTop', 'inputCropBottom', 'inputCropLeft', 'inputCropRight',
+      'inputDownloadName',
+      'inputSpeedCustomSettings', 'btnResetSpeed',
+      'inputFps', 'btnAutoFps',
+      // Chroma Key Settings
+      'sliderSimilarity', 'sliderBlend', 'sliderSpill',
+      'chkTransparentFormat', 'selectFormat',
+      'btnPickColor',
+      'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
       'inputColorHex', 'inputColorRgb', 'btnApplyColorValue', 'btnCopyColor', 'btnPasteColor'
     ];
     let index = 1;
@@ -239,6 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
     savedTrimBackup: null, // for duplicate
     isMuted: false,
     playbackSpeed: 1,
+    previewFpsIsManual: false,
     activeColorIndex: null,
     timelinePointerId: null,
     videoLoadToken: 0
@@ -274,7 +280,8 @@ document.addEventListener('DOMContentLoaded', () => {
       trimStart: state.trimStart,
       trimEnd: state.trimEnd,
       playbackSpeed: state.playbackSpeed,
-      previewFps: parseInt(inputFps.value, 10) || 12,
+      previewFps: parseInt(inputFps.value, 10) || DEFAULT_AUTO_FPS,
+      previewFpsIsManual: state.previewFpsIsManual,
       keyColors: state.keyColors,
       updatedAt: Date.now()
     };
@@ -499,8 +506,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderRuler();
     updateCropOverlay();
     setPlaybackSpeed(saved?.playbackSpeed ?? 1, { toast: false, persist: false });
-    if (saved?.previewFps) inputFps.value = String(Math.max(1, Math.min(60, Number(saved.previewFps) || 12)));
-    else autoComputeFPS();
+    state.previewFpsIsManual = Boolean(saved?.previewFpsIsManual);
+    if (saved?.previewFps) inputFps.value = String(Math.max(1, Math.min(60, Number(saved.previewFps) || DEFAULT_AUTO_FPS)));
+    else autoComputeFPS({ force: true });
     renderSwatches();
     updateVideoTimeDisplay();
     updateVideoPlayPauseBtn();
@@ -515,7 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateVideoTimeDisplay();
   });
 
-  // Load Demo video on start or button click
+  // Load demo only when requested.
   btnLoadDemo.addEventListener('click', () => {
     loadVideoSource('/samples/sample_blue_flower.mp4', 'sample_blue_flower.mp4');
   });
@@ -625,9 +633,6 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
   });
-
-  // Auto load demo on initial startup
-  loadVideoSource('/samples/sample_blue_flower.mp4', 'sample_blue_flower.mp4');
 
   // === TRIMMING CONTROLS + CAPCUT-STYLE TIMELINE EDITOR ===
   function updatePlayheadPosition() {
@@ -1065,13 +1070,13 @@ document.addEventListener('DOMContentLoaded', () => {
     renderRuler();
   });
 
-  function autoComputeFPS() {
-    const frames = parseInt(inputFrames.value, 10) || 24;
-    const sourceDuration = Math.max(U.MIN_TRIM_DURATION, state.trimEnd - state.trimStart);
-    const speed = Math.max(U.MIN_SPEED, state.playbackSpeed || 1);
-    const effectiveDuration = U.effectiveDuration(state.trimStart, state.trimEnd, speed);
-    const computedFps = Math.max(1, Math.min(60, Math.round(frames / effectiveDuration)));
-    inputFps.value = computedFps;
+  function autoComputeFPS({ force = false } = {}) {
+    if (!force && state.previewFpsIsManual) {
+      updateSpeedEffectiveHint();
+      return;
+    }
+    inputFps.value = DEFAULT_AUTO_FPS;
+    state.previewFpsIsManual = false;
     updateSpeedEffectiveHint();
   }
 
@@ -1174,9 +1179,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setPlaybackSpeed(1, { toast: false });
 
   btnAutoFps.addEventListener('click', () => {
-    autoComputeFPS();
+    autoComputeFPS({ force: true });
     saveClipStateDebounced();
-    showToast(`FPS set to ${inputFps.value} fps (Speed ${formatSpeedLabel(state.playbackSpeed)})`, 'info');
+    showToast(`Auto FPS set to ${DEFAULT_AUTO_FPS} fps`, 'info');
   });
 
   // === EXACT VIDEO RENDER BOX CALCULATION ===
@@ -1768,6 +1773,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const applied = applyColorValue(color.hex);
     if (applied) showToast(`Color ${color.hex} applied to Chroma Key`, 'info');
   });
+  btnClearKeyColors?.addEventListener('click', () => {
+    if (state.keyColors.length === 0) return;
+    state.keyColors = [];
+    state.activeColorIndex = null;
+    renderSwatches();
+    saveClipStateDebounced();
+    showToast('All chroma-key colors cleared', 'info');
+  });
   manualColorInput?.addEventListener('input', () => {
     const color = U.normalizeColor(manualColorInput.value);
     if (color && inputColorHex && inputColorRgb) {
@@ -1825,6 +1838,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderSwatches() {
     swatchesList.innerHTML = '';
+    if (btnClearKeyColors) btnClearKeyColors.disabled = state.keyColors.length === 0;
     state.keyColors.forEach((color, index) => {
       const item = document.createElement('div');
       item.className = 'swatch-item';
@@ -1897,9 +1911,16 @@ document.addEventListener('DOMContentLoaded', () => {
     spriteViewport.classList.toggle('checkerboard-bg');
     if (!spriteViewport.classList.contains('checkerboard-bg')) {
       spriteViewport.style.backgroundColor = '#05070a';
+      if (inputPreviewBgColor) inputPreviewBgColor.value = '#05070a';
     } else {
       spriteViewport.style.backgroundColor = '';
+      if (inputPreviewBgColor) inputPreviewBgColor.value = '#111827';
     }
+  });
+
+  inputPreviewBgColor?.addEventListener('input', () => {
+    spriteViewport.classList.remove('checkerboard-bg');
+    spriteViewport.style.backgroundColor = inputPreviewBgColor.value || '#111827';
   });
 
   // === CHROMA KEY BACKGROUND REMOVAL SHADER / FILTER ===
@@ -2206,6 +2227,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   inputFps.addEventListener('change', () => {
+    const fps = Math.max(1, Math.min(60, parseInt(inputFps.value, 10) || DEFAULT_AUTO_FPS));
+    inputFps.value = String(fps);
+    state.previewFpsIsManual = fps !== DEFAULT_AUTO_FPS;
     if (state.isPlaying) {
       startAnimationPreview();
     }
