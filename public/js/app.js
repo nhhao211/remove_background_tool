@@ -2041,12 +2041,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function generateSpriteSheet() {
     const totalFrames = parseInt(inputFrames.value, 10) || 24;
+    // The UI defines Rows as cells across the sheet and Cols as cells down.
+    const rows = parseInt(inputRows.value, 10) || 4;
     const cols = parseInt(inputCols.value, 10) || 6;
-    let rows = parseInt(inputRows.value, 10) || Math.ceil(totalFrames / cols);
     if (rows * cols < totalFrames) {
-      rows = Math.ceil(totalFrames / cols);
-      inputRows.value = rows;
+      inputCols.value = Math.ceil(totalFrames / rows);
     }
+
+    const cellsAcross = rows;
+    const cellsDown = Math.max(cols, Math.ceil(totalFrames / cellsAcross));
 
     const cTop = parseInt(inputCropTop.value, 10) || 0;
     const cBottom = parseInt(inputCropBottom.value, 10) || 0;
@@ -2068,8 +2071,8 @@ document.addEventListener('DOMContentLoaded', () => {
       cellH = Math.round(cellNative * (cropH / cropW));
     }
 
-    const sheetW = cellW * cols;
-    const sheetH = cellH * rows;
+    const sheetW = cellW * cellsAcross;
+    const sheetH = cellH * cellsDown;
 
     const sheetCanvas = document.createElement('canvas');
     sheetCanvas.width = sheetW;
@@ -2133,8 +2136,8 @@ document.addEventListener('DOMContentLoaded', () => {
       state.generatedFrames.push(singleFrameCopy);
 
       // Draw into grand sprite sheet canvas
-      const colIndex = i % cols;
-      const rowIndex = Math.floor(i / cols);
+      const colIndex = i % cellsAcross;
+      const rowIndex = Math.floor(i / cellsAcross);
       const destX = colIndex * cellW;
       const destY = rowIndex * cellH;
 
@@ -2276,20 +2279,20 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.drawImage(state.fullSheetCanvas, 0, 0);
 
       // Draw subtle grid lines
-      const cols = parseInt(inputCols.value, 10) || 6;
       const rows = parseInt(inputRows.value, 10) || 4;
-      const cellW = previewCanvas.width / cols;
-      const cellH = previewCanvas.height / rows;
+      const cols = parseInt(inputCols.value, 10) || 6;
+      const cellW = previewCanvas.width / rows;
+      const cellH = previewCanvas.height / cols;
 
       ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
       ctx.lineWidth = 1;
-      for (let c = 0; c <= cols; c++) {
+      for (let c = 0; c <= rows; c++) {
         ctx.beginPath();
         ctx.moveTo(c * cellW, 0);
         ctx.lineTo(c * cellW, previewCanvas.height);
         ctx.stroke();
       }
-      for (let r = 0; r <= rows; r++) {
+      for (let r = 0; r <= cols; r++) {
         ctx.beginPath();
         ctx.moveTo(0, r * cellH);
         ctx.lineTo(previewCanvas.width, r * cellH);
