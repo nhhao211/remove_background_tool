@@ -80,5 +80,7 @@ Truy cập: **[http://localhost:3000](http://localhost:3000)**
 1. Chọn tab **Clean Sprite Sheet** trên Header rồi upload hoặc kéo thả ảnh PNG, WebP hay JPEG.
 2. Nhấn **Auto Remove** để tự tìm màu nền từ mép ảnh. Bật **Analyze each sprite cell** và nhập Rows/Cols nếu mỗi cell có nền riêng.
 3. Dùng **Pick color from Original** hoặc thêm màu thủ công khi cần bổ sung màu gradient/halo còn sót.
+   - Khai báo đúng Rows/Cols để preview animation theo từng sprite cell.
+   - Màu pick từ frame preview được áp dụng cho toàn bộ frame trong sheet. Dùng **Pick Below Line / All Frames** nếu màu chỉ cần xóa bên dưới đường chia của từng sprite; bật **Adjust split line** để kéo đường chia từ 10%–90% chiều cao frame.
 4. Điều chỉnh Similarity, Edge Feather, Spill Suppression, Subject Protection và Edge Cleanup, sau đó nhấn **Apply**.
 5. Kiểm tra kết quả trên checkerboard và tải PNG/WebP bằng nút **Download**.

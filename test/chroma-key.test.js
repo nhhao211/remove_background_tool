@@ -61,3 +61,25 @@ test('subject protection retains more original color during spill suppression', 
 test('disabled keying preserves every channel', () => {
   assert.deepEqual(keyPixel(0, 36, 245, { enabled: false }), [0, 36, 245, 255]);
 });
+
+test('edge cleanup erodes the keyed foreground boundary by the requested radius', () => {
+  const imageData = {
+    width: 3,
+    height: 1,
+    data: new Uint8ClampedArray([
+      0, 36, 245, 255,
+      220, 70, 45, 255,
+      220, 70, 45, 255
+    ])
+  };
+  applyChromaKey(imageData, {
+    similarity: 0.55,
+    blend: 0,
+    spill: 0,
+    cleanupRadius: 1,
+    keyColors: [blue]
+  });
+  assert.equal(imageData.data[3], 0);
+  assert.equal(imageData.data[7], 0);
+  assert.equal(imageData.data[11], 255);
+});

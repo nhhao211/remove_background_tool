@@ -52,6 +52,40 @@ function suppressSpill(data, offset, pixel, key, strength) {
   data[offset + 2] = Math.round(clamp01(pixel.b - (direction[2] * removal)) * 255);
 }
 
+function erodeForegroundAlpha(imageData, radius) {
+  const width = Number(imageData.width) || 0;
+  const height = Number(imageData.height) || 0;
+  if (!width || !height || radius <= 0) return;
+  const data = imageData.data;
+  let transparent = new Uint8Array(width * height);
+  for (let index = 0; index < transparent.length; index += 1) {
+    if (data[(index * 4) + 3] <= 8) transparent[index] = 1;
+  }
+
+  for (let pass = 0; pass < radius; pass += 1) {
+    const expanded = transparent.slice();
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const index = (y * width) + x;
+        if (transparent[index]) continue;
+        for (let ny = Math.max(0, y - 1); ny <= Math.min(height - 1, y + 1) && !expanded[index]; ny += 1) {
+          for (let nx = Math.max(0, x - 1); nx <= Math.min(width - 1, x + 1); nx += 1) {
+            if (transparent[(ny * width) + nx]) {
+              expanded[index] = 1;
+              break;
+            }
+          }
+        }
+      }
+    }
+    transparent = expanded;
+  }
+
+  for (let index = 0; index < transparent.length; index += 1) {
+    if (transparent[index]) data[(index * 4) + 3] = 0;
+  }
+}
+
 function applyChromaKey(imageData, options = {}) {
   const keyColors = Array.isArray(options.keyColors) ? options.keyColors : [];
   if (options.enabled === false || keyColors.length === 0) return imageData;
@@ -60,6 +94,7 @@ function applyChromaKey(imageData, options = {}) {
   const blend = clamp01(options.blend ?? 0.18);
   const spill = clamp01(options.spill ?? 0.55);
   const subjectProtection = clamp01(options.subjectProtection ?? 0.50);
+  const cleanupRadius = Math.max(0, Math.min(3, Math.round(Number(options.cleanupRadius) || 0)));
   const keys = keyColors.map(colorMetrics);
 
   // Non-linear mappings reserve more useful slider travel for clean, narrow
@@ -96,6 +131,8 @@ function applyChromaKey(imageData, options = {}) {
       suppressSpill(data, i, pixel, nearestKey, spill * proximity * edgeWeight * colorRetention);
     }
   }
+
+  erodeForegroundAlpha(imageData, cleanupRadius);
 
   return imageData;
 }

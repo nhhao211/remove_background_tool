@@ -26,6 +26,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnApply = byId('btnSpriteApply');
   const btnReset = byId('btnSpriteReset');
   const btnPick = byId('btnSpritePickColor');
+  const btnPickLower = byId('btnSpritePickLower');
+  const adjustSplit = byId('spriteAdjustSplit');
+  const splitValue = byId('spriteSplitValue');
   const manualColor = byId('spriteManualColor');
   const btnAddColor = byId('btnSpriteAddColor');
   const btnClearColors = byId('btnSpriteClearColors');
@@ -34,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const similarity = byId('spriteSimilarity');
   const feather = byId('spriteFeather');
   const spill = byId('spriteSpill');
+  const preserveColors = byId('spritePreserveColors');
   const protection = byId('spriteProtection');
   const cleanup = byId('spriteCleanup');
   const perCell = byId('spritePerCell');
@@ -47,9 +51,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnZoomOut = byId('btnCleanerZoomOut');
   const btnZoomIn = byId('btnCleanerZoomIn');
   const btnZoomFit = byId('btnCleanerZoomFit');
+  const btnPreviewPlay = byId('btnCleanerPlay');
+  const btnPreviewMode = byId('btnCleanerMode');
+  const frameCounter = byId('cleanerFrameCounter');
+  const previewFps = byId('cleanerPreviewFps');
   const zoomLevel = byId('cleanerZoomLevel');
   const btnToggleBg = byId('btnCleanerToggleBg');
   const pickBanner = byId('spritePickBanner');
+  const pickBannerText = byId('spritePickBannerText');
+  const lowerHalfGuide = byId('spriteLowerHalfGuide');
+  const protectedRegionLabel = byId('spriteProtectedRegionLabel');
+  const splitHandle = byId('spriteSplitHandle');
   const pickerLoupe = byId('spritePickerLoupe');
   const pickerCanvas = byId('spritePickerCanvas');
   const pickerHex = byId('spritePickerHex');
@@ -59,10 +71,19 @@ document.addEventListener('DOMContentLoaded', () => {
     result: null,
     fileName: '',
     manualColors: [],
+    seedPoints: [],
     detectedColors: [],
     autoEnabled: false,
     isProcessing: false,
     isPicking: false,
+    pickScope: 'full',
+    lowerSplitRatio: 0.5,
+    splitDragPointerId: null,
+    splitReprocessTimer: null,
+    previewMode: 'anim',
+    currentFrameIndex: 0,
+    previewTimer: null,
+    isPreviewPlaying: false,
     zoom: 1,
     panX: 0,
     panY: 0,
@@ -94,7 +115,10 @@ document.addEventListener('DOMContentLoaded', () => {
     fullPageDropHint.textContent = cleanerActive
       ? 'Hỗ trợ ảnh tĩnh .png, .webp, .jpg, .jpeg'
       : 'Hỗ trợ các định dạng .mp4, .webm, .mov, .avi, .mkv';
-    if (!cleanerActive) deactivatePicker();
+    if (!cleanerActive) {
+      deactivatePicker();
+      stopPreviewAnimation();
+    }
     if (cleanerActive && state.original) requestAnimationFrame(fitToView);
     if (focus) (cleanerActive ? tabCleaner : tabVideo).focus();
   }
@@ -153,13 +177,23 @@ document.addEventListener('DOMContentLoaded', () => {
     return colors;
   }
 
-  function addManualColor(color, { process = true } = {}) {
+  function addManualColor(color, { process = true, point = null, scope = 'full' } = {}) {
     if (!color) return false;
-    if (state.manualColors.some((item) => Math.abs(item.r - color.r) + Math.abs(item.g - color.g) + Math.abs(item.b - color.b) < 10)) {
+    const existingIndex = state.manualColors.findIndex((item) => Math.abs(item.r - color.r) + Math.abs(item.g - color.g) + Math.abs(item.b - color.b) < 10);
+    const duplicate = existingIndex >= 0;
+    if (point && !state.seedPoints.some((item) => item.x === point.x && item.y === point.y)) {
+      state.seedPoints.push({ x: point.x, y: point.y, hex: color.hex, scope });
+    }
+    if (duplicate && !point) {
       showToast('Màu này đã có trong danh sách.', 'info');
       return false;
     }
-    state.manualColors.push(color);
+    if (!duplicate) state.manualColors.push({ ...color, scope });
+    else if (point) state.manualColors[existingIndex].scope = scope;
+    if (scope === 'lower') {
+      state.autoEnabled = false;
+      state.detectedColors = [];
+    }
     renderColors();
     if (process && state.original) runProcessing({ autoDetect: state.autoEnabled });
     return true;
@@ -173,11 +207,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const manualIndex = state.manualColors.findIndex((item) => item.hex === color.hex);
       const swatch = document.createElement('div');
       swatch.className = `color-swatch cleaner-swatch${manualIndex >= 0 ? '' : ' auto-color'}`;
-      swatch.title = `${hexColor(color)}${manualIndex >= 0 ? ' · picked' : ' · auto detected'}`;
+      const scopeLabel = color.scope === 'lower' ? ' · lower half of each sprite cell only' : '';
+      swatch.title = `${hexColor(color)}${manualIndex >= 0 ? ' · picked' : ' · auto detected'}${scopeLabel}`;
       const chip = document.createElement('span');
       chip.style.background = hexColor(color);
       const label = document.createElement('small');
-      label.textContent = hexColor(color);
+      label.textContent = `${hexColor(color)}${color.scope === 'lower' ? ' ↓½' : ''}`;
       swatch.append(chip, label);
       if (manualIndex >= 0) {
         const remove = document.createElement('button');
@@ -185,6 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
         remove.textContent = '×';
         remove.setAttribute('aria-label', `Remove ${hexColor(color)}`);
         remove.addEventListener('click', () => {
+          state.seedPoints = state.seedPoints.filter((point) => point.hex !== color.hex);
           state.manualColors.splice(manualIndex, 1);
           renderColors();
           runProcessing({ autoDetect: state.autoEnabled });
@@ -206,9 +242,89 @@ document.addEventListener('DOMContentLoaded', () => {
     context.putImageData(imageData, 0, 0);
   }
 
+  function gridDefinition() {
+    const rowCount = perCell.checked ? Math.max(1, Math.min(100, Math.round(Number(rows.value) || 1))) : 1;
+    const colCount = perCell.checked ? Math.max(1, Math.min(100, Math.round(Number(cols.value) || 1))) : 1;
+    return { rows: rowCount, cols: colCount, total: rowCount * colCount };
+  }
+
+  function frameRect(index) {
+    const grid = gridDefinition();
+    const safeIndex = Math.max(0, Math.min(grid.total - 1, index));
+    const row = Math.floor(safeIndex / grid.cols);
+    const col = safeIndex % grid.cols;
+    const x0 = Math.floor((col * state.original.width) / grid.cols);
+    const x1 = Math.floor(((col + 1) * state.original.width) / grid.cols);
+    const y0 = Math.floor((row * state.original.height) / grid.rows);
+    const y1 = Math.floor(((row + 1) * state.original.height) / grid.rows);
+    return { x0, y0, width: x1 - x0, height: y1 - y0 };
+  }
+
+  function extractRegion(source, rect) {
+    const data = new Uint8ClampedArray(rect.width * rect.height * 4);
+    for (let y = 0; y < rect.height; y += 1) {
+      const sourceStart = ((((rect.y0 + y) * source.width) + rect.x0) * 4);
+      data.set(source.data.subarray(sourceStart, sourceStart + (rect.width * 4)), y * rect.width * 4);
+    }
+    return new ImageData(data, rect.width, rect.height);
+  }
+
+  function updatePreviewButtons() {
+    const grid = gridDefinition();
+    const animMode = state.previewMode === 'anim' && perCell.checked;
+    frameCounter.textContent = state.original
+      ? `${animMode ? state.currentFrameIndex + 1 : grid.total}/${grid.total}`
+      : '0/0';
+    btnPreviewMode.querySelector('span').textContent = animMode ? 'Sheet' : 'Anim';
+    btnPreviewPlay.disabled = !state.original || !animMode;
+    const icon = btnPreviewPlay.querySelector('[data-lucide]');
+    if (icon) icon.setAttribute('data-lucide', state.isPreviewPlaying ? 'pause' : 'play');
+    btnPreviewPlay.querySelector('span').textContent = state.isPreviewPlaying ? 'Pause' : 'Play';
+    btnPreviewPlay.classList.toggle('active', state.isPreviewPlaying);
+    window.lucide?.createIcons({ root: btnPreviewPlay });
+  }
+
+  function renderPreview({ fit = false } = {}) {
+    if (!state.original || !state.result) return;
+    const grid = gridDefinition();
+    state.currentFrameIndex = Math.max(0, Math.min(grid.total - 1, state.currentFrameIndex));
+    if (state.previewMode === 'anim' && perCell.checked) {
+      const rect = frameRect(state.currentFrameIndex);
+      drawImageData(originalCanvas, originalContext, extractRegion(state.original, rect));
+      drawImageData(resultCanvas, resultContext, extractRegion(state.result, rect));
+    } else {
+      drawImageData(originalCanvas, originalContext, state.original);
+      drawImageData(resultCanvas, resultContext, state.result);
+    }
+    updatePreviewButtons();
+    if (fit) requestAnimationFrame(fitToView);
+    if (state.isPicking && state.pickScope === 'lower') requestAnimationFrame(updateLowerHalfGuide);
+  }
+
+  function stopPreviewAnimation() {
+    if (state.previewTimer) clearInterval(state.previewTimer);
+    state.previewTimer = null;
+    state.isPreviewPlaying = false;
+    if (btnPreviewPlay) updatePreviewButtons();
+  }
+
+  function startPreviewAnimation() {
+    if (!state.original || !perCell.checked || state.previewMode !== 'anim') return;
+    stopPreviewAnimation();
+    state.isPreviewPlaying = true;
+    const fps = Math.max(1, Math.min(60, Number(previewFps.value) || 12));
+    state.previewTimer = setInterval(() => {
+      const grid = gridDefinition();
+      state.currentFrameIndex = (state.currentFrameIndex + 1) % grid.total;
+      renderPreview();
+    }, 1000 / fps);
+    updatePreviewButtons();
+  }
+
   function setControlsEnabled(enabled) {
-    [btnAuto, btnApply, btnReset, btnPick, btnAddColor, btnDownload, btnZoomOut, btnZoomIn, btnZoomFit]
+    [btnAuto, btnApply, btnReset, btnPick, btnPickLower, adjustSplit, btnAddColor, btnDownload, btnZoomOut, btnZoomIn, btnZoomFit, btnPreviewMode, previewFps]
       .forEach((button) => { button.disabled = !enabled; });
+    btnPreviewPlay.disabled = !enabled || state.previewMode !== 'anim' || !perCell.checked;
   }
 
   async function loadImageFile(file) {
@@ -221,6 +337,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     try {
+      stopPreviewAnimation();
       dropTitle.textContent = 'Loading image…';
       const bitmap = await createImageBitmap(file);
       const pixels = bitmap.width * bitmap.height;
@@ -237,9 +354,16 @@ document.addEventListener('DOMContentLoaded', () => {
       state.result = cloneImageData(state.original);
       state.fileName = file.name;
       state.manualColors = [];
+      state.seedPoints = [];
       state.detectedColors = [];
       state.autoEnabled = false;
-      drawImageData(resultCanvas, resultContext, state.result);
+      state.previewMode = perCell.checked ? 'anim' : 'sheet';
+      state.currentFrameIndex = 0;
+      state.lowerSplitRatio = 0.5;
+      adjustSplit.checked = false;
+      syncSplitControl();
+      preserveColors.checked = true;
+      syncPreserveColorControl();
       originalStage.classList.add('has-image');
       resultStage.classList.add('has-image');
       fileLabel.textContent = file.name;
@@ -250,7 +374,8 @@ document.addEventListener('DOMContentLoaded', () => {
       downloadName.value = (file.name.replace(/\.[^/.]+$/, '') || 'sprite_sheet') + '_clean';
       setControlsEnabled(true);
       renderColors();
-      requestAnimationFrame(fitToView);
+      renderPreview({ fit: true });
+      if (perCell.checked) startPreviewAnimation();
       showToast(`Đã tải sprite sheet: ${file.name}`, 'success');
     } catch (error) {
       dropTitle.textContent = 'Drop sprite sheet here';
@@ -265,11 +390,23 @@ document.addEventListener('DOMContentLoaded', () => {
     return {
       autoDetect,
       keyColors: state.manualColors,
+      keyRegions: state.manualColors.map((color) => ({
+        hex: color.hex,
+        matchMode: 'global',
+        ...(color.scope === 'lower' ? {
+          mode: 'cell-lower-half',
+          rows: Number(rows.value),
+          cols: Number(cols.value),
+          splitRatio: state.lowerSplitRatio
+        } : {})
+      })),
       similarity: Number(similarity.value),
       feather: Number(feather.value),
       spill: Number(spill.value),
+      preserveColors: preserveColors.checked,
       subjectProtection: Number(protection.value),
       cleanupRadius: Number(cleanup.value),
+      seedPoints: state.seedPoints,
       perCell: perCell.checked,
       rows: Number(rows.value),
       cols: Number(cols.value)
@@ -282,6 +419,8 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('Hãy Pick Color hoặc dùng Auto Remove trước.', 'error');
       return;
     }
+    const resumePreview = state.isPreviewPlaying;
+    stopPreviewAnimation();
     state.isProcessing = true;
     state.autoEnabled = autoDetect;
     deactivatePicker();
@@ -298,9 +437,9 @@ document.addEventListener('DOMContentLoaded', () => {
       state.detectedColors = autoDetect
         ? result.keyColors.filter((color) => !state.manualColors.some((manual) => manual.hex === color.hex))
         : [];
-      drawImageData(resultCanvas, resultContext, state.result);
+      renderPreview();
       renderColors();
-      resultStatus.textContent = `${result.removedPixels.toLocaleString()} pixels cleaned · edge-connected mask`;
+      resultStatus.textContent = `${result.removedPixels.toLocaleString()} pixels cleaned · edge-connected mask${preserveColors.checked ? ' · RGB preserved' : ''}`;
       showToast(`Đã làm sạch ${result.removedPixels.toLocaleString()} pixels nền.`, 'success');
     } catch (error) {
       resultStatus.textContent = 'Processing failed';
@@ -310,6 +449,7 @@ document.addEventListener('DOMContentLoaded', () => {
       progress.classList.remove('active');
       progress.setAttribute('aria-hidden', 'true');
       setControlsEnabled(true);
+      if (resumePreview && state.previewMode === 'anim' && perCell.checked) startPreviewAnimation();
     }
   }
 
@@ -317,9 +457,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!state.original) return;
     state.result = cloneImageData(state.original);
     state.manualColors = [];
+    state.seedPoints = [];
     state.detectedColors = [];
     state.autoEnabled = false;
-    drawImageData(resultCanvas, resultContext, state.result);
+    renderPreview();
     renderColors();
     resultStatus.textContent = 'Reset to original';
     deactivatePicker();
@@ -331,13 +472,26 @@ document.addEventListener('DOMContentLoaded', () => {
     originalCanvas.style.transform = transform;
     resultCanvas.style.transform = transform;
     zoomLevel.textContent = `${Math.round(state.zoom * 100)}%`;
+    if (state.isPicking && state.pickScope === 'lower') requestAnimationFrame(updateLowerHalfGuide);
+  }
+
+  function updateLowerHalfGuide() {
+    if (!state.original || state.pickScope !== 'lower') return;
+    const stageRect = originalStage.getBoundingClientRect();
+    const canvasRect = originalCanvas.getBoundingClientRect();
+    lowerHalfGuide.style.left = `${canvasRect.left - stageRect.left}px`;
+    lowerHalfGuide.style.top = `${canvasRect.top - stageRect.top}px`;
+    lowerHalfGuide.style.width = `${canvasRect.width}px`;
+    lowerHalfGuide.style.height = `${canvasRect.height * state.lowerSplitRatio}px`;
+    const percent = Math.round(state.lowerSplitRatio * 100);
+    protectedRegionLabel.textContent = `Protected upper region · ${percent}%`;
   }
 
   function fitToView() {
     if (!state.original) return;
     const stageWidth = Math.min(originalStage.clientWidth, resultStage.clientWidth) - 32;
     const stageHeight = Math.min(originalStage.clientHeight, resultStage.clientHeight) - 32;
-    state.zoom = Math.max(0.02, Math.min(1, stageWidth / state.original.width, stageHeight / state.original.height));
+    state.zoom = Math.max(0.02, Math.min(1, stageWidth / originalCanvas.width, stageHeight / originalCanvas.height));
     state.panX = 0;
     state.panY = 0;
     updateTransform();
@@ -367,6 +521,12 @@ document.addEventListener('DOMContentLoaded', () => {
     return { x, y };
   }
 
+  function displayPointToSheet(point) {
+    if (state.previewMode !== 'anim' || !perCell.checked) return point;
+    const rect = frameRect(state.currentFrameIndex);
+    return { x: rect.x0 + point.x, y: rect.y0 + point.y };
+  }
+
   function updatePicker(event) {
     if (!state.isPicking || !state.original) return;
     const point = canvasCoordinates(event);
@@ -374,7 +534,8 @@ document.addEventListener('DOMContentLoaded', () => {
       pickerLoupe.style.display = 'none';
       return;
     }
-    const offset = ((point.y * state.original.width) + point.x) * 4;
+    const sheetPoint = displayPointToSheet(point);
+    const offset = ((sheetPoint.y * state.original.width) + sheetPoint.x) * 4;
     const data = state.original.data;
     const color = { r: data[offset], g: data[offset + 1], b: data[offset + 2] };
     const hex = hexColor(color);
@@ -387,19 +548,42 @@ document.addEventListener('DOMContentLoaded', () => {
     pickerLoupe.style.top = `${event.clientY + 18}px`;
   }
 
-  function activatePicker() {
+  function activatePicker(scope = 'full') {
     if (!state.original) return;
+    stopPreviewAnimation();
+    if (scope === 'lower') {
+      if (!perCell.checked) {
+        perCell.checked = true;
+        rows.disabled = false;
+        cols.disabled = false;
+        gridInputs.setAttribute('aria-disabled', 'false');
+      }
+      state.previewMode = 'anim';
+      state.currentFrameIndex = Math.min(state.currentFrameIndex, gridDefinition().total - 1);
+      renderPreview({ fit: true });
+    }
     state.isPicking = true;
-    btnPick.classList.add('active');
+    state.pickScope = scope;
+    btnPick.classList.toggle('active', scope === 'full');
+    btnPickLower.classList.toggle('active', scope === 'lower');
     pickBanner.classList.add('active');
     originalStage.classList.add('is-picking');
+    originalStage.classList.toggle('pick-lower-half', scope === 'lower');
+    originalStage.classList.toggle('adjust-split-line', scope === 'lower' && adjustSplit.checked);
+    splitHandle.disabled = !(scope === 'lower' && adjustSplit.checked);
+    pickBannerText.textContent = scope === 'lower'
+      ? `Pick below the ${Math.round(state.lowerSplitRatio * 100)}% line · applies to every frame`
+      : 'Pick this frame · color applies to the full sprite sheet';
+    if (scope === 'lower') requestAnimationFrame(updateLowerHalfGuide);
   }
 
   function deactivatePicker() {
     state.isPicking = false;
     btnPick?.classList.remove('active');
+    btnPickLower?.classList.remove('active');
     pickBanner?.classList.remove('active');
-    originalStage?.classList.remove('is-picking');
+    originalStage?.classList.remove('is-picking', 'pick-lower-half', 'adjust-split-line');
+    splitHandle.disabled = true;
     if (pickerLoupe) pickerLoupe.style.display = 'none';
   }
 
@@ -410,7 +594,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function downloadResult() {
     if (!state.result) return;
     const format = outputFormat.value === 'webp' ? 'webp' : 'png';
-    resultCanvas.toBlob((blob) => {
+    const exportCanvas = document.createElement('canvas');
+    const exportContext = exportCanvas.getContext('2d');
+    drawImageData(exportCanvas, exportContext, state.result);
+    exportCanvas.toBlob((blob) => {
       if (!blob) {
         showToast('Trình duyệt không thể tạo file output.', 'error');
         return;
@@ -459,7 +646,8 @@ document.addEventListener('DOMContentLoaded', () => {
   btnAuto.addEventListener('click', () => runProcessing({ autoDetect: true }));
   btnApply.addEventListener('click', () => runProcessing({ autoDetect: state.autoEnabled }));
   btnReset.addEventListener('click', resetResult);
-  btnPick.addEventListener('click', () => state.isPicking ? deactivatePicker() : activatePicker());
+  btnPick.addEventListener('click', () => state.isPicking && state.pickScope === 'full' ? deactivatePicker() : activatePicker('full'));
+  btnPickLower.addEventListener('click', () => state.isPicking && state.pickScope === 'lower' ? deactivatePicker() : activatePicker('lower'));
   btnAddColor.addEventListener('click', () => addManualColor(colorFromHex(manualColor.value)));
   btnClearColors.addEventListener('click', resetResult);
   btnDownload.addEventListener('click', downloadResult);
@@ -467,7 +655,129 @@ document.addEventListener('DOMContentLoaded', () => {
     rows.disabled = !perCell.checked;
     cols.disabled = !perCell.checked;
     gridInputs.setAttribute('aria-disabled', String(!perCell.checked));
+    stopPreviewAnimation();
+    state.previewMode = perCell.checked ? 'anim' : 'sheet';
+    state.currentFrameIndex = 0;
+    if (state.original) renderPreview({ fit: true });
   });
+
+  [rows, cols].forEach((input) => {
+    input.addEventListener('change', () => {
+      input.value = String(Math.max(1, Math.min(100, Math.round(Number(input.value) || 1))));
+      stopPreviewAnimation();
+      state.currentFrameIndex = 0;
+      if (state.original) renderPreview({ fit: true });
+    });
+  });
+
+  btnPreviewPlay.addEventListener('click', () => {
+    if (state.isPreviewPlaying) stopPreviewAnimation();
+    else startPreviewAnimation();
+  });
+
+  btnPreviewMode.addEventListener('click', () => {
+    stopPreviewAnimation();
+    if (!perCell.checked) {
+      perCell.checked = true;
+      rows.disabled = false;
+      cols.disabled = false;
+      gridInputs.setAttribute('aria-disabled', 'false');
+    }
+    state.previewMode = state.previewMode === 'anim' ? 'sheet' : 'anim';
+    if (state.original) renderPreview({ fit: true });
+  });
+
+  previewFps.addEventListener('change', () => {
+    previewFps.value = String(Math.max(1, Math.min(60, Math.round(Number(previewFps.value) || 12))));
+    if (state.isPreviewPlaying) startPreviewAnimation();
+  });
+
+  function scheduleSplitReprocess() {
+    clearTimeout(state.splitReprocessTimer);
+    if (!state.original || !state.manualColors.some((color) => color.scope === 'lower')) return;
+    if (state.isPicking) {
+      resultStatus.textContent = `Split line ${Math.round(state.lowerSplitRatio * 100)}% · pick a color or press Apply`;
+      return;
+    }
+    state.splitReprocessTimer = setTimeout(() => runProcessing({ autoDetect: false }), 120);
+  }
+
+  function setSplitRatio(value, { reprocess = false } = {}) {
+    state.lowerSplitRatio = Math.max(0.1, Math.min(0.9, Number(value) || 0.5));
+    const percent = Math.round(state.lowerSplitRatio * 100);
+    splitValue.textContent = `${percent}%`;
+    splitHandle.setAttribute('aria-valuenow', String(percent));
+    if (state.isPicking && state.pickScope === 'lower') {
+      pickBannerText.textContent = `Pick below the ${percent}% line · applies to every frame`;
+      requestAnimationFrame(updateLowerHalfGuide);
+    }
+    if (reprocess) scheduleSplitReprocess();
+  }
+
+  function syncSplitControl() {
+    if (!adjustSplit.checked) setSplitRatio(0.5);
+    const adjustable = adjustSplit.checked && state.isPicking && state.pickScope === 'lower';
+    splitHandle.disabled = !adjustable;
+    originalStage.classList.toggle('adjust-split-line', adjustable);
+  }
+
+  adjustSplit.addEventListener('change', () => {
+    syncSplitControl();
+    if (!adjustSplit.checked) scheduleSplitReprocess();
+    if (state.isPicking && state.pickScope === 'lower') requestAnimationFrame(updateLowerHalfGuide);
+  });
+
+  splitHandle.addEventListener('pointerdown', (event) => {
+    if (splitHandle.disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    state.splitDragPointerId = event.pointerId;
+    splitHandle.setPointerCapture(event.pointerId);
+  });
+
+  splitHandle.addEventListener('pointermove', (event) => {
+    if (state.splitDragPointerId !== event.pointerId) return;
+    event.preventDefault();
+    const rect = originalCanvas.getBoundingClientRect();
+    setSplitRatio((event.clientY - rect.top) / rect.height);
+  });
+
+  const finishSplitDrag = (event) => {
+    if (state.splitDragPointerId !== event.pointerId) return;
+    event.stopPropagation();
+    state.splitDragPointerId = null;
+    if (splitHandle.hasPointerCapture(event.pointerId)) splitHandle.releasePointerCapture(event.pointerId);
+    scheduleSplitReprocess();
+  };
+  splitHandle.addEventListener('pointerup', finishSplitDrag);
+  splitHandle.addEventListener('pointercancel', finishSplitDrag);
+  splitHandle.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  splitHandle.addEventListener('keydown', (event) => {
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === 'Home') setSplitRatio(0.1, { reprocess: true });
+    else if (event.key === 'End') setSplitRatio(0.9, { reprocess: true });
+    else setSplitRatio(state.lowerSplitRatio + (event.key === 'ArrowDown' ? 0.01 : -0.01), { reprocess: true });
+  });
+
+  function syncPreserveColorControl() {
+    spill.disabled = preserveColors.checked;
+    spill.setAttribute('aria-disabled', String(preserveColors.checked));
+    spill.title = preserveColors.checked
+      ? 'Disabled because Preserve original subject RGB is active'
+      : 'Removes key-color spill from visible edge pixels';
+  }
+
+  preserveColors.addEventListener('change', () => {
+    syncPreserveColorControl();
+    if (state.original && (state.autoEnabled || state.manualColors.length)) {
+      runProcessing({ autoDetect: state.autoEnabled });
+    }
+  });
+  syncPreserveColorControl();
 
   [
     [similarity, byId('spriteSimilarityValue'), (value) => value],
@@ -522,7 +832,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!state.isPicking || !state.original) return;
     const point = canvasCoordinates(event);
     if (!point) return;
-    const offset = ((point.y * state.original.width) + point.x) * 4;
+    if (state.pickScope === 'lower' && point.y < Math.floor(originalCanvas.height * state.lowerSplitRatio)) {
+      showToast(`Chỉ nhận pixel nằm dưới đường chia ${Math.round(state.lowerSplitRatio * 100)}% của sprite.`, 'info');
+      return;
+    }
+    const sheetPoint = displayPointToSheet(point);
+    const offset = ((sheetPoint.y * state.original.width) + sheetPoint.x) * 4;
     if (state.original.data[offset + 3] < 10) {
       showToast('Pixel này đã trong suốt, hãy chọn màu nền nhìn thấy được.', 'info');
       return;
@@ -534,7 +849,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     color.hex = hexColor(color);
     deactivatePicker();
-    addManualColor(color);
+    addManualColor(color, { point: sheetPoint, scope: state.pickScope });
   });
 
   window.addEventListener('keydown', (event) => {

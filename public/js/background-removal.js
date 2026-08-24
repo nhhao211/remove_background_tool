@@ -92,19 +92,6 @@ function detectEdgeColors(imageData, options = {}) {
     }));
 }
 
-function nearestKey(pixel, keys, luminanceWeight) {
-  let key = keys[0];
-  let distance = colorDistance(pixel, key, luminanceWeight);
-  for (let index = 1; index < keys.length; index += 1) {
-    const candidate = colorDistance(pixel, keys[index], luminanceWeight);
-    if (candidate < distance) {
-      distance = candidate;
-      key = keys[index];
-    }
-  }
-  return { key, distance };
-}
-
 function dilateMask(mask, width, height, radius) {
   let current = mask;
   for (let pass = 0; pass < radius; pass += 1) {
@@ -147,6 +134,8 @@ function removeConnectedBackground(imageData, options = {}) {
   const { width, height, data } = imageData;
   const detectedColors = options.autoDetect === false ? [] : detectEdgeColors(imageData, options);
   const suppliedColors = Array.isArray(options.keyColors) ? options.keyColors.map(normalizeColor) : [];
+  const keyRegions = new Map((Array.isArray(options.keyRegions) ? options.keyRegions : [])
+    .map((region) => [String(region?.hex || '').toLowerCase(), region]));
   const keyColors = [...suppliedColors];
   for (const color of detectedColors) {
     if (!keyColors.some((item) => Math.abs(item.r - color.r) + Math.abs(item.g - color.g) + Math.abs(item.b - color.b) < 18)) {
@@ -161,28 +150,69 @@ function removeConnectedBackground(imageData, options = {}) {
   const feather = clamp01(options.feather ?? 0.20);
   const spill = clamp01(options.spill ?? 0.55);
   const subjectProtection = clamp01(options.subjectProtection ?? 0.55);
+  const preserveColors = options.preserveColors !== false;
   const cleanupRadius = Math.max(0, Math.min(3, Math.round(options.cleanupRadius || 0)));
   const luminanceWeight = 0.08 + (0.9 * Math.pow(subjectProtection, 1.5));
   const transparentThreshold = 0.015 + (0.28 * Math.pow(similarity, 1.4));
   const featherWidth = 0.003 + (0.11 * Math.pow(feather, 1.45));
   const traversalThreshold = transparentThreshold + featherWidth;
-  const keys = keyColors.map(colorMetrics);
+  const keyRecords = [
+    ...suppliedColors.map((color) => ({ metrics: colorMetrics(color), region: keyRegions.get(color.hex) || null })),
+    ...detectedColors.map((color) => ({ metrics: colorMetrics(color), region: null }))
+  ];
+  const sheetWidth = Math.max(1, Number(options.sheetWidth) || width);
+  const sheetHeight = Math.max(1, Number(options.sheetHeight) || height);
+  const offsetX = Number(options.offsetX) || 0;
+  const offsetY = Number(options.offsetY) || 0;
   const mask = new Uint8Array(width * height);
   const distanceMap = new Float32Array(width * height);
-  const keyIndexMap = new Uint8Array(width * height);
+  const keyIndexMap = new Uint16Array(width * height);
   const queue = new Int32Array(width * height);
   let head = 0;
   let tail = 0;
 
+  const regionAllows = (region, x, y) => {
+    if (!region) return true;
+    const globalX = x + offsetX;
+    const globalY = y + offsetY;
+    if (region.mode === 'cell-lower-half') {
+      const rows = Math.max(1, Math.min(100, Math.round(Number(region.rows) || 1)));
+      const row = Math.min(rows - 1, Math.floor((globalY * rows) / sheetHeight));
+      const cellTop = Math.floor((row * sheetHeight) / rows);
+      const cellBottom = Math.floor(((row + 1) * sheetHeight) / rows);
+      const splitRatio = Math.max(0.1, Math.min(0.9, Number(region.splitRatio) || 0.5));
+      const splitY = cellTop + ((cellBottom - cellTop) * splitRatio);
+      return globalY >= splitY && globalY < cellBottom;
+    }
+    const minX = Number.isFinite(Number(region.minXRatio)) ? Number(region.minXRatio) * sheetWidth : 0;
+    const maxX = Number.isFinite(Number(region.maxXRatio)) ? Number(region.maxXRatio) * sheetWidth : sheetWidth;
+    const minY = Number.isFinite(Number(region.minYRatio)) ? Number(region.minYRatio) * sheetHeight : 0;
+    const maxY = Number.isFinite(Number(region.maxYRatio)) ? Number(region.maxYRatio) * sheetHeight : sheetHeight;
+    return globalX >= minX && globalX < maxX && globalY >= minY && globalY < maxY;
+  };
+
+  const hasAllowedKey = (x, y) => keyRecords.some((record) => regionAllows(record.region, x, y));
+
   const analyze = (index) => {
     const offset = index * 4;
     if (data[offset + 3] === 0) return { distance: 0, keyIndex: 0, eligible: true };
+    const x = index % width;
+    const y = Math.floor(index / width);
     const pixel = colorMetrics({ r: data[offset], g: data[offset + 1], b: data[offset + 2] });
-    const nearest = nearestKey(pixel, keys, luminanceWeight);
-    const keyIndex = keys.indexOf(nearest.key);
-    distanceMap[index] = nearest.distance;
+    let keyIndex = 0;
+    let distance = Infinity;
+    for (let recordIndex = 0; recordIndex < keyRecords.length; recordIndex += 1) {
+      const record = keyRecords[recordIndex];
+      if (!regionAllows(record.region, x, y)) continue;
+      const candidateDistance = colorDistance(pixel, record.metrics, luminanceWeight);
+      if (candidateDistance < distance) {
+        distance = candidateDistance;
+        keyIndex = recordIndex;
+      }
+    }
+    distanceMap[index] = distance;
     keyIndexMap[index] = keyIndex;
-    return { distance: nearest.distance, keyIndex, eligible: nearest.distance <= traversalThreshold };
+    return { distance, keyIndex, eligible: distance <= traversalThreshold };
   };
 
   const enqueue = (index) => {
@@ -200,6 +230,49 @@ function removeConnectedBackground(imageData, options = {}) {
   for (let y = 1; y < height - 1; y += 1) {
     enqueue(y * width);
     enqueue((y * width) + width - 1);
+  }
+
+  // A manually picked pixel is an explicit background seed. This lets users
+  // clean isolated cell backgrounds that do not connect to the outer sheet edge.
+  const seedPoints = Array.isArray(options.seedPoints) ? options.seedPoints : [];
+  for (const point of seedPoints) {
+    const x = Math.max(0, Math.min(width - 1, Math.round(Number(point?.x) || 0)));
+    const y = Math.max(0, Math.min(height - 1, Math.round(Number(point?.y) || 0)));
+    enqueue((y * width) + x);
+  }
+
+  // Manual chroma picks behave like Video → Sprite: the sampled color is
+  // matched across every frame, while an optional region still limits where
+  // alpha may change (for example, the lower half of each sprite cell).
+  const hasGlobalMatches = keyRecords.some((record) => record.region?.matchMode === 'global');
+  if (hasGlobalMatches) {
+    for (let index = 0; index < mask.length; index += 1) {
+      if (mask[index] || data[(index * 4) + 3] === 0) continue;
+      const x = index % width;
+      const y = Math.floor(index / width);
+      const pixel = colorMetrics({
+        r: data[index * 4],
+        g: data[(index * 4) + 1],
+        b: data[(index * 4) + 2]
+      });
+      let nearestIndex = 0;
+      let nearestDistance = Infinity;
+      for (let recordIndex = 0; recordIndex < keyRecords.length; recordIndex += 1) {
+        const record = keyRecords[recordIndex];
+        if (record.region?.matchMode !== 'global' || !regionAllows(record.region, x, y)) continue;
+        const candidateDistance = colorDistance(pixel, record.metrics, luminanceWeight);
+        if (candidateDistance < nearestDistance) {
+          nearestDistance = candidateDistance;
+          nearestIndex = recordIndex;
+        }
+      }
+      if (nearestDistance <= traversalThreshold) {
+        mask[index] = 1;
+        distanceMap[index] = nearestDistance;
+        keyIndexMap[index] = nearestIndex;
+        queue[tail++] = index;
+      }
+    }
   }
 
   while (head < tail) {
@@ -221,6 +294,9 @@ function removeConnectedBackground(imageData, options = {}) {
     const sourceAlpha = data[offset + 3];
     if (sourceAlpha === 0) continue;
     if (cleanupMask[index] && !mask[index]) {
+      const x = index % width;
+      const y = Math.floor(index / width);
+      if (!hasAllowedKey(x, y)) continue;
       data[offset + 3] = 0;
       removedPixels += 1;
       continue;
@@ -232,10 +308,10 @@ function removeConnectedBackground(imageData, options = {}) {
     data[offset + 3] = Math.round(sourceAlpha * foregroundMatte);
     if (data[offset + 3] < sourceAlpha) removedPixels += 1;
 
-    if (spill > 0 && foregroundMatte > 0) {
+    if (!preserveColors && spill > 0 && foregroundMatte > 0) {
       const pixel = colorMetrics({ r: data[offset], g: data[offset + 1], b: data[offset + 2] });
       const proximity = 1 - smootherstep(transparentThreshold, traversalThreshold + 0.08, distance);
-      suppressSpill(data, offset, pixel, keys[keyIndexMap[index]], spill * proximity * (1 - (subjectProtection * 0.45)));
+      suppressSpill(data, offset, pixel, keyRecords[keyIndexMap[index]].metrics, spill * proximity * (1 - (subjectProtection * 0.45)));
     }
   }
 
@@ -274,7 +350,17 @@ function processSpriteSheet(imageData, options = {}) {
       const x0 = Math.floor((col * imageData.width) / cols);
       const x1 = Math.floor(((col + 1) * imageData.width) / cols);
       const region = copyRegion(imageData, x0, y0, x1 - x0, y1 - y0);
-      const result = removeConnectedBackground(region, options);
+      const seedPoints = (Array.isArray(options.seedPoints) ? options.seedPoints : [])
+        .filter((point) => point.x >= x0 && point.x < x1 && point.y >= y0 && point.y < y1)
+        .map((point) => ({ x: point.x - x0, y: point.y - y0 }));
+      const result = removeConnectedBackground(region, {
+        ...options,
+        seedPoints,
+        sheetWidth: imageData.width,
+        sheetHeight: imageData.height,
+        offsetX: x0,
+        offsetY: y0
+      });
       pasteRegion(imageData, result.imageData, x0, y0);
       removedPixels += result.removedPixels;
       for (const color of result.keyColors) {

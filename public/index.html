@@ -477,6 +477,17 @@
             </div>
           </div>
 
+          <div class="form-group">
+            <label class="form-label" for="sliderEdgeCleanup">
+              <span>Edge Cleanup</span>
+              <span class="hint">Erodes 0–3 px of colored fringe after keying</span>
+            </label>
+            <div class="slider-group">
+              <input type="range" id="sliderEdgeCleanup" min="0" max="3" step="1" value="0">
+              <span id="lblEdgeCleanupVal" class="slider-value">0 px</span>
+            </div>
+          </div>
+
           <!-- Chroma Key / Green Screen Removal Options -->
           <div class="form-group chroma-key-group">
             <label class="form-label">
@@ -567,10 +578,21 @@
 
       <div class="cleaner-control-section">
         <div class="cleaner-section-title"><span>Background colors</span><span id="spriteColorCount">0 colors</span></div>
-        <button id="btnSpritePickColor" class="eyedropper-trigger-btn cleaner-pick-button" type="button" disabled>
-          <i data-lucide="pipette" style="width: 14px; height: 14px;"></i>
-          <span>Pick color from Original</span>
-        </button>
+        <div class="cleaner-pick-actions">
+          <button id="btnSpritePickColor" class="eyedropper-trigger-btn cleaner-pick-button" type="button" disabled>
+            <i data-lucide="pipette" style="width: 14px; height: 14px;"></i>
+            <span>Pick / All Frames</span>
+          </button>
+          <button id="btnSpritePickLower" class="eyedropper-trigger-btn cleaner-pick-button lower-half" type="button" disabled>
+            <i data-lucide="arrow-down-to-line" style="width: 14px; height: 14px;"></i>
+            <span>Pick Below Line / All Frames</span>
+          </button>
+        </div>
+        <label class="checkbox-row cleaner-split-toggle" title="Bật rồi dùng Pick Below Line để kéo đường chia trên frame preview">
+          <input id="spriteAdjustSplit" type="checkbox" disabled>
+          <span>Adjust split line</span>
+          <strong id="spriteSplitValue">50%</strong>
+        </label>
         <div class="cleaner-color-entry">
           <input id="spriteManualColor" type="color" value="#00ff00" class="manual-color-input" aria-label="Background color">
           <button id="btnSpriteAddColor" class="time-btn" type="button" disabled>+ Add</button>
@@ -589,6 +611,14 @@
         <label class="form-label" for="spriteSpill"><span>Spill Suppression</span><span id="spriteSpillValue" class="slider-value">0.55</span></label>
         <input id="spriteSpill" type="range" min="0" max="1" step="0.01" value="0.55">
 
+        <label class="checkbox-row cleaner-preserve-colors">
+          <input id="spritePreserveColors" type="checkbox" checked>
+          <span>
+            Preserve original subject RGB
+            <small>Alpha-only cleanup; prevents hue shifts</small>
+          </span>
+        </label>
+
         <label class="form-label" for="spriteProtection"><span>Subject Protection</span><span id="spriteProtectionValue" class="slider-value">0.55</span></label>
         <input id="spriteProtection" type="range" min="0" max="1" step="0.01" value="0.55">
 
@@ -598,12 +628,12 @@
 
       <div class="cleaner-control-section">
         <label class="checkbox-row cleaner-cell-toggle">
-          <input id="spritePerCell" type="checkbox">
-          <span>Analyze each sprite cell</span>
+          <input id="spritePerCell" type="checkbox" checked>
+          <span>Sprite grid / per-cell analysis</span>
         </label>
-        <div id="spriteGridInputs" class="cleaner-grid-inputs" aria-disabled="true">
-          <label>Rows <input id="spriteRows" class="form-input compact-number" type="number" min="1" max="100" value="4" disabled></label>
-          <label>Cols <input id="spriteCols" class="form-input compact-number" type="number" min="1" max="100" value="6" disabled></label>
+        <div id="spriteGridInputs" class="cleaner-grid-inputs" aria-disabled="false">
+          <label>Rows <input id="spriteRows" class="form-input compact-number" type="number" min="1" max="100" value="4"></label>
+          <label>Cols <input id="spriteCols" class="form-input compact-number" type="number" min="1" max="100" value="6"></label>
         </div>
       </div>
 
@@ -630,6 +660,19 @@
           <span id="spriteImageInfo">Upload an image to begin</span>
         </div>
         <div class="preview-controls">
+          <button id="btnCleanerPlay" class="btn-ctrl active" type="button" disabled>
+            <i data-lucide="play" style="width: 14px; height: 14px;"></i>
+            <span>Play</span>
+          </button>
+          <button id="btnCleanerMode" class="btn-ctrl" type="button" disabled>
+            <i data-lucide="layout-grid" style="width: 14px; height: 14px;"></i>
+            <span>Sheet</span>
+          </button>
+          <span id="cleanerFrameCounter" class="frame-badge">0/0</span>
+          <label class="cleaner-fps-control" title="Animation preview FPS">
+            <span>FPS</span>
+            <input id="cleanerPreviewFps" type="number" min="1" max="60" value="12" disabled>
+          </label>
           <button id="btnCleanerZoomOut" class="btn-ctrl" type="button" disabled>−</button>
           <span id="cleanerZoomLevel" class="zoom-indicator">100%</span>
           <button id="btnCleanerZoomIn" class="btn-ctrl" type="button" disabled>+</button>
@@ -649,7 +692,11 @@
           </div>
           <div id="spriteOriginalStage" class="cleaner-canvas-stage checkerboard-bg">
             <canvas id="spriteOriginalCanvas" class="cleaner-canvas"></canvas>
-            <div id="spritePickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i> Click a background color · Esc to exit</div>
+            <div id="spritePickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i><span id="spritePickBannerText">Click a background color · Esc to exit</span></div>
+            <div id="spriteLowerHalfGuide" class="cleaner-lower-half-guide">
+              <span id="spriteProtectedRegionLabel">Protected upper region · 50%</span>
+              <button id="spriteSplitHandle" type="button" role="slider" aria-label="Sprite split line" aria-valuemin="10" aria-valuemax="90" aria-valuenow="50" disabled><span></span></button>
+            </div>
             <div id="spritePickerLoupe" class="cleaner-picker-loupe">
               <canvas id="spritePickerCanvas" width="72" height="72"></canvas>
               <span></span>
