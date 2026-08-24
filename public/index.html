@@ -36,6 +36,10 @@
         <i data-lucide="scan-line" style="width: 15px; height: 15px;"></i>
         <span>Clean Sprite Sheet</span>
       </button>
+      <button id="tabSpriteReframe" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="spriteReframeWorkspace">
+        <i data-lucide="panel-top-open" style="width: 15px; height: 15px;"></i>
+        <span>Reframe 16:9</span>
+      </button>
     </nav>
     <div id="videoHeaderActions" class="header-actions">
       <button id="btnLoadDemo" class="sample-btn" title="Load sample video with audio">
@@ -720,12 +724,122 @@
     </section>
   </main>
 
+  <!-- Sprite Sheet Grid Reframer -->
+  <main id="spriteReframeWorkspace" class="reframe-workspace workspace-panel" role="tabpanel" aria-labelledby="tabSpriteReframe" hidden>
+    <aside class="settings-card cleaner-sidebar">
+      <div class="cleaner-sidebar-header">
+        <div>
+          <span class="card-title"><i data-lucide="replace" style="width: 17px; height: 17px; color: #38bdf8;"></i> Sprite reframer</span>
+          <p>Convert a 4×6 sprite sheet into 6×4 cells at 1920×1080 without stretching the sprite artwork.</p>
+        </div>
+      </div>
+
+      <input id="reframeImageInput" type="file" accept="image/png,image/webp,image/jpeg,.png,.webp,.jpg,.jpeg" hidden>
+      <button id="reframeDropZone" class="cleaner-drop-zone" type="button">
+        <i data-lucide="image-up" style="width: 30px; height: 30px;"></i>
+        <strong id="reframeDropTitle">Drop 4×6 sprite sheet here</strong>
+        <span id="reframeDropHint">PNG, WebP or JPEG · output cells are 1920×1080</span>
+      </button>
+
+      <div class="cleaner-primary-actions reframe-primary-actions">
+        <button id="btnReframeConvert" class="btn-primary-blue" type="button" disabled>
+          <i data-lucide="refresh-cw" style="width: 16px; height: 16px;"></i>
+          <span>Convert</span>
+        </button>
+        <button id="btnReframeReset" class="btn-browse" type="button" disabled>Reset</button>
+      </div>
+
+      <div class="cleaner-control-section">
+        <div class="cleaner-section-title"><span>Input grid</span><span>24 frames</span></div>
+        <div class="cleaner-grid-inputs">
+          <label>Rows <input id="reframeSourceRows" class="form-input compact-number" type="number" min="1" max="100" value="4"></label>
+          <label>Cols <input id="reframeSourceCols" class="form-input compact-number" type="number" min="1" max="100" value="6"></label>
+        </div>
+      </div>
+
+      <div class="cleaner-control-section">
+        <div class="cleaner-section-title"><span>Output grid</span><span>16:9 cells</span></div>
+        <div class="cleaner-grid-inputs">
+          <label>Rows <input id="reframeTargetRows" class="form-input compact-number" type="number" min="1" max="100" value="6"></label>
+          <label>Cols <input id="reframeTargetCols" class="form-input compact-number" type="number" min="1" max="100" value="4"></label>
+        </div>
+        <div class="cleaner-grid-inputs">
+          <label>Cell W <input id="reframeCellWidth" class="form-input compact-number" type="number" min="16" max="4096" value="1920"></label>
+          <label>Cell H <input id="reframeCellHeight" class="form-input compact-number" type="number" min="16" max="4096" value="1080"></label>
+        </div>
+        <label class="checkbox-row reframe-option-row">
+          <input id="reframeScaleUp" type="checkbox">
+          <span>Scale up small cells</span>
+        </label>
+      </div>
+
+      <div class="cleaner-control-section cleaner-export-section">
+        <label class="form-label" for="reframeDownloadName">Download name</label>
+        <input id="reframeDownloadName" class="form-input" type="text" value="sprite_sheet_6x4_16x9">
+        <div class="cleaner-export-row">
+          <select id="reframeOutputFormat" class="form-input compact-select">
+            <option value="png" selected>PNG</option>
+            <option value="webp">WebP</option>
+          </select>
+          <button id="btnReframeDownload" class="btn-primary-green" type="button" disabled>
+            <i data-lucide="download" style="width: 15px; height: 15px;"></i>
+            <span>Download</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="cleaner-preview-area">
+      <div class="cleaner-preview-toolbar">
+        <div>
+          <strong id="reframeFileLabel">No sprite sheet loaded</strong>
+          <span id="reframeImageInfo">Upload a 4×6 sheet to begin</span>
+        </div>
+        <div class="preview-controls">
+          <button id="btnReframeToggleBg" class="btn-ctrl active" type="button">
+            <i data-lucide="grid-3x3" style="width: 14px; height: 14px;"></i>
+            <span>Checker</span>
+          </button>
+          <button id="btnReframeZoomOut" class="btn-ctrl" type="button" disabled>−</button>
+          <span id="reframeZoomLevel" class="zoom-indicator">100%</span>
+          <button id="btnReframeZoomIn" class="btn-ctrl" type="button" disabled>+</button>
+          <button id="btnReframeZoomFit" class="btn-ctrl" type="button" disabled>Fit</button>
+        </div>
+      </div>
+
+      <div class="cleaner-preview-grid">
+        <article class="preview-card cleaner-preview-card">
+          <div class="card-header">
+            <span class="card-title">Original 4×6</span>
+            <span id="reframeSourceStatus" class="card-subtitle-info">Waiting for image</span>
+          </div>
+          <div id="reframeOriginalStage" class="cleaner-canvas-stage checkerboard-bg">
+            <canvas id="reframeOriginalCanvas" class="cleaner-canvas"></canvas>
+            <div class="cleaner-empty-state"><i data-lucide="image" style="width: 38px; height: 38px;"></i><span>Original sprite sheet</span></div>
+          </div>
+        </article>
+
+        <article class="preview-card cleaner-preview-card">
+          <div class="card-header">
+            <span class="card-title">6×4 · 1920×1080 cells</span>
+            <span id="reframeResultStatus" class="card-subtitle-info">Convert to preview result</span>
+          </div>
+          <div id="reframeResultStage" class="cleaner-canvas-stage checkerboard-bg">
+            <canvas id="reframeResultCanvas" class="cleaner-canvas"></canvas>
+            <div class="cleaner-empty-state"><i data-lucide="panel-top-open" style="width: 38px; height: 38px;"></i><span>Reframed result</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- App Script -->
   <script type="module" src="js/app.js"></script>
   <script type="module" src="js/sprite-remover.js"></script>
+  <script type="module" src="js/sprite-reframe.js"></script>
   <script>
     lucide.createIcons();
   </script>

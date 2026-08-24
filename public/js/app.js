@@ -207,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
   applyTabOrder();
 
   function isVideoWorkspaceActive() {
-    return document.body.dataset.activeWorkspace !== 'sprite-cleaner';
+    return document.body.dataset.activeWorkspace === 'video';
   }
 
   // === STATE ===
@@ -2041,15 +2041,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function generateSpriteSheet() {
     const totalFrames = parseInt(inputFrames.value, 10) || 24;
-    // The UI defines Rows as cells across the sheet and Cols as cells down.
     const rows = parseInt(inputRows.value, 10) || 6;
     const cols = parseInt(inputCols.value, 10) || 4;
     if (rows * cols < totalFrames) {
-      inputCols.value = Math.ceil(totalFrames / rows);
+      inputRows.value = Math.ceil(totalFrames / cols);
     }
 
-    const cellsAcross = rows;
-    const cellsDown = Math.max(cols, Math.ceil(totalFrames / cellsAcross));
+    const cellsAcross = cols;
+    const cellsDown = Math.max(rows, Math.ceil(totalFrames / cellsAcross));
 
     const cTop = parseInt(inputCropTop.value, 10) || 0;
     const cBottom = parseInt(inputCropBottom.value, 10) || 0;
@@ -2281,18 +2280,18 @@ document.addEventListener('DOMContentLoaded', () => {
       // Draw subtle grid lines
       const rows = parseInt(inputRows.value, 10) || 6;
       const cols = parseInt(inputCols.value, 10) || 4;
-      const cellW = previewCanvas.width / rows;
-      const cellH = previewCanvas.height / cols;
+      const cellW = previewCanvas.width / cols;
+      const cellH = previewCanvas.height / rows;
 
       ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
       ctx.lineWidth = 1;
-      for (let c = 0; c <= rows; c++) {
+      for (let c = 0; c <= cols; c++) {
         ctx.beginPath();
         ctx.moveTo(c * cellW, 0);
         ctx.lineTo(c * cellW, previewCanvas.height);
         ctx.stroke();
       }
-      for (let r = 0; r <= cols; r++) {
+      for (let r = 0; r <= rows; r++) {
         ctx.beginPath();
         ctx.moveTo(0, r * cellH);
         ctx.lineTo(previewCanvas.width, r * cellH);

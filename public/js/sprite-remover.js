@@ -4,8 +4,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const byId = (id) => document.getElementById(id);
   const tabVideo = byId('tabVideoWorkspace');
   const tabCleaner = byId('tabSpriteCleaner');
+  const tabReframe = byId('tabSpriteReframe');
   const videoWorkspace = byId('videoWorkspace');
   const cleanerWorkspace = byId('spriteCleanerWorkspace');
+  const reframeWorkspace = byId('spriteReframeWorkspace');
   const videoHeaderActions = byId('videoHeaderActions');
   const fullPageDropOverlay = byId('fullPageDropOverlay');
   const fullPageDropTitle = byId('fullPageDropTitle');
@@ -101,36 +103,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setWorkspace(name, { focus = false } = {}) {
     const cleanerActive = name === 'sprite-cleaner';
-    document.body.dataset.activeWorkspace = cleanerActive ? 'sprite-cleaner' : 'video';
-    videoWorkspace.hidden = cleanerActive;
+    const reframeActive = name === 'sprite-reframe';
+    const activeName = cleanerActive ? 'sprite-cleaner' : reframeActive ? 'sprite-reframe' : 'video';
+    document.body.dataset.activeWorkspace = activeName;
+    videoWorkspace.hidden = activeName !== 'video';
     cleanerWorkspace.hidden = !cleanerActive;
-    videoHeaderActions.hidden = cleanerActive;
-    tabVideo.classList.toggle('active', !cleanerActive);
+    reframeWorkspace.hidden = !reframeActive;
+    videoHeaderActions.hidden = activeName !== 'video';
+    tabVideo.classList.toggle('active', activeName === 'video');
     tabCleaner.classList.toggle('active', cleanerActive);
-    tabVideo.setAttribute('aria-selected', String(!cleanerActive));
+    tabReframe.classList.toggle('active', reframeActive);
+    tabVideo.setAttribute('aria-selected', String(activeName === 'video'));
     tabCleaner.setAttribute('aria-selected', String(cleanerActive));
-    tabVideo.tabIndex = cleanerActive ? -1 : 0;
+    tabReframe.setAttribute('aria-selected', String(reframeActive));
+    tabVideo.tabIndex = activeName === 'video' ? 0 : -1;
     tabCleaner.tabIndex = cleanerActive ? 0 : -1;
-    fullPageDropTitle.textContent = cleanerActive ? 'Thả Sprite Sheet vào đây' : 'Thả file Video vào đây';
-    fullPageDropHint.textContent = cleanerActive
-      ? 'Hỗ trợ ảnh tĩnh .png, .webp, .jpg, .jpeg'
-      : 'Hỗ trợ các định dạng .mp4, .webm, .mov, .avi, .mkv';
+    tabReframe.tabIndex = reframeActive ? 0 : -1;
+    if (activeName === 'video') {
+      fullPageDropTitle.textContent = 'Thả file Video vào đây';
+      fullPageDropHint.textContent = 'Hỗ trợ các định dạng .mp4, .webm, .mov, .avi, .mkv';
+    } else {
+      fullPageDropTitle.textContent = reframeActive ? 'Thả Sprite Sheet 4×6 vào đây' : 'Thả Sprite Sheet vào đây';
+      fullPageDropHint.textContent = 'Hỗ trợ ảnh tĩnh .png, .webp, .jpg, .jpeg';
+    }
     if (!cleanerActive) {
       deactivatePicker();
       stopPreviewAnimation();
     }
     if (cleanerActive && state.original) requestAnimationFrame(fitToView);
-    if (focus) (cleanerActive ? tabCleaner : tabVideo).focus();
+    window.dispatchEvent(new CustomEvent('workspacechange', { detail: { workspace: activeName } }));
+    if (focus) {
+      const tabs = { video: tabVideo, 'sprite-cleaner': tabCleaner, 'sprite-reframe': tabReframe };
+      tabs[activeName].focus();
+    }
   }
 
   tabVideo.addEventListener('click', () => setWorkspace('video'));
   tabCleaner.addEventListener('click', () => setWorkspace('sprite-cleaner'));
-  [tabVideo, tabCleaner].forEach((tab) => {
+  tabReframe.addEventListener('click', () => setWorkspace('sprite-reframe'));
+  [tabVideo, tabCleaner, tabReframe].forEach((tab, index, tabs) => {
     tab.addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
-      const toCleaner = event.key === 'ArrowRight' || event.key === 'End';
-      setWorkspace(toCleaner ? 'sprite-cleaner' : 'video', { focus: true });
+      let nextIndex = index;
+      if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = tabs.length - 1;
+      else nextIndex = (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      const nextName = tabs[nextIndex] === tabCleaner ? 'sprite-cleaner' : tabs[nextIndex] === tabReframe ? 'sprite-reframe' : 'video';
+      setWorkspace(nextName, { focus: true });
     });
   });
   setWorkspace('video');
