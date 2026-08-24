@@ -10,6 +10,7 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 7. **Download linh hoạt**: Tải về định dạng WebP / PNG trong suốt + Audio MP3 riêng lẻ hoặc tải trọn bộ gói file `.zip`.
 8. **Tốc độ phát nhất quán**: Speed (0.1x–16x) được lưu theo từng video, dùng cho preview/FPS và áp dụng tempo tương ứng khi xuất MP3/ZIP.
 9. **Bộ màu chroma key**: Nhập HEX/RGB, copy/paste, dùng lại màu gần đây và eyedropper; màu được lưu an toàn theo video.
+10. **Clean Sprite Sheet**: Upload PNG/WebP/JPEG tĩnh ở tab riêng, tự nhận diện nền từ biên ảnh hoặc từng cell, bảo vệ vùng màu bị bao kín trong chủ thể, làm sạch viền và export lại PNG/WebP trong suốt.
 
 ---
 
@@ -73,3 +74,11 @@ Truy cập: **[http://localhost:3000](http://localhost:3000)**
 6. **Tải về:**
    - Nhấn **📥 Download WebP/PNG + audio** để tải gói `.zip` gồm cả Sprite Sheet và file `.mp3`.
    - Hoặc mở menu thả xuống để tải riêng Sprite Sheet hoặc file Audio MP3.
+
+### Làm sạch sprite sheet có sẵn
+
+1. Chọn tab **Clean Sprite Sheet** trên Header rồi upload hoặc kéo thả ảnh PNG, WebP hay JPEG.
+2. Nhấn **Auto Remove** để tự tìm màu nền từ mép ảnh. Bật **Analyze each sprite cell** và nhập Rows/Cols nếu mỗi cell có nền riêng.
+3. Dùng **Pick color from Original** hoặc thêm màu thủ công khi cần bổ sung màu gradient/halo còn sót.
+4. Điều chỉnh Similarity, Edge Feather, Spill Suppression, Subject Protection và Edge Cleanup, sau đó nhấn **Apply**.
+5. Kiểm tra kết quả trên checkerboard và tải PNG/WebP bằng nút **Download**.

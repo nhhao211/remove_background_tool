@@ -204,6 +204,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   applyTabOrder();
 
+  function isVideoWorkspaceActive() {
+    return document.body.dataset.activeWorkspace !== 'sprite-cleaner';
+  }
+
   // === STATE ===
   let state = {
     currentVideoFile: null,
@@ -497,6 +501,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Global Keyboard shortcuts for video navigation
   window.addEventListener('keydown', (e) => {
+    if (!isVideoWorkspaceActive()) return;
     // Ignore when typing inside input or textarea
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
 
@@ -618,6 +623,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Window-level drag detection for full-screen overlay
   window.addEventListener('dragenter', (e) => {
+    if (!isVideoWorkspaceActive()) return;
     e.preventDefault();
     dragCounter++;
     if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
@@ -633,6 +639,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   window.addEventListener('dragleave', (e) => {
+    if (!isVideoWorkspaceActive()) return;
     e.preventDefault();
     dragCounter--;
     if (dragCounter <= 0) {
@@ -644,6 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   window.addEventListener('drop', (e) => {
+    if (!isVideoWorkspaceActive()) return;
     e.preventDefault();
     dragCounter = 0;
     if (fullPageDropOverlay) fullPageDropOverlay.classList.remove('active');

@@ -15,8 +15,8 @@
       <div class="drop-modal-icon">
         <i data-lucide="upload-cloud" style="width: 48px; height: 48px; color: #3b82f6;"></i>
       </div>
-      <h2>Thả file Video vào đây</h2>
-      <p>Hỗ trợ các định dạng .mp4, .webm, .mov, .avi, .mkv</p>
+      <h2 id="fullPageDropTitle">Thả file Video vào đây</h2>
+      <p id="fullPageDropHint">Hỗ trợ các định dạng .mp4, .webm, .mov, .avi, .mkv</p>
     </div>
   </div>
 
@@ -27,7 +27,17 @@
       <span>SpriteSheet Studio</span>
       <span class="brand-badge">PRO Chroma Key</span>
     </div>
-    <div class="header-actions">
+    <nav class="workspace-tabs" role="tablist" aria-label="Studio workspace">
+      <button id="tabVideoWorkspace" class="workspace-tab active" type="button" role="tab" aria-selected="true" aria-controls="videoWorkspace">
+        <i data-lucide="clapperboard" style="width: 15px; height: 15px;"></i>
+        <span>Video → Sprite</span>
+      </button>
+      <button id="tabSpriteCleaner" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="spriteCleanerWorkspace">
+        <i data-lucide="scan-line" style="width: 15px; height: 15px;"></i>
+        <span>Clean Sprite Sheet</span>
+      </button>
+    </nav>
+    <div id="videoHeaderActions" class="header-actions">
       <button id="btnLoadDemo" class="sample-btn" title="Load sample video with audio">
         <i data-lucide="play-circle" style="width: 16px; height: 16px;"></i>
         <span>Load Demo Video</span>
@@ -40,6 +50,7 @@
   </header>
 
   <!-- Main Workspace Grid -->
+  <div id="videoWorkspace" class="workspace-panel" role="tabpanel" aria-labelledby="tabVideoWorkspace">
   <main class="main-workspace">
     <!-- Top Row: Source Video & Sprite Sheet Preview -->
     <div class="preview-grid">
@@ -521,12 +532,153 @@
       </div>
     </section>
   </main>
+  </div>
+
+  <!-- Uploaded Sprite Sheet Background Remover -->
+  <main id="spriteCleanerWorkspace" class="cleaner-workspace workspace-panel" role="tabpanel" aria-labelledby="tabSpriteCleaner" hidden>
+    <aside class="settings-card cleaner-sidebar">
+      <div class="cleaner-sidebar-header">
+        <div>
+          <span class="card-title"><i data-lucide="wand-sparkles" style="width: 17px; height: 17px; color: #a78bfa;"></i> Background cleanup</span>
+          <p>Upload a static sprite sheet and build a transparent alpha mask.</p>
+        </div>
+      </div>
+
+      <input id="spriteImageInput" type="file" accept="image/png,image/webp,image/jpeg,.png,.webp,.jpg,.jpeg" hidden>
+      <button id="spriteDropZone" class="cleaner-drop-zone" type="button">
+        <i data-lucide="image-up" style="width: 30px; height: 30px;"></i>
+        <strong id="spriteDropTitle">Drop sprite sheet here</strong>
+        <span id="spriteDropHint">PNG, WebP or JPEG · up to 50 megapixels</span>
+      </button>
+
+      <div class="cleaner-primary-actions">
+        <button id="btnSpriteAutoRemove" class="btn-primary-blue" type="button" disabled>
+          <i data-lucide="sparkles" style="width: 16px; height: 16px;"></i>
+          <span>Auto Remove</span>
+        </button>
+        <button id="btnSpriteApply" class="btn-browse" type="button" disabled>
+          <i data-lucide="refresh-cw" style="width: 15px; height: 15px;"></i>
+          <span>Apply</span>
+        </button>
+        <button id="btnSpriteReset" class="btn-browse" type="button" disabled>Reset</button>
+      </div>
+
+      <div id="spriteProcessProgress" class="cleaner-progress" aria-hidden="true"><span></span></div>
+
+      <div class="cleaner-control-section">
+        <div class="cleaner-section-title"><span>Background colors</span><span id="spriteColorCount">0 colors</span></div>
+        <button id="btnSpritePickColor" class="eyedropper-trigger-btn cleaner-pick-button" type="button" disabled>
+          <i data-lucide="pipette" style="width: 14px; height: 14px;"></i>
+          <span>Pick color from Original</span>
+        </button>
+        <div class="cleaner-color-entry">
+          <input id="spriteManualColor" type="color" value="#00ff00" class="manual-color-input" aria-label="Background color">
+          <button id="btnSpriteAddColor" class="time-btn" type="button" disabled>+ Add</button>
+          <button id="btnSpriteClearColors" class="time-btn color-clear-btn" type="button" disabled>Clear</button>
+        </div>
+        <div id="spriteColorSwatches" class="color-swatches cleaner-swatches"></div>
+      </div>
+
+      <div class="cleaner-control-section cleaner-sliders">
+        <label class="form-label" for="spriteSimilarity"><span>Similarity</span><span id="spriteSimilarityValue" class="slider-value">0.48</span></label>
+        <input id="spriteSimilarity" type="range" min="0" max="1" step="0.01" value="0.48">
+
+        <label class="form-label" for="spriteFeather"><span>Edge Feather</span><span id="spriteFeatherValue" class="slider-value">0.20</span></label>
+        <input id="spriteFeather" type="range" min="0" max="1" step="0.01" value="0.20">
+
+        <label class="form-label" for="spriteSpill"><span>Spill Suppression</span><span id="spriteSpillValue" class="slider-value">0.55</span></label>
+        <input id="spriteSpill" type="range" min="0" max="1" step="0.01" value="0.55">
+
+        <label class="form-label" for="spriteProtection"><span>Subject Protection</span><span id="spriteProtectionValue" class="slider-value">0.55</span></label>
+        <input id="spriteProtection" type="range" min="0" max="1" step="0.01" value="0.55">
+
+        <label class="form-label" for="spriteCleanup"><span>Edge Cleanup</span><span id="spriteCleanupValue" class="slider-value">0 px</span></label>
+        <input id="spriteCleanup" type="range" min="0" max="3" step="1" value="0">
+      </div>
+
+      <div class="cleaner-control-section">
+        <label class="checkbox-row cleaner-cell-toggle">
+          <input id="spritePerCell" type="checkbox">
+          <span>Analyze each sprite cell</span>
+        </label>
+        <div id="spriteGridInputs" class="cleaner-grid-inputs" aria-disabled="true">
+          <label>Rows <input id="spriteRows" class="form-input compact-number" type="number" min="1" max="100" value="4" disabled></label>
+          <label>Cols <input id="spriteCols" class="form-input compact-number" type="number" min="1" max="100" value="6" disabled></label>
+        </div>
+      </div>
+
+      <div class="cleaner-control-section cleaner-export-section">
+        <label class="form-label" for="spriteDownloadName">Download name</label>
+        <input id="spriteDownloadName" class="form-input" type="text" value="clean_sprite_sheet">
+        <div class="cleaner-export-row">
+          <select id="spriteOutputFormat" class="form-input compact-select">
+            <option value="png" selected>PNG</option>
+            <option value="webp">WebP</option>
+          </select>
+          <button id="btnSpriteDownload" class="btn-primary-green" type="button" disabled>
+            <i data-lucide="download" style="width: 15px; height: 15px;"></i>
+            <span>Download</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="cleaner-preview-area">
+      <div class="cleaner-preview-toolbar">
+        <div>
+          <strong id="spriteFileLabel">No sprite sheet loaded</strong>
+          <span id="spriteImageInfo">Upload an image to begin</span>
+        </div>
+        <div class="preview-controls">
+          <button id="btnCleanerZoomOut" class="btn-ctrl" type="button" disabled>−</button>
+          <span id="cleanerZoomLevel" class="zoom-indicator">100%</span>
+          <button id="btnCleanerZoomIn" class="btn-ctrl" type="button" disabled>+</button>
+          <button id="btnCleanerZoomFit" class="btn-ctrl" type="button" disabled>Fit</button>
+          <button id="btnCleanerToggleBg" class="btn-ctrl active" type="button">
+            <i data-lucide="grid-3x3" style="width: 14px; height: 14px;"></i>
+            <span>Checker</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="cleaner-preview-grid">
+        <article class="preview-card cleaner-preview-card">
+          <div class="card-header">
+            <span class="card-title">Original</span>
+            <span class="card-subtitle-info">Pick colors here · wheel to zoom · drag to pan</span>
+          </div>
+          <div id="spriteOriginalStage" class="cleaner-canvas-stage checkerboard-bg">
+            <canvas id="spriteOriginalCanvas" class="cleaner-canvas"></canvas>
+            <div id="spritePickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i> Click a background color · Esc to exit</div>
+            <div id="spritePickerLoupe" class="cleaner-picker-loupe">
+              <canvas id="spritePickerCanvas" width="72" height="72"></canvas>
+              <span></span>
+              <strong id="spritePickerHex">#000000</strong>
+            </div>
+            <div class="cleaner-empty-state"><i data-lucide="image" style="width: 38px; height: 38px;"></i><span>Original sprite sheet</span></div>
+          </div>
+        </article>
+
+        <article class="preview-card cleaner-preview-card">
+          <div class="card-header">
+            <span class="card-title">Transparent result</span>
+            <span id="spriteResultStatus" class="card-subtitle-info">Waiting for image</span>
+          </div>
+          <div id="spriteResultStage" class="cleaner-canvas-stage checkerboard-bg">
+            <canvas id="spriteResultCanvas" class="cleaner-canvas"></canvas>
+            <div class="cleaner-empty-state"><i data-lucide="scan-line" style="width: 38px; height: 38px;"></i><span>Cleaned result</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
 
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- App Script -->
   <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/sprite-remover.js"></script>
   <script>
     lucide.createIcons();
   </script>
