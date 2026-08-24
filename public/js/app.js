@@ -137,6 +137,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const lblBlendVal = document.getElementById('lblBlendVal');
   const sliderSpill = document.getElementById('sliderSpill');
   const lblSpillVal = document.getElementById('lblSpillVal');
+  const sliderSubjectProtection = document.getElementById('sliderSubjectProtection');
+  const lblSubjectProtectionVal = document.getElementById('lblSubjectProtectionVal');
   const inputFps = document.getElementById('inputFps');
   const btnAutoFps = document.getElementById('btnAutoFps');
   const chkTransparentFormat = document.getElementById('chkTransparentFormat');
@@ -182,7 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputSpeedCustomSettings', 'btnResetSpeed',
       'inputFps', 'btnAutoFps',
       // Chroma Key Settings
-      'sliderSimilarity', 'sliderBlend', 'sliderSpill',
+      'sliderSimilarity', 'sliderBlend', 'sliderSpill', 'sliderSubjectProtection',
       'chkTransparentFormat', 'selectFormat',
       'btnPickColor',
       'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
@@ -287,6 +289,7 @@ document.addEventListener('DOMContentLoaded', () => {
       chromaSimilarity: parseFloat(sliderSimilarity.value),
       chromaBlend: parseFloat(sliderBlend.value),
       chromaSpill: parseFloat(sliderSpill.value),
+      chromaSubjectProtection: parseFloat(sliderSubjectProtection.value),
       updatedAt: Date.now()
     };
     try { localStorage.setItem(CLIP_STATE_KEY, JSON.stringify(states)); } catch (_) { /* storage is optional */ }
@@ -535,6 +538,7 @@ document.addEventListener('DOMContentLoaded', () => {
     sliderSimilarity.value = String(U.clampNumber(saved?.chromaSimilarity, 0, 1, 0.55));
     sliderBlend.value = String(U.clampNumber(saved?.chromaBlend, 0, 1, 0.18));
     sliderSpill.value = String(U.clampNumber(saved?.chromaSpill, 0, 1, 0.55));
+    sliderSubjectProtection.value = String(U.clampNumber(saved?.chromaSubjectProtection, 0, 1, 0.50));
     updateChromaSliderLabels();
 
     trimStartInput.value = state.trimStart.toFixed(2);
@@ -1925,6 +1929,7 @@ document.addEventListener('DOMContentLoaded', () => {
     lblSimilarityVal.textContent = parseFloat(sliderSimilarity.value).toFixed(2);
     lblBlendVal.textContent = parseFloat(sliderBlend.value).toFixed(2);
     lblSpillVal.textContent = parseFloat(sliderSpill.value).toFixed(2);
+    lblSubjectProtectionVal.textContent = parseFloat(sliderSubjectProtection.value).toFixed(2);
   }
 
   // Sliders display and persist their exact values, including zero.
@@ -1937,6 +1942,10 @@ document.addEventListener('DOMContentLoaded', () => {
     saveClipStateDebounced();
   });
   sliderSpill.addEventListener('input', () => {
+    updateChromaSliderLabels();
+    saveClipStateDebounced();
+  });
+  sliderSubjectProtection.addEventListener('input', () => {
     updateChromaSliderLabels();
     saveClipStateDebounced();
   });
@@ -2058,6 +2067,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const similarity = U.clampNumber(sliderSimilarity.value, 0, 1, 0.55);
     const blend = U.clampNumber(sliderBlend.value, 0, 1, 0.18);
     const spill = U.clampNumber(sliderSpill.value, 0, 1, 0.55);
+    const subjectProtection = U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50);
 
     state.generatedFrames = [];
     state.currentFrameIndex = 0;
@@ -2090,6 +2100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         similarity,
         blend,
         spill,
+        subjectProtection,
         keyColors: state.keyColors
       });
       frameCtx.putImageData(imgData, 0, 0);

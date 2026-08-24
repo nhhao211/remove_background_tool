@@ -21,14 +21,15 @@ function colorMetrics(color) {
   };
 }
 
-function keyDistance(pixel, key) {
+function keyDistance(pixel, key, luminanceWeight) {
   const dCb = pixel.cb - key.cb;
   const dCr = pixel.cr - key.cr;
   const dY = pixel.y - key.y;
 
-  // Chroma carries most of the keying decision. A small luminance component
-  // still separates similarly hued foreground details from the backdrop.
-  return Math.sqrt((dCb * dCb) + (dCr * dCr) + (0.08 * dY * dY));
+  // Chroma carries most of the keying decision. Subject protection increases
+  // luminance separation so similarly hued foreground detail is less likely
+  // to be mistaken for a differently lit backdrop.
+  return Math.sqrt((dCb * dCb) + (dCr * dCr) + (luminanceWeight * dY * dY));
 }
 
 function suppressSpill(data, offset, pixel, key, strength) {
@@ -58,6 +59,7 @@ function applyChromaKey(imageData, options = {}) {
   const similarity = clamp01(options.similarity ?? 0.55);
   const blend = clamp01(options.blend ?? 0.18);
   const spill = clamp01(options.spill ?? 0.55);
+  const subjectProtection = clamp01(options.subjectProtection ?? 0.50);
   const keys = keyColors.map(colorMetrics);
 
   // Non-linear mappings reserve more useful slider travel for clean, narrow
@@ -65,6 +67,7 @@ function applyChromaKey(imageData, options = {}) {
   const transparentThreshold = 0.018 + (0.30 * Math.pow(similarity, 1.4));
   const featherWidth = 0.002 + (0.12 * Math.pow(blend, 1.55));
   const spillReach = transparentThreshold + featherWidth + 0.10 + (0.10 * similarity);
+  const luminanceWeight = 0.08 + (0.90 * Math.pow(subjectProtection, 1.5));
   const data = imageData.data;
 
   for (let i = 0; i < data.length; i += 4) {
@@ -73,10 +76,10 @@ function applyChromaKey(imageData, options = {}) {
 
     const pixel = colorMetrics({ r: data[i], g: data[i + 1], b: data[i + 2] });
     let nearestKey = keys[0];
-    let distance = keyDistance(pixel, nearestKey);
+    let distance = keyDistance(pixel, nearestKey, luminanceWeight);
 
     for (let k = 1; k < keys.length; k += 1) {
-      const candidateDistance = keyDistance(pixel, keys[k]);
+      const candidateDistance = keyDistance(pixel, keys[k], luminanceWeight);
       if (candidateDistance < distance) {
         distance = candidateDistance;
         nearestKey = keys[k];
@@ -89,7 +92,8 @@ function applyChromaKey(imageData, options = {}) {
     if (spill > 0 && matte > 0) {
       const proximity = 1 - smootherstep(transparentThreshold + featherWidth, spillReach, distance);
       const edgeWeight = 0.35 + (0.65 * (1 - matte));
-      suppressSpill(data, i, pixel, nearestKey, spill * proximity * edgeWeight);
+      const colorRetention = 1 - (subjectProtection * (0.15 + (0.75 * matte)));
+      suppressSpill(data, i, pixel, nearestKey, spill * proximity * edgeWeight * colorRetention);
     }
   }
 

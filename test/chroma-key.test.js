@@ -10,6 +10,7 @@ function keyPixel(r, g, b, options = {}) {
     similarity: 0.55,
     blend: 0.18,
     spill: 0.55,
+    subjectProtection: 0.50,
     keyColors: [blue],
     ...options
   });
@@ -41,6 +42,20 @@ test('spill suppression decontaminates opaque edge pixels but leaves distant col
   assert.equal(withSpill[3], 255);
   assert.ok(withSpill[2] < withoutSpill[2]);
   assert.deepEqual(keyPixel(220, 70, 45, { spill: 1 }).slice(0, 3), [220, 70, 45]);
+});
+
+test('subject protection preserves similarly hued details with different luminance', () => {
+  const unprotected = keyPixel(0, 20, 180, { similarity: 0.72, blend: 0, spill: 0, subjectProtection: 0 });
+  const protectedPixel = keyPixel(0, 20, 180, { similarity: 0.72, blend: 0, spill: 0, subjectProtection: 1 });
+  assert.ok(protectedPixel[3] > unprotected[3]);
+  assert.equal(protectedPixel[3], 255);
+});
+
+test('subject protection retains more original color during spill suppression', () => {
+  const unprotected = keyPixel(15, 55, 225, { similarity: 0.2, blend: 0, spill: 1, subjectProtection: 0 });
+  const protectedPixel = keyPixel(15, 55, 225, { similarity: 0.2, blend: 0, spill: 1, subjectProtection: 1 });
+  assert.ok(protectedPixel[2] > unprotected[2]);
+  assert.ok(Math.abs(225 - protectedPixel[2]) < Math.abs(225 - unprotected[2]));
 });
 
 test('disabled keying preserves every channel', () => {
