@@ -2042,8 +2042,8 @@ document.addEventListener('DOMContentLoaded', () => {
   async function generateSpriteSheet() {
     const totalFrames = parseInt(inputFrames.value, 10) || 24;
     // The UI defines Rows as cells across the sheet and Cols as cells down.
-    const rows = parseInt(inputRows.value, 10) || 4;
-    const cols = parseInt(inputCols.value, 10) || 6;
+    const rows = parseInt(inputRows.value, 10) || 6;
+    const cols = parseInt(inputCols.value, 10) || 4;
     if (rows * cols < totalFrames) {
       inputCols.value = Math.ceil(totalFrames / rows);
     }
@@ -2279,8 +2279,8 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.drawImage(state.fullSheetCanvas, 0, 0);
 
       // Draw subtle grid lines
-      const rows = parseInt(inputRows.value, 10) || 4;
-      const cols = parseInt(inputCols.value, 10) || 6;
+      const rows = parseInt(inputRows.value, 10) || 6;
+      const cols = parseInt(inputCols.value, 10) || 4;
       const cellW = previewCanvas.width / rows;
       const cellH = previewCanvas.height / cols;
 
