@@ -355,6 +355,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.fullSheetCanvas = null;
     state.currentFrameIndex = 0;
     updatePreviewViewport();
+    resetVideoViewportAspect();
     state.currentVideoFile = (source instanceof File) ? source : null;
     state.playbackSpeed = 1;
     state.keyColors = [{ r: 0, g: 36, b: 245, hex: '#0024f5' }];
@@ -384,6 +385,43 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     showToast(`Loading video: ${fileName}`, 'info');
+  }
+
+  function resetVideoViewportAspect() {
+    videoViewport.classList.remove('auto-aspect', 'portrait', 'landscape', 'square');
+    videoViewport.style.removeProperty('--video-aspect-ratio');
+    videoViewport.style.removeProperty('--video-aspect-decimal');
+  }
+
+  function updateVideoViewportAspect() {
+    if (!state.videoWidth || !state.videoHeight) {
+      resetVideoViewportAspect();
+      return;
+    }
+
+    const ratio = state.videoWidth / state.videoHeight;
+    const orientation = ratio < 0.9 ? 'portrait' : ratio > 1.1 ? 'landscape' : 'square';
+    videoViewport.style.setProperty('--video-aspect-ratio', `${state.videoWidth} / ${state.videoHeight}`);
+    videoViewport.style.setProperty('--video-aspect-decimal', ratio.toFixed(6));
+    videoViewport.classList.remove('portrait', 'landscape', 'square');
+    videoViewport.classList.add('auto-aspect', orientation);
+    requestAnimationFrame(updateCropOverlay);
+  }
+
+  function getAspectRatioLabel(width, height) {
+    const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+    const divisor = gcd(width, height) || 1;
+    const w = width / divisor;
+    const h = height / divisor;
+    if (w > 100 || h > 100) {
+      const ratio = width / height;
+      if (Math.abs(ratio - (16 / 9)) < 0.03) return '16:9';
+      if (Math.abs(ratio - (9 / 16)) < 0.03) return '9:16';
+      if (Math.abs(ratio - 1) < 0.03) return '1:1';
+      if (Math.abs(ratio - (4 / 3)) < 0.03) return '4:3';
+      if (Math.abs(ratio - (3 / 4)) < 0.03) return '3:4';
+    }
+    return `${w}:${h}`;
   }
 
   function formatTime(seconds) {
@@ -481,6 +519,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.duration = video.duration || 0;
     state.videoWidth = video.videoWidth || 640;
     state.videoHeight = video.videoHeight || 360;
+    updateVideoViewportAspect();
     
     const saved = loadClipState();
     const range = U.clampTrimRange(saved?.trimStart ?? 0, saved?.trimEnd ?? state.duration, state.duration, U.MIN_TRIM_DURATION);
@@ -495,7 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
     trimEndInput.value = state.trimEnd.toFixed(2);
     trimEndInput.max = state.duration.toFixed(2);
 
-    sourceVideoInfo.textContent = `${state.videoWidth}x${state.videoHeight} • ${state.duration.toFixed(2)}s`;
+    sourceVideoInfo.textContent = `${state.videoWidth}x${state.videoHeight} • ${getAspectRatioLabel(state.videoWidth, state.videoHeight)} • ${state.duration.toFixed(2)}s`;
     
     if (editorClipLabel) {
       const name = dropZoneFilename.textContent || 'video';
