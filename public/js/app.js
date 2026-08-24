@@ -3,6 +3,7 @@
  */
 
 import { EditorUtils as U } from './editor-utils.js';
+import { applyChromaKey } from './chroma-key.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const DEFAULT_AUTO_FPS = 12;
@@ -283,6 +284,9 @@ document.addEventListener('DOMContentLoaded', () => {
       previewFps: parseInt(inputFps.value, 10) || DEFAULT_AUTO_FPS,
       previewFpsIsManual: state.previewFpsIsManual,
       keyColors: state.keyColors,
+      chromaSimilarity: parseFloat(sliderSimilarity.value),
+      chromaBlend: parseFloat(sliderBlend.value),
+      chromaSpill: parseFloat(sliderSpill.value),
       updatedAt: Date.now()
     };
     try { localStorage.setItem(CLIP_STATE_KEY, JSON.stringify(states)); } catch (_) { /* storage is optional */ }
@@ -528,6 +532,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (Array.isArray(saved?.keyColors)) {
       state.keyColors = saved.keyColors.map((color) => U.normalizeColor(color?.hex || '')).filter(Boolean);
     }
+    sliderSimilarity.value = String(U.clampNumber(saved?.chromaSimilarity, 0, 1, 0.55));
+    sliderBlend.value = String(U.clampNumber(saved?.chromaBlend, 0, 1, 0.18));
+    sliderSpill.value = String(U.clampNumber(saved?.chromaSpill, 0, 1, 0.55));
+    updateChromaSliderLabels();
 
     trimStartInput.value = state.trimStart.toFixed(2);
     trimStartInput.max = state.duration.toFixed(2);
@@ -1913,15 +1921,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Sliders display values
-  sliderSimilarity.addEventListener('input', () => {
+  function updateChromaSliderLabels() {
     lblSimilarityVal.textContent = parseFloat(sliderSimilarity.value).toFixed(2);
+    lblBlendVal.textContent = parseFloat(sliderBlend.value).toFixed(2);
+    lblSpillVal.textContent = parseFloat(sliderSpill.value).toFixed(2);
+  }
+
+  // Sliders display and persist their exact values, including zero.
+  sliderSimilarity.addEventListener('input', () => {
+    updateChromaSliderLabels();
+    saveClipStateDebounced();
   });
   sliderBlend.addEventListener('input', () => {
-    lblBlendVal.textContent = parseFloat(sliderBlend.value).toFixed(2);
+    updateChromaSliderLabels();
+    saveClipStateDebounced();
   });
   sliderSpill.addEventListener('input', () => {
-    lblSpillVal.textContent = parseFloat(sliderSpill.value).toFixed(2);
+    updateChromaSliderLabels();
+    saveClipStateDebounced();
   });
 
   // Format toggle
@@ -1961,88 +1978,6 @@ document.addEventListener('DOMContentLoaded', () => {
     spriteViewport.classList.remove('checkerboard-bg');
     spriteViewport.style.backgroundColor = inputPreviewBgColor.value || '#111827';
   });
-
-  // === CHROMA KEY BACKGROUND REMOVAL SHADER / FILTER ===
-  function applyChromaKey(imageData, similarity, blend, spill, keyColors) {
-    if (!chkTransparentFormat.checked || keyColors.length === 0) {
-      return; // Background removal disabled
-    }
-
-    const data = imageData.data;
-    const len = data.length;
-    
-    // Perceptual similarity conversion:
-    // User similarity 0.92 -> tolerance threshold
-    const tol = 1.0 - (similarity * 0.95);
-    const blendWidth = Math.max(0.01, blend * 0.4);
-    const spillFactor = spill;
-
-    // Detect primary dominant key channel for despill
-    let primaryKey = keyColors[0];
-    let isBlueKey = primaryKey.b > primaryKey.r && primaryKey.b > primaryKey.g;
-    let isGreenKey = primaryKey.g > primaryKey.r && primaryKey.g > primaryKey.b;
-    let isRedKey = primaryKey.r > primaryKey.g && primaryKey.r > primaryKey.b;
-
-    for (let i = 0; i < len; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      const a = data[i + 3];
-
-      if (a === 0) continue;
-
-      // Find minimum perceptual color distance to all registered key colors
-      let minDist = 999999;
-
-      for (let k = 0; k < keyColors.length; k++) {
-        const kc = keyColors[k];
-        const dr = r - kc.r;
-        const dg = g - kc.g;
-        const db = b - kc.b;
-
-        // Weighted Euclidean distance for human perception (redmean formula)
-        const rmean = (r + kc.r) >> 1;
-        const distSq = (((512 + rmean) * dr * dr) >> 8) + 4 * dg * dg + (((767 - rmean) * db * db) >> 8);
-        const dist = Math.sqrt(distSq) / 764.8333; // Normalized 0..1
-
-        if (dist < minDist) {
-          minDist = dist;
-        }
-      }
-
-      // Compute Alpha Mask with smoothstep feathering
-      let alphaMultiplier = 1.0;
-      if (minDist <= tol) {
-        alphaMultiplier = 0.0;
-      } else if (minDist < tol + blendWidth) {
-        const t = (minDist - tol) / blendWidth;
-        // Smoothstep 3t^2 - 2t^3
-        alphaMultiplier = t * t * (3 - 2 * t);
-      }
-
-      data[i + 3] = Math.round(a * alphaMultiplier);
-
-      // Spill suppression for foreground edges
-      if (spillFactor > 0 && alphaMultiplier > 0 && alphaMultiplier < 0.99) {
-        if (isBlueKey) {
-          const maxOther = Math.max(r, g);
-          if (b > maxOther) {
-            data[i + 2] = Math.round(b * (1 - spillFactor) + maxOther * spillFactor);
-          }
-        } else if (isGreenKey) {
-          const maxOther = Math.max(r, b);
-          if (g > maxOther) {
-            data[i + 1] = Math.round(g * (1 - spillFactor) + maxOther * spillFactor);
-          }
-        } else if (isRedKey) {
-          const maxOther = Math.max(g, b);
-          if (r > maxOther) {
-            data[i] = Math.round(r * (1 - spillFactor) + maxOther * spillFactor);
-          }
-        }
-      }
-    }
-  }
 
   // === SPRITE SHEET GENERATION ENGINE ===
   btnGenerate.addEventListener('click', async () => {
@@ -2120,9 +2055,9 @@ document.addEventListener('DOMContentLoaded', () => {
     frameCanvas.height = cellH;
     const frameCtx = frameCanvas.getContext('2d', { willReadFrequently: true });
 
-    const similarity = parseFloat(sliderSimilarity.value) || 0.92;
-    const blend = parseFloat(sliderBlend.value) || 0.25;
-    const spill = parseFloat(sliderSpill.value) || 0.40;
+    const similarity = U.clampNumber(sliderSimilarity.value, 0, 1, 0.55);
+    const blend = U.clampNumber(sliderBlend.value, 0, 1, 0.18);
+    const spill = U.clampNumber(sliderSpill.value, 0, 1, 0.55);
 
     state.generatedFrames = [];
     state.currentFrameIndex = 0;
@@ -2150,7 +2085,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Apply Background Removal Chroma Key Filter
       const imgData = frameCtx.getImageData(0, 0, cellW, cellH);
-      applyChromaKey(imgData, similarity, blend, spill, state.keyColors);
+      applyChromaKey(imgData, {
+        enabled: chkTransparentFormat.checked,
+        similarity,
+        blend,
+        spill,
+        keyColors: state.keyColors
+      });
       frameCtx.putImageData(imgData, 0, 0);
 
       // Store individual frame canvas for animation preview

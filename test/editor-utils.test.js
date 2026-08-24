@@ -44,3 +44,9 @@ test('colors normalize and dedupe', () => {
   assert.equal(U.dedupeColor([{ r: 1, g: 2, b: 3, hex: '#010203' }], '#010204').length, 1);
   assert.equal(U.dedupeColor([], '#ffffff').length, 1);
 });
+
+test('clampNumber preserves zero and applies fallback only to invalid values', () => {
+  assert.equal(U.clampNumber(0, 0, 1, 0.5), 0);
+  assert.equal(U.clampNumber(2, 0, 1, 0.5), 1);
+  assert.equal(U.clampNumber('invalid', 0, 1, 0.5), 0.5);
+});

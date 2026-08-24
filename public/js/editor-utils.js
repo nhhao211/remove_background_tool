@@ -6,6 +6,10 @@ const EditorUtils = (() => {
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const finiteOr = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
+  function clampNumber(value, min, max, fallback) {
+    return clamp(finiteOr(value, fallback), min, max);
+  }
+
   function clampTrimRange(start, end, duration, minDuration = MIN_TRIM_DURATION) {
     const safeDuration = Math.max(0, finiteOr(duration, 0));
     if (!safeDuration) return { start: 0, end: 0 };
@@ -122,6 +126,7 @@ const EditorUtils = (() => {
     MIN_TRIM_DURATION,
     MIN_SPEED,
     MAX_SPEED,
+    clampNumber,
     clampTrimRange,
     clampTrimStart,
     clampTrimEnd,
