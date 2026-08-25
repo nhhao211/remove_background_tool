@@ -112,6 +112,17 @@
           <!-- Crop Boundary Box Overlay -->
           <div id="cropOverlay" class="crop-overlay"></div>
 
+          <!-- Watermark Eraser Selection -->
+          <div id="watermarkBanner" class="watermark-banner">
+            <div class="watermark-banner-left">
+              <i data-lucide="scan" style="width: 16px; height: 16px; color: #f59e0b;"></i>
+              <span>Kéo chọn vùng watermark trên video · Esc để thoát</span>
+            </div>
+            <button id="btnCancelWatermarkSelect" class="time-btn" style="padding: 2px 8px; color: #f87171;">✕ Thoát</button>
+          </div>
+          <div id="watermarkSelectOverlay" class="watermark-select-overlay"></div>
+          <div id="watermarkOverlay" class="watermark-overlay"></div>
+
           <!-- Eyedropper Magnifier Loupe -->
           <div id="eyedropperLoupe" class="eyedropper-loupe">
             <canvas id="eyedropperCanvas" class="eyedropper-canvas" width="60" height="60"></canvas>
@@ -243,6 +254,10 @@
               <span>BG</span>
               <input type="color" id="inputPreviewBgColor" value="#111827" aria-label="Preview background color">
             </label>
+            <button id="btnPreviewMoveToCleaner" class="btn-ctrl" type="button" disabled title="Chuyển sprite sheet sang Clean Sprite Sheet">
+              <i data-lucide="wand-sparkles" style="width: 14px; height: 14px; color: #a78bfa;"></i>
+              <span>To Cleaner</span>
+            </button>
           </div>
           <span class="card-subtitle-info">Auto-play · wheel to zoom</span>
         </div>
@@ -284,6 +299,11 @@
             <span>Generate</span>
           </button>
 
+          <button id="btnMoveToCleaner" class="btn-primary-purple" type="button" disabled title="Chuyển sprite sheet sang Clean Sprite Sheet để làm sạch nền">
+            <i data-lucide="wand-sparkles" style="width: 15px; height: 15px;"></i>
+            <span>Move to Clean Sprite Sheet</span>
+          </button>
+
           <!-- Download Button with Dropdown -->
           <div class="download-dropdown">
             <button id="btnDownloadMain" class="btn-primary-green">
@@ -303,6 +323,11 @@
               <button class="dropdown-item" id="btnDownloadAudioOnly">
                 <i data-lucide="music" style="width: 15px; height: 15px; color: #f59e0b;"></i>
                 <span>Download Audio Only (.mp3)</span>
+              </button>
+              <div class="dropdown-divider"></div>
+              <button class="dropdown-item" id="btnDropdownMoveToCleaner">
+                <i data-lucide="wand-sparkles" style="width: 15px; height: 15px; color: #a78bfa;"></i>
+                <span>Move to Clean Sprite Sheet</span>
               </button>
             </div>
           </div>
@@ -398,6 +423,23 @@
             <div class="form-group">
               <label class="form-label" for="inputCropRight">Crop right (px)</label>
               <input type="number" id="inputCropRight" class="form-input compact-number" min="0" value="0">
+            </div>
+
+            <div class="form-group watermark-tool-group">
+              <label class="form-label">
+                <span>Watermark eraser</span>
+                <span id="watermarkStatus" class="hint">No area selected</span>
+              </label>
+              <div class="watermark-tool-actions">
+                <button id="btnSelectWatermark" class="time-btn watermark-tool-btn" type="button" title="Kéo chọn vùng watermark trên Source video">
+                  <i data-lucide="scan" style="width: 13px; height: 13px;"></i>
+                  <span>Select area</span>
+                </button>
+                <button id="btnClearWatermark" class="time-btn watermark-tool-btn" type="button" title="Xóa vùng watermark đã chọn">
+                  <i data-lucide="eraser" style="width: 13px; height: 13px;"></i>
+                  <span>Clear</span>
+                </button>
+              </div>
             </div>
 
             <div class="form-group">

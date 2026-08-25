@@ -12,6 +12,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const video = document.getElementById('sourceVideo');
   const videoViewport = document.getElementById('videoViewport');
   const cropOverlay = document.getElementById('cropOverlay');
+  const watermarkBanner = document.getElementById('watermarkBanner');
+  const watermarkSelectOverlay = document.getElementById('watermarkSelectOverlay');
+  const watermarkOverlay = document.getElementById('watermarkOverlay');
+  const btnCancelWatermarkSelect = document.getElementById('btnCancelWatermarkSelect');
   const eyedropperLoupe = document.getElementById('eyedropperLoupe');
   const eyedropperCanvas = document.getElementById('eyedropperCanvas');
   const eyedropperColorBadge = document.getElementById('eyedropperColorBadge');
@@ -102,6 +106,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnDownloadBundleZip = document.getElementById('btnDownloadBundleZip');
   const btnDownloadSpriteOnly = document.getElementById('btnDownloadSpriteOnly');
   const btnDownloadAudioOnly = document.getElementById('btnDownloadAudioOnly');
+  const btnMoveToCleaner = document.getElementById('btnMoveToCleaner');
+  const btnPreviewMoveToCleaner = document.getElementById('btnPreviewMoveToCleaner');
+  const btnDropdownMoveToCleaner = document.getElementById('btnDropdownMoveToCleaner');
   const lblDownloadBtn = document.getElementById('lblDownloadBtn');
   const lblSpriteOnly = document.getElementById('lblSpriteOnly');
 
@@ -130,6 +137,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const inputCropBottom = document.getElementById('inputCropBottom');
   const inputCropLeft = document.getElementById('inputCropLeft');
   const inputCropRight = document.getElementById('inputCropRight');
+  const btnSelectWatermark = document.getElementById('btnSelectWatermark');
+  const btnClearWatermark = document.getElementById('btnClearWatermark');
+  const watermarkStatus = document.getElementById('watermarkStatus');
   const inputDownloadName = document.getElementById('inputDownloadName');
   const sliderSimilarity = document.getElementById('sliderSimilarity');
   const lblSimilarityVal = document.getElementById('lblSimilarityVal');
@@ -175,13 +185,14 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputSpeedCustom', 'btnEditorSkipBack', 'btnEditorPlay', 'btnEditorSkipForward',
       'btnSetTrimStart', 'btnSetTrimEnd', 'btnResetTrim', 'trimHandleLeft', 'trimHandleRight',
       'trimStartInput', 'trimEndInput',
-      'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'inputPreviewBgColor', 'btnCancelPreviewEyedropper',
-      'btnGenerate', 'btnDownloadMain', 'btnDownloadBundleZip', 'btnDownloadSpriteOnly', 'btnDownloadAudioOnly',
+      'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'inputPreviewBgColor', 'btnPreviewMoveToCleaner', 'btnCancelPreviewEyedropper',
+      'btnGenerate', 'btnMoveToCleaner', 'btnDownloadMain', 'btnDownloadBundleZip', 'btnDownloadSpriteOnly', 'btnDownloadAudioOnly', 'btnDropdownMoveToCleaner',
       'btnBrowseFile', 'btnToggleCollapse', 'btnBrowseSecondary',
       // Sprite Sheet Settings (sidebar)
       'inputFrames', 'chkKeepSourceSize',
       'inputRows', 'inputCols', 'inputCellNative',
       'inputCropTop', 'inputCropBottom', 'inputCropLeft', 'inputCropRight',
+      'btnSelectWatermark', 'btnClearWatermark', 'btnCancelWatermarkSelect',
       'inputDownloadName',
       'inputSpeedCustomSettings', 'btnResetSpeed',
       'inputFps', 'btnAutoFps',
@@ -230,6 +241,10 @@ document.addEventListener('DOMContentLoaded', () => {
     eyedropperPanY: 0,
     eyedropperPointer: null,
     eyedropperLastMouse: null,
+    isWatermarkSelectActive: false,
+    watermarkRect: null, // Native video coordinates: { x, y, width, height }
+    isWatermarkOverlayHidden: false,
+    watermarkPointer: null,
     previewEyedropperPointer: null,
     previewEyedropperLastMouse: null,
     wasPreviewPlaying: false,
@@ -297,6 +312,7 @@ document.addEventListener('DOMContentLoaded', () => {
       chromaSpill: parseFloat(sliderSpill.value),
       chromaSubjectProtection: parseFloat(sliderSubjectProtection.value),
       chromaEdgeCleanup: parseInt(sliderEdgeCleanup.value, 10),
+      watermarkRect: state.watermarkRect,
       updatedAt: Date.now()
     };
     try { localStorage.setItem(CLIP_STATE_KEY, JSON.stringify(states)); } catch (_) { /* storage is optional */ }
@@ -367,7 +383,12 @@ document.addEventListener('DOMContentLoaded', () => {
     stopAnimationPreview();
     state.generatedFrames = [];
     state.fullSheetCanvas = null;
+    updateMoveToCleanerButtons();
     state.currentFrameIndex = 0;
+    state.watermarkRect = null;
+    state.isWatermarkOverlayHidden = false;
+    deactivateWatermarkSelect();
+    updateWatermarkOverlay();
     updatePreviewViewport();
     resetVideoViewportAspect();
     state.currentVideoFile = (source instanceof File) ? source : null;
@@ -419,7 +440,10 @@ document.addEventListener('DOMContentLoaded', () => {
     videoViewport.style.setProperty('--video-aspect-decimal', ratio.toFixed(6));
     videoViewport.classList.remove('portrait', 'landscape', 'square');
     videoViewport.classList.add('auto-aspect', orientation);
-    requestAnimationFrame(updateCropOverlay);
+    requestAnimationFrame(() => {
+      updateCropOverlay();
+      updateWatermarkOverlay();
+    });
   }
 
   function getAspectRatioLabel(width, height) {
@@ -543,6 +567,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (Array.isArray(saved?.keyColors)) {
       state.keyColors = saved.keyColors.map((color) => U.normalizeColor(color?.hex || '')).filter(Boolean);
     }
+    state.watermarkRect = normalizeWatermarkRect(saved?.watermarkRect);
+    state.isWatermarkOverlayHidden = false;
     sliderSimilarity.value = String(U.clampNumber(saved?.chromaSimilarity, 0, 1, 0.55));
     sliderBlend.value = String(U.clampNumber(saved?.chromaBlend, 0, 1, 0.18));
     sliderSpill.value = String(U.clampNumber(saved?.chromaSpill, 0, 1, 0.55));
@@ -565,6 +591,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateTrimUI();
     renderRuler();
     updateCropOverlay();
+    updateWatermarkOverlay();
     setPlaybackSpeed(saved?.playbackSpeed ?? 1, { toast: false, persist: false });
     state.previewFpsIsManual = Boolean(saved?.previewFpsIsManual);
     if (saved?.previewFps) inputFps.value = String(Math.max(1, Math.min(60, Number(saved.previewFps) || DEFAULT_AUTO_FPS)));
@@ -1329,10 +1356,206 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function normalizeWatermarkRect(rect) {
+    if (!rect || !state.videoWidth || !state.videoHeight) return null;
+    const x = U.clampNumber(rect.x, 0, state.videoWidth, 0);
+    const y = U.clampNumber(rect.y, 0, state.videoHeight, 0);
+    const maxW = Math.max(0, state.videoWidth - x);
+    const maxH = Math.max(0, state.videoHeight - y);
+    const width = U.clampNumber(rect.width, 0, maxW, 0);
+    const height = U.clampNumber(rect.height, 0, maxH, 0);
+    if (width < 1 || height < 1) return null;
+    return {
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(width),
+      height: Math.round(height)
+    };
+  }
+
+  function rectFromNativePoints(start, end) {
+    if (!start || !end) return null;
+    return normalizeWatermarkRect({
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y)
+    });
+  }
+
+  function getNativePointFromClient(clientX, clientY) {
+    const box = getVideoRenderBox();
+    if (!box) return null;
+    const clampedX = Math.max(box.screenLeft, Math.min(box.screenLeft + box.width, clientX));
+    const clampedY = Math.max(box.screenTop, Math.min(box.screenTop + box.height, clientY));
+    return {
+      x: Math.round((clampedX - box.screenLeft) * box.scaleX),
+      y: Math.round((clampedY - box.screenTop) * box.scaleY)
+    };
+  }
+
+  function updateWatermarkStatus() {
+    if (!watermarkStatus) return;
+    if (!state.watermarkRect) {
+      watermarkStatus.textContent = 'No area selected';
+      return;
+    }
+    const { x, y, width, height } = state.watermarkRect;
+    watermarkStatus.textContent = `${width}x${height}px at ${x},${y}`;
+  }
+
+  function updateWatermarkOverlay() {
+    updateWatermarkStatus();
+    if (!watermarkOverlay || !state.videoLoaded || !state.watermarkRect || state.isWatermarkOverlayHidden) {
+      if (watermarkOverlay) watermarkOverlay.style.display = 'none';
+      return;
+    }
+
+    const rect = normalizeWatermarkRect(state.watermarkRect);
+    const box = getVideoRenderBox();
+    if (!rect || !box) {
+      watermarkOverlay.style.display = 'none';
+      return;
+    }
+
+    watermarkOverlay.style.display = 'block';
+    watermarkOverlay.style.left = `${box.parentLeft + (rect.x / box.scaleX)}px`;
+    watermarkOverlay.style.top = `${box.parentTop + (rect.y / box.scaleY)}px`;
+    watermarkOverlay.style.width = `${rect.width / box.scaleX}px`;
+    watermarkOverlay.style.height = `${rect.height / box.scaleY}px`;
+  }
+
+  function activateWatermarkSelect() {
+    if (!state.videoLoaded) {
+      showToast('Vui lòng tải video trước khi chọn vùng watermark', 'error');
+      return;
+    }
+    if (state.isEyedropperActive) deactivateEyedropper();
+    state.isWatermarkSelectActive = true;
+    state.isWatermarkOverlayHidden = false;
+    state.watermarkPointer = null;
+    video.pause();
+    updateVideoPlayPauseBtn();
+    btnSelectWatermark.classList.add('active');
+    btnSelectWatermark.innerHTML = `<i data-lucide="scan" style="width: 13px; height: 13px;"></i><span>Drag on video</span>`;
+    watermarkBanner.classList.add('active');
+    watermarkSelectOverlay.classList.add('active');
+    videoViewport.classList.add('watermark-selecting');
+    updateWatermarkOverlay();
+    showToast('Kéo chọn vùng watermark trên Source video', 'info');
+    lucide.createIcons({ root: btnSelectWatermark });
+    lucide.createIcons({ root: watermarkBanner });
+  }
+
+  function deactivateWatermarkSelect() {
+    state.isWatermarkSelectActive = false;
+    state.watermarkPointer = null;
+    if (btnSelectWatermark) {
+      btnSelectWatermark.classList.remove('active');
+      btnSelectWatermark.innerHTML = `<i data-lucide="scan" style="width: 13px; height: 13px;"></i><span>Select area</span>`;
+      lucide.createIcons({ root: btnSelectWatermark });
+    }
+    if (watermarkBanner) watermarkBanner.classList.remove('active');
+    if (watermarkSelectOverlay) watermarkSelectOverlay.classList.remove('active');
+    if (videoViewport) videoViewport.classList.remove('watermark-selecting');
+    updateWatermarkOverlay();
+  }
+
+  function clearWatermarkFromImageData(imgData, crop, cell) {
+    const rect = normalizeWatermarkRect(state.watermarkRect);
+    if (!rect) return;
+
+    const cropX2 = crop.x + crop.width;
+    const cropY2 = crop.y + crop.height;
+    const rectX2 = rect.x + rect.width;
+    const rectY2 = rect.y + rect.height;
+    const ix1 = Math.max(crop.x, rect.x);
+    const iy1 = Math.max(crop.y, rect.y);
+    const ix2 = Math.min(cropX2, rectX2);
+    const iy2 = Math.min(cropY2, rectY2);
+    if (ix2 <= ix1 || iy2 <= iy1) return;
+
+    const x1 = Math.max(0, Math.floor(((ix1 - crop.x) / crop.width) * cell.width));
+    const y1 = Math.max(0, Math.floor(((iy1 - crop.y) / crop.height) * cell.height));
+    const x2 = Math.min(cell.width, Math.ceil(((ix2 - crop.x) / crop.width) * cell.width));
+    const y2 = Math.min(cell.height, Math.ceil(((iy2 - crop.y) / crop.height) * cell.height));
+    const data = imgData.data;
+
+    for (let y = y1; y < y2; y++) {
+      let index = (y * cell.width + x1) * 4;
+      for (let x = x1; x < x2; x++) {
+        data[index] = 0;
+        data[index + 1] = 0;
+        data[index + 2] = 0;
+        data[index + 3] = 0;
+        index += 4;
+      }
+    }
+  }
+
   [inputCropTop, inputCropBottom, inputCropLeft, inputCropRight].forEach((input) => {
-    input.addEventListener('input', updateCropOverlay);
+    input.addEventListener('input', () => {
+      updateCropOverlay();
+      updateWatermarkOverlay();
+    });
   });
-  window.addEventListener('resize', updateCropOverlay);
+  window.addEventListener('resize', () => {
+    updateCropOverlay();
+    updateWatermarkOverlay();
+  });
+
+  btnSelectWatermark.addEventListener('click', () => {
+    if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
+    else activateWatermarkSelect();
+  });
+
+  btnClearWatermark.addEventListener('click', () => {
+    state.watermarkRect = null;
+    state.isWatermarkOverlayHidden = false;
+    updateWatermarkOverlay();
+    saveClipStateDebounced();
+    showToast('Đã xóa vùng watermark đã chọn', 'info');
+  });
+
+  btnCancelWatermarkSelect.addEventListener('click', deactivateWatermarkSelect);
+
+  watermarkSelectOverlay.addEventListener('mousedown', (e) => {
+    if (!state.isWatermarkSelectActive || e.button !== 0) return;
+    const point = getNativePointFromClient(e.clientX, e.clientY);
+    if (!point) return;
+    e.preventDefault();
+    state.watermarkPointer = { start: point, current: point };
+    state.watermarkRect = null;
+    state.isWatermarkOverlayHidden = false;
+    updateWatermarkOverlay();
+  });
+
+  watermarkSelectOverlay.addEventListener('mousemove', (e) => {
+    if (!state.isWatermarkSelectActive || !state.watermarkPointer) return;
+    const point = getNativePointFromClient(e.clientX, e.clientY);
+    if (!point) return;
+    state.watermarkPointer.current = point;
+    state.watermarkRect = rectFromNativePoints(state.watermarkPointer.start, point);
+    updateWatermarkOverlay();
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (!state.isWatermarkSelectActive || !state.watermarkPointer) return;
+    const point = getNativePointFromClient(e.clientX, e.clientY);
+    const rect = rectFromNativePoints(state.watermarkPointer.start, point || state.watermarkPointer.current);
+    state.watermarkPointer = null;
+    if (!rect || rect.width < 3 || rect.height < 3) {
+      state.watermarkRect = null;
+      state.isWatermarkOverlayHidden = false;
+      updateWatermarkOverlay();
+      showToast('Vùng watermark quá nhỏ, hãy kéo chọn lại', 'error');
+      return;
+    }
+    state.watermarkRect = rect;
+    deactivateWatermarkSelect();
+    saveClipStateDebounced();
+    showToast('Đã chọn vùng watermark. Bấm Generate để áp dụng.', 'success');
+  });
 
   // === EYEDROPPER & COLOR PICKING ===
   btnPickColor.addEventListener('click', () => {
@@ -1363,6 +1586,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.isEyedropperActive) {
       deactivateEyedropper();
+    } else if (e.key === 'Escape' && state.isWatermarkSelectActive) {
+      deactivateWatermarkSelect();
     }
   });
 
@@ -1379,6 +1604,7 @@ document.addEventListener('DOMContentLoaded', () => {
       eyedropperZoomBadge.textContent = `${Math.round(z * 100)}%`;
     }
     updateCropOverlay();
+    updateWatermarkOverlay();
   }
 
   function resetEyedropperZoom() {
@@ -2022,7 +2248,14 @@ document.addEventListener('DOMContentLoaded', () => {
     progressBarFill.style.width = '0%';
 
     try {
+      const shouldHideWatermarkOverlayAfterGenerate = Boolean(state.watermarkRect);
       await generateSpriteSheet();
+      if (shouldHideWatermarkOverlayAfterGenerate) {
+        state.isWatermarkOverlayHidden = true;
+        updateWatermarkOverlay();
+        saveClipStateDebounced();
+      }
+      updateMoveToCleanerButtons();
       showToast('Sprite Sheet generated successfully!', 'success');
       startAnimationPreview();
     } catch (err) {
@@ -2124,6 +2357,11 @@ document.addEventListener('DOMContentLoaded', () => {
         cleanupRadius,
         keyColors: state.keyColors
       });
+      clearWatermarkFromImageData(
+        imgData,
+        { x: cLeft, y: cTop, width: cropW, height: cropH },
+        { width: cellW, height: cellH }
+      );
       frameCtx.putImageData(imgData, 0, 0);
 
       // Store individual frame canvas for animation preview
@@ -2381,6 +2619,51 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadDropdownMenu.classList.remove('show');
     downloadBundle();
   });
+
+  // 4. Move to Clean Sprite Sheet
+  btnMoveToCleaner?.addEventListener('click', moveToSpriteCleaner);
+  btnPreviewMoveToCleaner?.addEventListener('click', moveToSpriteCleaner);
+  btnDropdownMoveToCleaner?.addEventListener('click', () => {
+    downloadDropdownMenu?.classList.remove('show');
+    moveToSpriteCleaner();
+  });
+
+  function updateMoveToCleanerButtons() {
+    const hasSheet = Boolean(state.fullSheetCanvas);
+    if (btnMoveToCleaner) btnMoveToCleaner.disabled = !hasSheet;
+    if (btnPreviewMoveToCleaner) btnPreviewMoveToCleaner.disabled = !hasSheet;
+  }
+
+  function moveToSpriteCleaner() {
+    if (!state.fullSheetCanvas) {
+      showToast('Please generate the sprite sheet first', 'error');
+      return;
+    }
+
+    const baseName = (inputDownloadName.value.trim() || 'spritesheet').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fmt = selectFormat.value.toLowerCase() === 'webp' ? 'webp' : 'png';
+    const fileName = `${baseName}.${fmt}`;
+    const totalFrames = parseInt(inputFrames.value, 10) || 24;
+    const cols = parseInt(inputCols.value, 10) || 4;
+    const rows = parseInt(inputRows.value, 10) || Math.ceil(totalFrames / cols);
+    const fps = parseInt(inputFps.value, 10) || 12;
+
+    stopAnimationPreview();
+    if (video && !video.paused) video.pause();
+
+    window.dispatchEvent(new CustomEvent('movespritetocleaner', {
+      detail: {
+        canvas: state.fullSheetCanvas,
+        fileName,
+        rows,
+        cols,
+        fps,
+        downloadName: `${baseName}_clean`
+      }
+    }));
+  }
+
+  updateMoveToCleanerButtons();
 
   function downloadSpriteSheet() {
     if (!state.fullSheetCanvas) {

@@ -347,36 +347,72 @@ document.addEventListener('DOMContentLoaded', () => {
     btnPreviewPlay.disabled = !enabled || state.previewMode !== 'anim' || !perCell.checked;
   }
 
-  async function loadImageFile(file) {
-    if (!file) return;
-    const validExtension = /\.(png|webp|jpe?g)$/i.test(file.name);
-    const validMime = /^image\/(png|webp|jpeg)$/i.test(file.type || '');
-    if (!validMime && !validExtension) {
-      showToast(`Tệp "${file.name}" không phải PNG, WebP hoặc JPEG hợp lệ.`, 'error');
-      return;
-    }
-
+  async function loadSpriteSource(source, { fileName = 'sprite_sheet.png', fileSize = null, rowsCount = null, colsCount = null, fpsValue = null, downloadNameVal = null, showSuccessToast = true } = {}) {
+    if (!source) return;
     try {
       stopPreviewAnimation();
       dropTitle.textContent = 'Loading image…';
-      const bitmap = await createImageBitmap(file);
-      const pixels = bitmap.width * bitmap.height;
-      if (pixels > 50_000_000) {
+
+      let width = 0;
+      let height = 0;
+
+      if (source instanceof HTMLCanvasElement || (typeof OffscreenCanvas !== 'undefined' && source instanceof OffscreenCanvas)) {
+        width = source.width;
+        height = source.height;
+        if (width * height > 50_000_000) {
+          throw new Error('Sprite sheet vượt quá giới hạn 50 megapixels.');
+        }
+        originalCanvas.width = width;
+        originalCanvas.height = height;
+        originalContext.clearRect(0, 0, width, height);
+        originalContext.drawImage(source, 0, 0);
+        state.original = originalContext.getImageData(0, 0, width, height);
+      } else if (source instanceof ImageData) {
+        width = source.width;
+        height = source.height;
+        if (width * height > 50_000_000) {
+          throw new Error('Sprite sheet vượt quá giới hạn 50 megapixels.');
+        }
+        originalCanvas.width = width;
+        originalCanvas.height = height;
+        originalContext.clearRect(0, 0, width, height);
+        originalContext.putImageData(source, 0, 0);
+        state.original = cloneImageData(source);
+      } else if (source instanceof Blob || source instanceof File) {
+        const bitmap = await createImageBitmap(source);
+        width = bitmap.width;
+        height = bitmap.height;
+        if (width * height > 50_000_000) {
+          bitmap.close();
+          throw new Error('Sprite sheet vượt quá giới hạn 50 megapixels.');
+        }
+        originalCanvas.width = width;
+        originalCanvas.height = height;
+        originalContext.clearRect(0, 0, width, height);
+        originalContext.drawImage(bitmap, 0, 0);
+        state.original = originalContext.getImageData(0, 0, width, height);
         bitmap.close();
-        throw new Error('Sprite sheet vượt quá giới hạn 50 megapixels.');
+      } else {
+        throw new Error('Nguồn ảnh không hợp lệ.');
       }
-      originalCanvas.width = bitmap.width;
-      originalCanvas.height = bitmap.height;
-      originalContext.clearRect(0, 0, bitmap.width, bitmap.height);
-      originalContext.drawImage(bitmap, 0, 0);
-      state.original = originalContext.getImageData(0, 0, bitmap.width, bitmap.height);
-      bitmap.close();
+
       state.result = cloneImageData(state.original);
-      state.fileName = file.name;
+      state.fileName = fileName || 'sprite_sheet.png';
       state.manualColors = [];
       state.seedPoints = [];
       state.detectedColors = [];
       state.autoEnabled = false;
+
+      if (rowsCount && Number(rowsCount) > 0) {
+        rows.value = String(Math.max(1, Math.min(100, Math.round(Number(rowsCount)))));
+      }
+      if (colsCount && Number(colsCount) > 0) {
+        cols.value = String(Math.max(1, Math.min(100, Math.round(Number(colsCount)))));
+      }
+      if (fpsValue && Number(fpsValue) > 0) {
+        previewFps.value = String(Math.max(1, Math.min(60, Math.round(Number(fpsValue)))));
+      }
+
       state.previewMode = perCell.checked ? 'anim' : 'sheet';
       state.currentFrameIndex = 0;
       state.lowerSplitRatio = 0.5;
@@ -386,24 +422,38 @@ document.addEventListener('DOMContentLoaded', () => {
       syncPreserveColorControl();
       originalStage.classList.add('has-image');
       resultStage.classList.add('has-image');
-      fileLabel.textContent = file.name;
-      imageInfo.textContent = `${state.original.width} × ${state.original.height} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+      fileLabel.textContent = state.fileName;
+      const sizeText = fileSize ? ` · ${(fileSize / 1024 / 1024).toFixed(2)} MB` : '';
+      imageInfo.textContent = `${state.original.width} × ${state.original.height}${sizeText}`;
       resultStatus.textContent = 'Ready · choose Auto Remove or Pick Color';
-      dropTitle.textContent = file.name;
+      dropTitle.textContent = state.fileName;
       dropHint.textContent = 'Click to replace sprite sheet';
-      downloadName.value = (file.name.replace(/\.[^/.]+$/, '') || 'sprite_sheet') + '_clean';
+      downloadName.value = downloadNameVal || (state.fileName.replace(/\.[^/.]+$/, '') || 'sprite_sheet') + '_clean';
       setControlsEnabled(true);
       renderColors();
       renderPreview({ fit: true });
       if (perCell.checked) startPreviewAnimation();
-      showToast(`Đã tải sprite sheet: ${file.name}`, 'success');
+      if (showSuccessToast) {
+        showToast(`Đã tải sprite sheet: ${state.fileName}`, 'success');
+      }
     } catch (error) {
       dropTitle.textContent = 'Drop sprite sheet here';
       dropHint.textContent = 'PNG, WebP or JPEG · up to 50 megapixels';
       showToast(error.message || 'Không thể đọc ảnh.', 'error');
     } finally {
-      imageInput.value = '';
+      if (imageInput) imageInput.value = '';
     }
+  }
+
+  async function loadImageFile(file) {
+    if (!file) return;
+    const validExtension = /\.(png|webp|jpe?g)$/i.test(file.name);
+    const validMime = /^image\/(png|webp|jpeg)$/i.test(file.type || '');
+    if (!validMime && !validExtension) {
+      showToast(`Tệp "${file.name}" không phải PNG, WebP hoặc JPEG hợp lệ.`, 'error');
+      return;
+    }
+    await loadSpriteSource(file, { fileName: file.name, fileSize: file.size });
   }
 
   function processOptions(autoDetect) {
@@ -877,5 +927,21 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.addEventListener('resize', () => {
     if (isCleanerActive() && state.original) fitToView();
+  });
+
+  window.addEventListener('movespritetocleaner', async (event) => {
+    const { canvas, imageData, blob, fileName, rows: rowsCount, cols: colsCount, fps: fpsValue, downloadName: dlName } = event.detail || {};
+    const source = canvas || imageData || blob;
+    if (!source) return;
+    setWorkspace('sprite-cleaner');
+    await loadSpriteSource(source, {
+      fileName: fileName || 'sprite_sheet.png',
+      rowsCount,
+      colsCount,
+      fpsValue,
+      downloadNameVal: dlName,
+      showSuccessToast: false
+    });
+    showToast(`Đã chuyển sprite sheet sang Clean Sprite Sheet: ${fileName || 'sprite_sheet'}`, 'success');
   });
 });
