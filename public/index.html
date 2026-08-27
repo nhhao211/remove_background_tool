@@ -97,7 +97,7 @@
           <div id="eyedropperBanner" class="eyedropper-banner">
             <div class="eyedropper-banner-left">
               <i data-lucide="crosshair" style="width: 16px; height: 16px; color: #38bdf8;"></i>
-              <span id="eyedropperBannerText">Click Video/Preview để lấy màu · Cuộn để zoom · Kéo để pan</span>
+              <span id="eyedropperBannerText">Click Video/Preview hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn · Cuộn zoom</span>
               <span id="eyedropperZoomBadge" class="eyedropper-zoom-badge">100%</span>
             </div>
             <div class="eyedropper-banner-right">
@@ -142,6 +142,7 @@
               <div class="eyedropper-text-values">
                 <span id="eyedropperHex" class="eyedropper-hex">#000000</span>
                 <span id="eyedropperRgb" class="eyedropper-rgb">rgb(0,0,0)</span>
+                <span id="eyedropperCoord" class="eyedropper-coord">X: 0, Y: 0</span>
               </div>
             </div>
           </div>
@@ -278,7 +279,7 @@
           <div id="previewEyedropperBanner" class="eyedropper-banner preview-eyedropper-banner">
             <div class="eyedropper-banner-left">
               <i data-lucide="pipette" style="width: 16px; height: 16px; color: #38bdf8;"></i>
-              <span id="previewEyedropperBannerText">Pick từ Preview · Cuộn để zoom · Click để lấy màu</span>
+              <span id="previewEyedropperBannerText">Pick từ Preview hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn · Cuộn zoom</span>
             </div>
             <button id="btnCancelPreviewEyedropper" class="time-btn" style="padding: 2px 8px; color: #f87171;">✕ Thoát</button>
           </div>
@@ -291,6 +292,7 @@
               <div class="eyedropper-text-values">
                 <span id="previewEyedropperHex" class="eyedropper-hex">#000000</span>
                 <span id="previewEyedropperRgb" class="eyedropper-rgb">rgb(0,0,0)</span>
+                <span id="previewEyedropperCoord" class="eyedropper-coord">X: 0, Y: 0</span>
               </div>
             </div>
           </div>
@@ -902,7 +904,7 @@
           </div>
           <div id="spriteOriginalStage" class="cleaner-canvas-stage checkerboard-bg">
             <canvas id="spriteOriginalCanvas" class="cleaner-canvas"></canvas>
-            <div id="spritePickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i><span id="spritePickBannerText">Click a background color · Esc to exit</span></div>
+            <div id="spritePickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i><span id="spritePickBannerText">Click chọn màu hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn · Esc thoát</span></div>
             <div id="spriteLowerHalfGuide" class="cleaner-lower-half-guide">
               <span id="spriteProtectedRegionLabel">Protected upper region · 50%</span>
               <button id="spriteSplitHandle" type="button" role="slider" aria-label="Sprite split line" aria-valuemin="10" aria-valuemax="90" aria-valuenow="50" disabled><span></span></button>
@@ -911,6 +913,7 @@
               <canvas id="spritePickerCanvas" width="72" height="72"></canvas>
               <span></span>
               <strong id="spritePickerHex">#000000</strong>
+              <small id="spritePickerCoord" class="cleaner-picker-coord">X: 0, Y: 0</small>
             </div>
             <div class="cleaner-empty-state"><i data-lucide="image" style="width: 38px; height: 38px;"></i><span>Original sprite sheet</span></div>
           </div>

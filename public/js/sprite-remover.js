@@ -67,6 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const pickerLoupe = byId('spritePickerLoupe');
   const pickerCanvas = byId('spritePickerCanvas');
   const pickerHex = byId('spritePickerHex');
+  const spritePickerCoord = byId('spritePickerCoord');
 
   const state = {
     original: null,
@@ -78,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
     autoEnabled: false,
     isProcessing: false,
     isPicking: false,
+    pickerPoint: null,
     pickScope: 'full',
     lowerSplitRatio: 0.5,
     splitDragPointerId: null,
@@ -597,6 +599,29 @@ document.addEventListener('DOMContentLoaded', () => {
     return { x: rect.x0 + point.x, y: rect.y0 + point.y };
   }
 
+  function updatePickerByPoint(point) {
+    if (!state.isPicking || !state.original || !point) return;
+    state.pickerPoint = point;
+    const sheetPoint = displayPointToSheet(point);
+    const offset = ((sheetPoint.y * state.original.width) + sheetPoint.x) * 4;
+    const data = state.original.data;
+    const color = { r: data[offset], g: data[offset + 1], b: data[offset + 2] };
+    const hex = hexColor(color);
+
+    const rect = originalCanvas.getBoundingClientRect();
+    const clientX = rect.left + ((point.x + 0.5) / originalCanvas.width) * rect.width;
+    const clientY = rect.top + ((point.y + 0.5) / originalCanvas.height) * rect.height;
+
+    pickerContext.imageSmoothingEnabled = false;
+    pickerContext.clearRect(0, 0, 72, 72);
+    pickerContext.drawImage(originalCanvas, point.x - 4, point.y - 4, 9, 9, 0, 0, 72, 72);
+    pickerHex.textContent = hex;
+    if (spritePickerCoord) spritePickerCoord.textContent = `X: ${sheetPoint.x}, Y: ${sheetPoint.y}`;
+    pickerLoupe.style.display = 'block';
+    pickerLoupe.style.left = `${clientX + 18}px`;
+    pickerLoupe.style.top = `${clientY + 18}px`;
+  }
+
   function updatePicker(event) {
     if (!state.isPicking || !state.original) return;
     const point = canvasCoordinates(event);
@@ -604,18 +629,42 @@ document.addEventListener('DOMContentLoaded', () => {
       pickerLoupe.style.display = 'none';
       return;
     }
+    updatePickerByPoint(point);
+  }
+
+  function movePickerPoint(dx, dy) {
+    if (!state.isPicking || !state.original) return false;
+    const cur = state.pickerPoint || { x: Math.floor(originalCanvas.width / 2), y: Math.floor(originalCanvas.height / 2) };
+    const next = {
+      x: Math.max(0, Math.min(originalCanvas.width - 1, cur.x + dx)),
+      y: Math.max(0, Math.min(originalCanvas.height - 1, cur.y + dy))
+    };
+    updatePickerByPoint(next);
+    return true;
+  }
+
+  function confirmPickerSelection() {
+    if (!state.isPicking || !state.original) return false;
+    const point = state.pickerPoint || { x: Math.floor(originalCanvas.width / 2), y: Math.floor(originalCanvas.height / 2) };
+    if (state.pickScope === 'lower' && point.y < Math.floor(originalCanvas.height * state.lowerSplitRatio)) {
+      showToast(`Chỉ nhận pixel nằm dưới đường chia ${Math.round(state.lowerSplitRatio * 100)}% của sprite.`, 'info');
+      return false;
+    }
     const sheetPoint = displayPointToSheet(point);
     const offset = ((sheetPoint.y * state.original.width) + sheetPoint.x) * 4;
-    const data = state.original.data;
-    const color = { r: data[offset], g: data[offset + 1], b: data[offset + 2] };
-    const hex = hexColor(color);
-    pickerContext.imageSmoothingEnabled = false;
-    pickerContext.clearRect(0, 0, 72, 72);
-    pickerContext.drawImage(originalCanvas, point.x - 4, point.y - 4, 9, 9, 0, 0, 72, 72);
-    pickerHex.textContent = hex;
-    pickerLoupe.style.display = 'block';
-    pickerLoupe.style.left = `${event.clientX + 18}px`;
-    pickerLoupe.style.top = `${event.clientY + 18}px`;
+    if (state.original.data[offset + 3] < 10) {
+      showToast('Pixel này đã trong suốt, hãy chọn màu nền nhìn thấy được.', 'info');
+      return false;
+    }
+    const color = {
+      r: state.original.data[offset],
+      g: state.original.data[offset + 1],
+      b: state.original.data[offset + 2]
+    };
+    color.hex = hexColor(color);
+    deactivatePicker();
+    addManualColor(color, { point: sheetPoint, scope: state.pickScope });
+    return true;
   }
 
   function activatePicker(scope = 'full') {
@@ -642,13 +691,23 @@ document.addEventListener('DOMContentLoaded', () => {
     originalStage.classList.toggle('adjust-split-line', scope === 'lower' && adjustSplit.checked);
     splitHandle.disabled = !(scope === 'lower' && adjustSplit.checked);
     pickBannerText.textContent = scope === 'lower'
-      ? `Pick below the ${Math.round(state.lowerSplitRatio * 100)}% line · applies to every frame`
-      : 'Pick this frame · color applies to the full sprite sheet';
+      ? `Pick dưới đường ${Math.round(state.lowerSplitRatio * 100)}% · Click hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn`
+      : 'Pick màu nền · Click hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn · Esc thoát';
     if (scope === 'lower') requestAnimationFrame(updateLowerHalfGuide);
+
+    // Initialize sampling point at center of canvas for keyboard navigation
+    state.pickerPoint = {
+      x: Math.floor(originalCanvas.width / 2),
+      y: scope === 'lower'
+        ? Math.floor(originalCanvas.height * ((state.lowerSplitRatio + 1) / 2))
+        : Math.floor(originalCanvas.height / 2)
+    };
+    updatePickerByPoint(state.pickerPoint);
   }
 
   function deactivatePicker() {
     state.isPicking = false;
+    state.pickerPoint = null;
     btnPick?.classList.remove('active');
     btnPickLower?.classList.remove('active');
     pickBanner?.classList.remove('active');
@@ -953,7 +1012,37 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && state.isPicking) deactivatePicker();
+    if (isCleanerActive() && state.isPicking) {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+      const step = event.shiftKey ? 10 : (event.altKey ? 5 : 1);
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        movePickerPoint(0, -step);
+        return;
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        movePickerPoint(0, step);
+        return;
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        movePickerPoint(-step, 0);
+        return;
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        movePickerPoint(step, 0);
+        return;
+      } else if (event.key === 'Enter' || event.code === 'Space') {
+        event.preventDefault();
+        confirmPickerSelection();
+        return;
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        deactivatePicker();
+        return;
+      }
+    } else if (event.key === 'Escape' && state.isPicking) {
+      deactivatePicker();
+    }
   });
   window.addEventListener('resize', () => {
     if (isCleanerActive() && state.original) fitToView();

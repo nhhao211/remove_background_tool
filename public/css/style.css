@@ -725,9 +725,17 @@ body {
 
 .cleaner-picker-loupe strong {
   display: block;
-  padding: 3px;
+  padding: 3px 3px 0;
   color: #fff;
   font: 600 0.65rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+
+.cleaner-picker-coord {
+  display: block;
+  padding: 0 3px 3px;
+  color: #a78bfa;
+  font: 600 0.6rem ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
 }
 
@@ -1339,6 +1347,14 @@ body {
   color: #94a3b8;
   font-size: 7.5px;
   font-family: monospace;
+}
+
+.eyedropper-coord {
+  color: #38bdf8;
+  font-size: 7.5px;
+  font-family: monospace;
+  opacity: 0.9;
+  font-weight: 600;
 }
 
 /* ===== CapCut-style Video Editor Panel ===== */

@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const eyedropperColorBadge = document.getElementById('eyedropperColorBadge');
   const eyedropperHex = document.getElementById('eyedropperHex');
   const eyedropperRgb = document.getElementById('eyedropperRgb');
+  const eyedropperCoord = document.getElementById('eyedropperCoord');
   const eyedropperBanner = document.getElementById('eyedropperBanner');
   const eyedropperBannerText = document.getElementById('eyedropperBannerText');
   const btnCancelEyedropper = document.getElementById('btnCancelEyedropper');
@@ -43,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const previewEyedropperColorBadge = document.getElementById('previewEyedropperColorBadge');
   const previewEyedropperHex = document.getElementById('previewEyedropperHex');
   const previewEyedropperRgb = document.getElementById('previewEyedropperRgb');
+  const previewEyedropperCoord = document.getElementById('previewEyedropperCoord');
   const btnCancelPreviewEyedropper = document.getElementById('btnCancelPreviewEyedropper');
   
   // Custom Video Controls
@@ -739,12 +741,38 @@ document.addEventListener('DOMContentLoaded', () => {
     video.currentTime = Math.min(state.duration, video.currentTime + (1 / 24));
   });
 
-  // Global Keyboard shortcuts for video navigation
+  // Global Keyboard shortcuts for video navigation & eyedropper pixel nudging
   window.addEventListener('keydown', (e) => {
     if (!isVideoWorkspaceActive()) return;
     // Ignore when typing inside input or textarea
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
     if (state.protectionTool) return;
+
+    if (state.isEyedropperActive) {
+      const step = e.shiftKey ? 10 : (e.altKey ? 5 : 1);
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveEyedropperPixel(0, -step);
+        return;
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveEyedropperPixel(0, step);
+        return;
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        moveEyedropperPixel(-step, 0);
+        return;
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        moveEyedropperPixel(step, 0);
+        return;
+      } else if (e.key === 'Enter' || e.code === 'Space') {
+        e.preventDefault();
+        confirmEyedropperKeyboardSelection();
+        return;
+      }
+      return;
+    }
 
     if (e.code === 'Space') {
       e.preventDefault();
@@ -2145,6 +2173,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
     state.eyedropperPurpose = purpose === 'recolor' ? 'recolor' : 'key';
     state.isEyedropperActive = true;
+    state.eyedropperTarget = 'video';
+    state.eyedropperPixel = null;
     state.wasPreviewPlaying = state.isPlaying;
     const isRecolorPick = state.eyedropperPurpose === 'recolor';
     btnPickColor.classList.toggle('active', !isRecolorPick);
@@ -2155,11 +2185,11 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPickColorReplaceSource.innerHTML = `<i data-lucide="crosshair" style="width: 13px; height: 13px;"></i><span>Pick from Video / Preview</span>`;
     }
     if (eyedropperBannerText) eyedropperBannerText.textContent = isRecolorPick
-      ? 'Click Video/Preview để chọn màu chủ thể cần đổi · Cuộn để zoom · Kéo để pan'
-      : 'Click Video/Preview để lấy màu nền · Cuộn để zoom · Kéo để pan';
+      ? 'Chọn màu chủ thể · Click Video/Preview hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn · Cuộn zoom'
+      : 'Pick màu nền · Click Video/Preview hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn · Cuộn zoom';
     if (previewEyedropperBannerText) previewEyedropperBannerText.textContent = isRecolorPick
-      ? 'Pick màu chủ thể từ Preview · Cuộn để zoom · Click để chọn'
-      : 'Pick màu nền từ Preview · Cuộn để zoom · Click để chọn';
+      ? 'Pick màu chủ thể từ Preview · Phím Mũi tên (↑ ↓ ← →) · Enter chọn'
+      : 'Pick màu nền từ Preview · Phím Mũi tên (↑ ↓ ← →) · Enter chọn';
     eyedropperBanner.classList.add('active');
     eyedropperOverlay.classList.add('active');
     videoViewport.classList.add('eyedropper-zooming');
@@ -2175,9 +2205,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.isPlaying) stopAnimationPreview();
     applyEyedropperVideoTransform();
 
+    // Default sampling position to center of video for instant keyboard navigation
+    if (state.videoLoaded && state.videoWidth > 0 && state.videoHeight > 0) {
+      const centerX = Math.floor(state.videoWidth / 2);
+      const centerY = Math.floor(state.videoHeight / 2);
+      updateEyedropperLoupeByPixel(centerX, centerY);
+    }
+
     showToast(isRecolorPick
-      ? 'Chọn màu chủ thể cần đổi từ Source Video hoặc Preview'
-      : 'Pick màu nền từ Source Video hoặc Preview', 'info');
+      ? 'Chọn màu chủ thể: Click hoặc dùng phím Mũi tên (↑ ↓ ← →), Enter để chọn'
+      : 'Pick màu nền: Click hoặc dùng phím Mũi tên (↑ ↓ ← →), Enter để chọn', 'info');
     lucide.createIcons({ root: btnPickColor });
     lucide.createIcons({ root: btnPickColorReplaceSource });
     lucide.createIcons({ root: eyedropperBanner });
@@ -2188,6 +2225,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.isEyedropperActive = false;
     state.eyedropperPointer = null;
     state.previewEyedropperPointer = null;
+    state.eyedropperPixel = null;
+    state.eyedropperTarget = 'video';
     btnPickColor.classList.remove('active');
     btnPickColor.innerHTML = `<i data-lucide="pipette" style="width: 13px; height: 13px;"></i><span>Pick Color from Video / Preview</span>`;
     btnPickColorReplaceSource.classList.remove('active');
@@ -2258,7 +2297,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
   const loupeCtx = eyedropperCanvas.getContext('2d');
 
-  function updateEyedropperLoupe(clientX, clientY) {
+  function updateEyedropperLoupeByPixel(px, py) {
     if (!state.isEyedropperActive || !state.videoLoaded) return;
 
     const box = getVideoRenderBox();
@@ -2266,21 +2305,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const pRect = videoViewport.getBoundingClientRect();
 
-    // Check if mouse is within the actual rendered video frame
-    if (
-      clientX < box.screenLeft || clientX > box.screenLeft + box.width ||
-      clientY < box.screenTop || clientY > box.screenTop + box.height
-    ) {
-      eyedropperLoupe.style.display = 'none';
-      return;
-    }
+    px = Math.max(0, Math.min(state.videoWidth - 1, Math.round(px)));
+    py = Math.max(0, Math.min(state.videoHeight - 1, Math.round(py)));
+    state.eyedropperPixel = { px, py, target: 'video' };
+    state.eyedropperTarget = 'video';
 
+    // Client coordinates for positioning loupe
+    const clientX = box.screenLeft + (px + 0.5) / box.scaleX;
+    const clientY = box.screenTop + (py + 0.5) / box.scaleY;
+
+    if (previewEyedropperLoupe) previewEyedropperLoupe.style.display = 'none';
     eyedropperLoupe.style.display = 'block';
 
-    // Position loupe offset from cursor and clamp within viewport bounds
     let loupeX = clientX - pRect.left;
     let loupeY = clientY - pRect.top - 65;
-
     if (loupeY < 60) {
       loupeY = clientY - pRect.top + 65;
     }
@@ -2289,17 +2327,12 @@ document.addEventListener('DOMContentLoaded', () => {
     eyedropperLoupe.style.left = `${loupeX}px`;
     eyedropperLoupe.style.top = `${loupeY}px`;
 
-    // Map client coordinates to video native pixel coordinates accurately
-    const px = Math.min(state.videoWidth - 1, Math.max(0, Math.floor((clientX - box.screenLeft) * box.scaleX)));
-    const py = Math.min(state.videoHeight - 1, Math.max(0, Math.floor((clientY - box.screenTop) * box.scaleY)));
-
     if (sampleCanvas.width !== state.videoWidth || sampleCanvas.height !== state.videoHeight) {
       sampleCanvas.width = state.videoWidth;
       sampleCanvas.height = state.videoHeight;
     }
     sampleCtx.drawImage(video, 0, 0, state.videoWidth, state.videoHeight);
 
-    // Zoomed loupe rendering (11x11 pixel window)
     const radius = 5;
     loupeCtx.imageSmoothingEnabled = false;
     loupeCtx.clearRect(0, 0, eyedropperCanvas.width, eyedropperCanvas.height);
@@ -2319,7 +2352,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     eyedropperHex.textContent = hex;
     eyedropperRgb.textContent = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+    if (eyedropperCoord) eyedropperCoord.textContent = `X: ${px}, Y: ${py}`;
     eyedropperColorBadge.style.backgroundColor = hex;
+  }
+
+  function updateEyedropperLoupe(clientX, clientY) {
+    if (!state.isEyedropperActive || !state.videoLoaded) return;
+
+    const box = getVideoRenderBox();
+    if (!box) return;
+
+    // Check if mouse is within the actual rendered video frame
+    if (
+      clientX < box.screenLeft || clientX > box.screenLeft + box.width ||
+      clientY < box.screenTop || clientY > box.screenTop + box.height
+    ) {
+      eyedropperLoupe.style.display = 'none';
+      return;
+    }
+
+    const px = Math.min(state.videoWidth - 1, Math.max(0, Math.floor((clientX - box.screenLeft) * box.scaleX)));
+    const py = Math.min(state.videoHeight - 1, Math.max(0, Math.floor((clientY - box.screenTop) * box.scaleY)));
+    updateEyedropperLoupeByPixel(px, py);
   }
 
   eyedropperOverlay.addEventListener('mousemove', (e) => {
@@ -2434,24 +2488,25 @@ document.addEventListener('DOMContentLoaded', () => {
     return { px, py, rect };
   }
 
-  function updatePreviewEyedropperLoupe(clientX, clientY) {
-    if (!state.isEyedropperActive || !previewEyedropperLoupe || !previewLoupeCtx) return;
-
-    // Need generated content to sample meaningfully
+  function updatePreviewEyedropperLoupeByPixel(px, py) {
+    if (!state.isEyedropperActive || !previewEyedropperLoupe || !previewLoupeCtx || !previewCanvas) return;
     if (!state.fullSheetCanvas && state.generatedFrames.length === 0) {
       previewEyedropperLoupe.style.display = 'none';
       return;
     }
 
-    const hit = getPreviewCanvasPixel(clientX, clientY);
-    if (!hit) {
-      previewEyedropperLoupe.style.display = 'none';
-      return;
-    }
+    px = Math.max(0, Math.min(previewCanvas.width - 1, Math.round(px)));
+    py = Math.max(0, Math.min(previewCanvas.height - 1, Math.round(py)));
+    state.eyedropperPixel = { px, py, target: 'preview' };
+    state.eyedropperTarget = 'preview';
 
-    const { px, py } = hit;
+    const rect = previewCanvas.getBoundingClientRect();
     const pRect = spriteViewport.getBoundingClientRect();
 
+    const clientX = rect.left + ((px + 0.5) / previewCanvas.width) * rect.width;
+    const clientY = rect.top + ((py + 0.5) / previewCanvas.height) * rect.height;
+
+    eyedropperLoupe.style.display = 'none';
     previewEyedropperLoupe.style.display = 'block';
     let loupeX = clientX - pRect.left;
     let loupeY = clientY - pRect.top - 65;
@@ -2481,8 +2536,94 @@ document.addEventListener('DOMContentLoaded', () => {
     previewEyedropperRgb.textContent = pixel[3] < 10
       ? `rgba(${pixel[0]},${pixel[1]},${pixel[2]},0)`
       : `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+    if (previewEyedropperCoord) previewEyedropperCoord.textContent = `X: ${px}, Y: ${py}`;
     previewEyedropperColorBadge.style.backgroundColor = hex;
     previewEyedropperColorBadge.style.opacity = pixel[3] < 10 ? '0.35' : '1';
+  }
+
+  function updatePreviewEyedropperLoupe(clientX, clientY) {
+    if (!state.isEyedropperActive || !previewEyedropperLoupe || !previewLoupeCtx) return;
+
+    // Need generated content to sample meaningfully
+    if (!state.fullSheetCanvas && state.generatedFrames.length === 0) {
+      previewEyedropperLoupe.style.display = 'none';
+      return;
+    }
+
+    const hit = getPreviewCanvasPixel(clientX, clientY);
+    if (!hit) {
+      previewEyedropperLoupe.style.display = 'none';
+      return;
+    }
+
+    updatePreviewEyedropperLoupeByPixel(hit.px, hit.py);
+  }
+
+  function moveEyedropperPixel(dx, dy) {
+    if (!state.isEyedropperActive) return false;
+
+    const isPreview = state.eyedropperTarget === 'preview';
+    if (isPreview) {
+      if (!previewCanvas || previewCanvas.width < 1 || previewCanvas.height < 1) return false;
+      const curX = (state.eyedropperPixel && state.eyedropperPixel.target === 'preview')
+        ? state.eyedropperPixel.px
+        : Math.floor(previewCanvas.width / 2);
+      const curY = (state.eyedropperPixel && state.eyedropperPixel.target === 'preview')
+        ? state.eyedropperPixel.py
+        : Math.floor(previewCanvas.height / 2);
+      const px = Math.max(0, Math.min(previewCanvas.width - 1, curX + dx));
+      const py = Math.max(0, Math.min(previewCanvas.height - 1, curY + dy));
+      updatePreviewEyedropperLoupeByPixel(px, py);
+      return true;
+    } else {
+      if (!state.videoLoaded || state.videoWidth < 1 || state.videoHeight < 1) return false;
+      const curX = (state.eyedropperPixel && state.eyedropperPixel.target === 'video')
+        ? state.eyedropperPixel.px
+        : Math.floor(state.videoWidth / 2);
+      const curY = (state.eyedropperPixel && state.eyedropperPixel.target === 'video')
+        ? state.eyedropperPixel.py
+        : Math.floor(state.videoHeight / 2);
+      const px = Math.max(0, Math.min(state.videoWidth - 1, curX + dx));
+      const py = Math.max(0, Math.min(state.videoHeight - 1, curY + dy));
+      updateEyedropperLoupeByPixel(px, py);
+      return true;
+    }
+  }
+
+  function confirmEyedropperKeyboardSelection() {
+    if (!state.isEyedropperActive) return false;
+    const isPreview = state.eyedropperTarget === 'preview';
+    if (isPreview) {
+      if (!state.fullSheetCanvas && state.generatedFrames.length === 0) return false;
+      const px = (state.eyedropperPixel && state.eyedropperPixel.target === 'preview')
+        ? state.eyedropperPixel.px
+        : Math.floor(previewCanvas.width / 2);
+      const py = (state.eyedropperPixel && state.eyedropperPixel.target === 'preview')
+        ? state.eyedropperPixel.py
+        : Math.floor(previewCanvas.height / 2);
+      const ctx = previewCanvas.getContext('2d', { willReadFrequently: true });
+      const pixel = ctx.getImageData(px, py, 1, 1).data;
+      if (pixel[3] < 10) {
+        showToast('Pixel trong suốt — hãy chọn một vùng còn nhìn thấy', 'error');
+        return false;
+      }
+      return acceptEyedropperColor(pixel, 'Preview');
+    } else {
+      if (!state.videoLoaded) return false;
+      const px = (state.eyedropperPixel && state.eyedropperPixel.target === 'video')
+        ? state.eyedropperPixel.px
+        : Math.floor(state.videoWidth / 2);
+      const py = (state.eyedropperPixel && state.eyedropperPixel.target === 'video')
+        ? state.eyedropperPixel.py
+        : Math.floor(state.videoHeight / 2);
+      if (sampleCanvas.width !== state.videoWidth || sampleCanvas.height !== state.videoHeight) {
+        sampleCanvas.width = state.videoWidth;
+        sampleCanvas.height = state.videoHeight;
+      }
+      sampleCtx.drawImage(video, 0, 0, state.videoWidth, state.videoHeight);
+      const pixel = sampleCtx.getImageData(px, py, 1, 1).data;
+      return acceptEyedropperColor(pixel, 'Source Video');
+    }
   }
 
   function pickColorFromPreview(clientX, clientY) {
