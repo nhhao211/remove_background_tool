@@ -83,3 +83,60 @@ test('edge cleanup erodes the keyed foreground boundary by the requested radius'
   assert.equal(imageData.data[7], 0);
   assert.equal(imageData.data[11], 255);
 });
+
+test('a soft protection mask restores alpha in proportion to brush strength', () => {
+  const options = { similarity: 0.72, blend: 0 };
+  const unprotected = keyPixel(10, 50, 235, { ...options, protectionMask: new Uint8ClampedArray([0]) });
+  const halfProtected = keyPixel(10, 50, 235, { ...options, protectionMask: new Uint8ClampedArray([128]) });
+  const protectedPixel = keyPixel(10, 50, 235, { ...options, protectionMask: new Uint8ClampedArray([255]) });
+  assert.equal(unprotected[3], 0);
+  assert.ok(halfProtected[3] >= 127 && halfProtected[3] <= 129);
+  assert.equal(protectedPixel[3], 255);
+});
+
+test('painting over the exact background color never restores a solid background patch', () => {
+  const protectedBackground = keyPixel(0, 36, 245, {
+    protectionMask: new Uint8ClampedArray([255])
+  });
+  assert.equal(protectedBackground[3], 0);
+});
+
+test('protection is restored after edge cleanup and does not change pixels outside the mask', () => {
+  const imageData = {
+    width: 3,
+    height: 1,
+    data: new Uint8ClampedArray([
+      0, 36, 245, 255,
+      220, 70, 45, 255,
+      220, 70, 45, 255
+    ])
+  };
+  applyChromaKey(imageData, {
+    similarity: 0.55,
+    blend: 0,
+    spill: 0,
+    cleanupRadius: 1,
+    protectionMask: new Uint8ClampedArray([0, 204, 0]),
+    keyColors: [blue]
+  });
+  assert.equal(imageData.data[3], 0);
+  assert.ok(imageData.data[7] >= 203 && imageData.data[7] <= 205);
+  assert.equal(imageData.data[11], 255);
+});
+
+test('a protected pixel receives stronger key-color decontamination', () => {
+  const unprotected = keyPixel(15, 55, 225, {
+    similarity: 0.2,
+    blend: 0,
+    spill: 1,
+    protectionMask: new Uint8ClampedArray([0])
+  });
+  const protectedPixel = keyPixel(15, 55, 225, {
+    similarity: 0.2,
+    blend: 0,
+    spill: 1,
+    protectionMask: new Uint8ClampedArray([255])
+  });
+  assert.ok(protectedPixel[2] < unprotected[2]);
+  assert.ok(protectedPixel[2] < 190);
+});

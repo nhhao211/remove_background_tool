@@ -97,7 +97,7 @@
           <div id="eyedropperBanner" class="eyedropper-banner">
             <div class="eyedropper-banner-left">
               <i data-lucide="crosshair" style="width: 16px; height: 16px; color: #38bdf8;"></i>
-              <span>Click Video/Preview để lấy màu · Cuộn để zoom · Kéo để pan</span>
+              <span id="eyedropperBannerText">Click Video/Preview để lấy màu · Cuộn để zoom · Kéo để pan</span>
               <span id="eyedropperZoomBadge" class="eyedropper-zoom-badge">100%</span>
             </div>
             <div class="eyedropper-banner-right">
@@ -122,6 +122,16 @@
           </div>
           <div id="watermarkSelectOverlay" class="watermark-select-overlay"></div>
           <div id="watermarkOverlay" class="watermark-overlay"></div>
+
+          <!-- Subject protection brush -->
+          <div id="protectionBrushBanner" class="protection-brush-banner">
+            <div class="protection-brush-banner-left">
+              <i data-lucide="paintbrush" style="width: 16px; height: 16px; color: #c084fc;"></i>
+              <span>Vẽ lên vùng chủ thể cần bảo vệ · Mask này áp dụng cho mọi frame · Esc để thoát</span>
+            </div>
+            <button id="btnCancelProtectionBrush" class="time-btn" type="button" style="padding: 2px 8px; color: #f87171;">✕ Thoát</button>
+          </div>
+          <canvas id="protectionBrushCanvas" class="protection-brush-canvas" aria-label="Subject protection mask drawing surface"></canvas>
 
           <!-- Eyedropper Magnifier Loupe -->
           <div id="eyedropperLoupe" class="eyedropper-loupe">
@@ -268,7 +278,7 @@
           <div id="previewEyedropperBanner" class="eyedropper-banner preview-eyedropper-banner">
             <div class="eyedropper-banner-left">
               <i data-lucide="pipette" style="width: 16px; height: 16px; color: #38bdf8;"></i>
-              <span>Pick từ Preview · Cuộn để zoom · Click để lấy màu</span>
+              <span id="previewEyedropperBannerText">Pick từ Preview · Cuộn để zoom · Click để lấy màu</span>
             </div>
             <button id="btnCancelPreviewEyedropper" class="time-btn" style="padding: 2px 8px; color: #f87171;">✕ Thoát</button>
           </div>
@@ -532,6 +542,97 @@
               <input type="range" id="sliderEdgeCleanup" min="0" max="3" step="1" value="0">
               <span id="lblEdgeCleanupVal" class="slider-value">0 px</span>
             </div>
+          </div>
+
+          <div class="form-group protection-brush-group">
+            <label class="form-label">
+              <span>Subject Protect Brush</span>
+              <span id="protectionBrushStatus" class="hint">No protected strokes</span>
+            </label>
+            <div class="protection-brush-toolbar">
+              <button id="btnProtectionBrush" class="time-btn protection-tool-btn" type="button" title="Vẽ vùng cần bảo vệ màu và alpha của chủ thể">
+                <i data-lucide="paintbrush" style="width: 13px; height: 13px;"></i>
+                <span>Protect</span>
+              </button>
+              <button id="btnProtectionEraser" class="time-btn protection-tool-btn" type="button" title="Tẩy protection mask">
+                <i data-lucide="eraser" style="width: 13px; height: 13px;"></i>
+                <span>Erase</span>
+              </button>
+              <button id="btnProtectionUndo" class="time-btn icon-only-tool" type="button" title="Undo protection stroke" disabled>
+                <i data-lucide="undo-2" style="width: 13px; height: 13px;"></i>
+              </button>
+              <button id="btnProtectionRedo" class="time-btn icon-only-tool" type="button" title="Redo protection stroke" disabled>
+                <i data-lucide="redo-2" style="width: 13px; height: 13px;"></i>
+              </button>
+              <button id="btnProtectionClear" class="time-btn protection-tool-btn" type="button" title="Clear all protection strokes" disabled>
+                <i data-lucide="trash-2" style="width: 13px; height: 13px;"></i>
+                <span>Clear</span>
+              </button>
+              <label class="checkbox-row protection-mask-toggle">
+                <input type="checkbox" id="chkShowProtectionMask" checked>
+                <span>Show mask</span>
+              </label>
+            </div>
+            <div class="protection-brush-controls">
+              <label>
+                <span>Size <strong id="lblProtectionSize">80 px</strong></span>
+                <input type="range" id="sliderProtectionSize" min="5" max="500" step="1" value="80">
+              </label>
+              <label>
+                <span>Strength <strong id="lblProtectionStrength">75%</strong></span>
+                <input type="range" id="sliderProtectionStrength" min="0" max="1" step="0.01" value="0.75">
+              </label>
+              <label>
+                <span>Hardness <strong id="lblProtectionHardness">55%</strong></span>
+                <input type="range" id="sliderProtectionHardness" min="0" max="1" step="0.01" value="0.55">
+              </label>
+              <label class="protection-preset-label">
+                <span>Detail type</span>
+                <select id="selectProtectionPreset" class="form-input protection-preset-select">
+                  <option value="translucent" selected>Translucent · light removal</option>
+                  <option value="solid">Solid · maximum protection</option>
+                </select>
+              </label>
+            </div>
+            <p class="protection-brush-help">Translucent giữ lại 80% cường độ nét để nền vẫn xuyên nhẹ qua hoa mỏng, tóc, kính hoặc khói. Pixel trùng màu nền vẫn được giữ trong suốt để tránh kéo mảng background vào sprite. Generate lại sau khi vẽ.</p>
+          </div>
+
+          <div class="form-group color-replace-group">
+            <label class="form-label">
+              <span>Subject Color Replace</span>
+              <span class="hint">Recolors matching visible subject pixels</span>
+            </label>
+            <div class="color-replace-toolbar">
+              <label class="checkbox-row color-replace-enable">
+                <input type="checkbox" id="chkEnableColorReplace">
+                <span>Enable</span>
+              </label>
+              <label class="color-replace-swatch-field">
+                <span>From</span>
+                <input type="color" id="inputColorReplaceSource" value="#c82828" aria-label="Source color to replace">
+              </label>
+              <button id="btnPickColorReplaceSource" class="eyedropper-trigger-btn" type="button" title="Pick source color from Source Video or Sprite Preview">
+                <i data-lucide="pipette" style="width: 13px; height: 13px;"></i>
+                <span>Pick source</span>
+              </button>
+              <i data-lucide="arrow-right" class="color-replace-arrow" style="width: 16px; height: 16px;"></i>
+              <label class="color-replace-swatch-field">
+                <span>To</span>
+                <input type="color" id="inputColorReplaceTarget" value="#1e64dc" aria-label="Replacement target color">
+              </label>
+              <span id="colorReplaceSummary" class="color-replace-summary">#C82828 → #1E64DC</span>
+            </div>
+            <div class="color-replace-controls">
+              <label>
+                <span>Tolerance <strong id="lblColorReplaceTolerance">28%</strong></span>
+                <input type="range" id="sliderColorReplaceTolerance" min="0" max="1" step="0.01" value="0.28">
+              </label>
+              <label>
+                <span>Strength <strong id="lblColorReplaceStrength">100%</strong></span>
+                <input type="range" id="sliderColorReplaceStrength" min="0" max="1" step="0.01" value="1">
+              </label>
+            </div>
+            <p class="protection-brush-help">Tolerance mở rộng dải màu được chọn. Thuật toán giữ chênh lệch sáng/tối của vùng gốc để bảo toàn highlight và bóng. Nhấn Generate lại để áp dụng.</p>
           </div>
 
           <!-- Chroma Key / Green Screen Removal Options -->

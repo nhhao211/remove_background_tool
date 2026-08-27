@@ -11,6 +11,8 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 8. **Tốc độ phát nhất quán**: Speed (0.1x–16x) được lưu theo từng video, dùng cho preview/FPS và áp dụng tempo tương ứng khi xuất MP3/ZIP.
 9. **Bộ màu chroma key**: Nhập HEX/RGB, copy/paste, dùng lại màu gần đây và eyedropper; màu được lưu an toàn theo video.
 10. **Clean Sprite Sheet**: Upload PNG/WebP/JPEG tĩnh ở tab riêng, tự nhận diện nền từ biên ảnh hoặc từng cell, bảo vệ vùng màu bị bao kín trong chủ thể, làm sạch viền và export lại PNG/WebP trong suốt.
+11. **Subject Protect Brush**: Vẽ mask mềm trực tiếp trên Source Video để bảo vệ màu và alpha của chủ thể ở những vùng gần màu nền; hỗ trợ bút/tẩy, size, strength, hardness, undo/redo và preset cho chi tiết đặc hoặc bán trong suốt.
+12. **Subject Color Replace**: Dùng eyedropper chọn màu chủ thể từ Source Video hoặc Sprite Preview, chọn màu đích, rồi điều chỉnh tolerance/strength để đổi dải màu tương ứng mà vẫn giữ highlight và bóng.
 
 ---
 
@@ -56,6 +58,9 @@ Truy cập: **[http://localhost:3000](http://localhost:3000)**
    - Điều chỉnh thanh trượt **Similarity (Color Tolerance)** để loại bỏ dải màu nền rộng hơn.
    - Điều chỉnh **Blend (Edge Feathering)** để làm mịn rìa ảnh nhân vật, chống răng cưa.
    - Điều chỉnh **Spill Suppression** để khử viền màu ám lên nhân vật.
+   - Dùng **Subject Protect Brush → Protect** rồi vẽ lên những vùng chủ thể bị thủng hoặc mất màu. Chỉnh `Size`, `Strength`, `Hardness`; chọn `Translucent` cho hoa mỏng/tóc/kính/khói hoặc `Solid` cho vùng đặc. Mask tĩnh được áp dụng cho mọi frame khi nhấn **Generate**.
+   - Dùng **Erase**, **Undo**, **Redo** hoặc **Clear** để sửa mask. `Show mask` chỉ bật/tắt lớp màu tím hướng dẫn, không thay đổi kết quả xuất.
+   - Bật **Subject Color Replace**, nhấn **Pick source** và chọn màu trên Source/Preview, sau đó chọn màu ở ô `To`. `Tolerance` quyết định độ rộng dải màu được đổi, `Strength` quyết định mức hòa trộn. Nhấn **Generate** lại để cập nhật toàn bộ frame.
 
 4. **Tùy chỉnh Sprite Sheet:**
    - **Frames**: Số lượng frame cần trích xuất (VD: 24).

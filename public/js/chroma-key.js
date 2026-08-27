@@ -95,6 +95,10 @@ function applyChromaKey(imageData, options = {}) {
   const spill = clamp01(options.spill ?? 0.55);
   const subjectProtection = clamp01(options.subjectProtection ?? 0.50);
   const cleanupRadius = Math.max(0, Math.min(3, Math.round(Number(options.cleanupRadius) || 0)));
+  const protectionMask = options.protectionMask?.length === (imageData.data.length / 4)
+    ? options.protectionMask
+    : null;
+  const protectedDecontamination = clamp01(options.protectedDecontamination ?? 0.80);
   const keys = keyColors.map(colorMetrics);
 
   // Non-linear mappings reserve more useful slider travel for clean, narrow
@@ -104,10 +108,14 @@ function applyChromaKey(imageData, options = {}) {
   const spillReach = transparentThreshold + featherWidth + 0.10 + (0.10 * similarity);
   const luminanceWeight = 0.08 + (0.90 * Math.pow(subjectProtection, 1.5));
   const data = imageData.data;
+  const sourceAlpha = protectionMask ? new Uint8Array(data.length / 4) : null;
+  const effectiveProtection = protectionMask ? new Uint8Array(data.length / 4) : null;
 
   for (let i = 0; i < data.length; i += 4) {
-    const sourceAlpha = data[i + 3];
-    if (sourceAlpha === 0) continue;
+    const pixelIndex = i / 4;
+    const inputAlpha = data[i + 3];
+    if (sourceAlpha) sourceAlpha[pixelIndex] = inputAlpha;
+    if (inputAlpha === 0) continue;
 
     const pixel = colorMetrics({ r: data[i], g: data[i + 1], b: data[i + 2] });
     let nearestKey = keys[0];
@@ -122,17 +130,46 @@ function applyChromaKey(imageData, options = {}) {
     }
 
     const matte = smootherstep(transparentThreshold, transparentThreshold + featherWidth, distance);
-    data[i + 3] = Math.round(sourceAlpha * matte);
+    data[i + 3] = Math.round(inputAlpha * matte);
 
-    if (spill > 0 && matte > 0) {
+    // A painted area is only restored when its color differs enough from the
+    // sampled backdrop to provide evidence of foreground detail. Exact (or
+    // nearly exact) key-color pixels remain transparent, so broad brush
+    // strokes cannot bring a solid patch of background into the sprite.
+    const paintedProtection = protectionMask ? protectionMask[pixelIndex] / 255 : 0;
+    const evidenceEnd = Math.max(0.024, transparentThreshold * 0.34);
+    const subjectEvidence = smootherstep(0.004, evidenceEnd, distance);
+    const protection = paintedProtection * subjectEvidence;
+    if (effectiveProtection) effectiveProtection[pixelIndex] = Math.round(protection * 255);
+
+    if (spill > 0 && (matte > 0 || protection > 0)) {
       const proximity = 1 - smootherstep(transparentThreshold + featherWidth, spillReach, distance);
       const edgeWeight = 0.35 + (0.65 * (1 - matte));
       const colorRetention = 1 - (subjectProtection * (0.15 + (0.75 * matte)));
-      suppressSpill(data, i, pixel, nearestKey, spill * proximity * edgeWeight * colorRetention);
+      const regularCleanup = spill * proximity * edgeWeight * colorRetention;
+      // Protected translucent pixels need more, not less, backdrop-color
+      // cleanup. This removes the key-color component that was mixed through
+      // petals, hair, glass, smoke, and other partial-alpha detail.
+      const protectedCleanup = spill * protection * protectedDecontamination * (0.45 + (0.55 * (1 - matte)));
+      suppressSpill(data, i, pixel, nearestKey, Math.max(regularCleanup, protectedCleanup));
     }
   }
 
   erodeForegroundAlpha(imageData, cleanupRadius);
+
+  // A painted mask attenuates removal after edge cleanup. The mask already
+  // includes brush opacity and the selected preset's residual-keying amount.
+  // Blending toward the input alpha preserves soft/translucent subject detail
+  // without forcing every protected pixel to be fully opaque.
+  if (effectiveProtection && sourceAlpha) {
+    for (let pixelIndex = 0; pixelIndex < sourceAlpha.length; pixelIndex += 1) {
+      const protection = effectiveProtection[pixelIndex] / 255;
+      if (protection <= 0) continue;
+      const alphaOffset = (pixelIndex * 4) + 3;
+      const keyedAlpha = data[alphaOffset];
+      data[alphaOffset] = Math.round(keyedAlpha + ((sourceAlpha[pixelIndex] - keyedAlpha) * protection));
+    }
+  }
 
   return imageData;
 }

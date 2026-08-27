@@ -4,6 +4,8 @@
 
 import { EditorUtils as U } from './editor-utils.js';
 import { applyChromaKey } from './chroma-key.js';
+import { normalizeProtectionStrokes, rasterizeProtectionMask } from './protection-mask.js';
+import { applyColorReplacement } from './color-replace.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const DEFAULT_AUTO_FPS = 12;
@@ -16,12 +18,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const watermarkSelectOverlay = document.getElementById('watermarkSelectOverlay');
   const watermarkOverlay = document.getElementById('watermarkOverlay');
   const btnCancelWatermarkSelect = document.getElementById('btnCancelWatermarkSelect');
+  const protectionBrushBanner = document.getElementById('protectionBrushBanner');
+  const protectionBrushCanvas = document.getElementById('protectionBrushCanvas');
+  const btnCancelProtectionBrush = document.getElementById('btnCancelProtectionBrush');
   const eyedropperLoupe = document.getElementById('eyedropperLoupe');
   const eyedropperCanvas = document.getElementById('eyedropperCanvas');
   const eyedropperColorBadge = document.getElementById('eyedropperColorBadge');
   const eyedropperHex = document.getElementById('eyedropperHex');
   const eyedropperRgb = document.getElementById('eyedropperRgb');
   const eyedropperBanner = document.getElementById('eyedropperBanner');
+  const eyedropperBannerText = document.getElementById('eyedropperBannerText');
   const btnCancelEyedropper = document.getElementById('btnCancelEyedropper');
   const eyedropperOverlay = document.getElementById('eyedropperOverlay');
   const eyedropperZoomBadge = document.getElementById('eyedropperZoomBadge');
@@ -30,6 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Preview eyedropper
   const previewEyedropperBanner = document.getElementById('previewEyedropperBanner');
+  const previewEyedropperBannerText = document.getElementById('previewEyedropperBannerText');
   const previewEyedropperOverlay = document.getElementById('previewEyedropperOverlay');
   const previewEyedropperLoupe = document.getElementById('previewEyedropperLoupe');
   const previewEyedropperCanvas = document.getElementById('previewEyedropperCanvas');
@@ -151,6 +158,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const lblSubjectProtectionVal = document.getElementById('lblSubjectProtectionVal');
   const sliderEdgeCleanup = document.getElementById('sliderEdgeCleanup');
   const lblEdgeCleanupVal = document.getElementById('lblEdgeCleanupVal');
+  const btnProtectionBrush = document.getElementById('btnProtectionBrush');
+  const btnProtectionEraser = document.getElementById('btnProtectionEraser');
+  const btnProtectionUndo = document.getElementById('btnProtectionUndo');
+  const btnProtectionRedo = document.getElementById('btnProtectionRedo');
+  const btnProtectionClear = document.getElementById('btnProtectionClear');
+  const chkShowProtectionMask = document.getElementById('chkShowProtectionMask');
+  const sliderProtectionSize = document.getElementById('sliderProtectionSize');
+  const lblProtectionSize = document.getElementById('lblProtectionSize');
+  const sliderProtectionStrength = document.getElementById('sliderProtectionStrength');
+  const lblProtectionStrength = document.getElementById('lblProtectionStrength');
+  const sliderProtectionHardness = document.getElementById('sliderProtectionHardness');
+  const lblProtectionHardness = document.getElementById('lblProtectionHardness');
+  const selectProtectionPreset = document.getElementById('selectProtectionPreset');
+  const protectionBrushStatus = document.getElementById('protectionBrushStatus');
+  const chkEnableColorReplace = document.getElementById('chkEnableColorReplace');
+  const inputColorReplaceSource = document.getElementById('inputColorReplaceSource');
+  const btnPickColorReplaceSource = document.getElementById('btnPickColorReplaceSource');
+  const inputColorReplaceTarget = document.getElementById('inputColorReplaceTarget');
+  const colorReplaceSummary = document.getElementById('colorReplaceSummary');
+  const sliderColorReplaceTolerance = document.getElementById('sliderColorReplaceTolerance');
+  const lblColorReplaceTolerance = document.getElementById('lblColorReplaceTolerance');
+  const sliderColorReplaceStrength = document.getElementById('sliderColorReplaceStrength');
+  const lblColorReplaceStrength = document.getElementById('lblColorReplaceStrength');
   const inputFps = document.getElementById('inputFps');
   const btnAutoFps = document.getElementById('btnAutoFps');
   const chkTransparentFormat = document.getElementById('chkTransparentFormat');
@@ -198,6 +228,10 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputFps', 'btnAutoFps',
       // Chroma Key Settings
       'sliderSimilarity', 'sliderBlend', 'sliderSpill', 'sliderSubjectProtection', 'sliderEdgeCleanup',
+      'btnProtectionBrush', 'btnProtectionEraser', 'btnProtectionUndo', 'btnProtectionRedo', 'btnProtectionClear',
+      'chkShowProtectionMask', 'sliderProtectionSize', 'sliderProtectionStrength', 'sliderProtectionHardness', 'selectProtectionPreset',
+      'chkEnableColorReplace', 'inputColorReplaceSource', 'btnPickColorReplaceSource', 'inputColorReplaceTarget',
+      'sliderColorReplaceTolerance', 'sliderColorReplaceStrength',
       'chkTransparentFormat', 'selectFormat',
       'btnPickColor',
       'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
@@ -221,6 +255,11 @@ document.addEventListener('DOMContentLoaded', () => {
     return document.body.dataset.activeWorkspace === 'video';
   }
 
+  window.addEventListener('workspacechange', (event) => {
+    if (event.detail?.workspace !== 'video') deactivateProtectionBrush();
+    else requestAnimationFrame(updateProtectionOverlay);
+  });
+
   // === STATE ===
   let state = {
     currentVideoFile: null,
@@ -236,6 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
       { r: 0, g: 36, b: 245, hex: '#0024f5' } // Default chroma key color (blue)
     ],
     isEyedropperActive: false,
+    eyedropperPurpose: 'key', // 'key' | 'recolor'
     eyedropperZoom: 1,
     eyedropperPanX: 0,
     eyedropperPanY: 0,
@@ -245,6 +285,12 @@ document.addEventListener('DOMContentLoaded', () => {
     watermarkRect: null, // Native video coordinates: { x, y, width, height }
     isWatermarkOverlayHidden: false,
     watermarkPointer: null,
+    protectionTool: null, // 'protect' | 'erase' | null
+    protectionStrokes: [],
+    protectionUndoActions: [],
+    protectionRedoActions: [],
+    protectionPointerId: null,
+    activeProtectionStroke: null,
     previewEyedropperPointer: null,
     previewEyedropperLastMouse: null,
     wasPreviewPlaying: false,
@@ -290,7 +336,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const stored = readJsonStorage(CLIP_STATE_KEY, {});
     const states = Array.isArray(stored) ? {} : stored;
     const saved = states[state.sourceId];
-    if (!saved || saved.schemaVersion !== 1) return null;
+    if (!saved || ![1, 2, 3].includes(saved.schemaVersion)) return null;
     return saved;
   }
 
@@ -299,7 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const stored = readJsonStorage(CLIP_STATE_KEY, {});
     const states = Array.isArray(stored) ? {} : stored;
     states[state.sourceId] = {
-      schemaVersion: 1,
+      schemaVersion: 3,
       sourceId: state.sourceId,
       trimStart: state.trimStart,
       trimEnd: state.trimEnd,
@@ -312,6 +358,17 @@ document.addEventListener('DOMContentLoaded', () => {
       chromaSpill: parseFloat(sliderSpill.value),
       chromaSubjectProtection: parseFloat(sliderSubjectProtection.value),
       chromaEdgeCleanup: parseInt(sliderEdgeCleanup.value, 10),
+      protectionStrokes: normalizeProtectionStrokes(state.protectionStrokes),
+      protectionBrushSize: parseInt(sliderProtectionSize.value, 10),
+      protectionBrushStrength: parseFloat(sliderProtectionStrength.value),
+      protectionBrushHardness: parseFloat(sliderProtectionHardness.value),
+      protectionPreset: selectProtectionPreset.value,
+      showProtectionMask: chkShowProtectionMask.checked,
+      colorReplaceEnabled: chkEnableColorReplace.checked,
+      colorReplaceSource: inputColorReplaceSource.value,
+      colorReplaceTarget: inputColorReplaceTarget.value,
+      colorReplaceTolerance: parseFloat(sliderColorReplaceTolerance.value),
+      colorReplaceStrength: parseFloat(sliderColorReplaceStrength.value),
       watermarkRect: state.watermarkRect,
       updatedAt: Date.now()
     };
@@ -388,7 +445,12 @@ document.addEventListener('DOMContentLoaded', () => {
     state.watermarkRect = null;
     state.isWatermarkOverlayHidden = false;
     deactivateWatermarkSelect();
+    deactivateProtectionBrush();
+    state.protectionStrokes = [];
+    state.protectionUndoActions = [];
+    state.protectionRedoActions = [];
     updateWatermarkOverlay();
+    updateProtectionOverlay();
     updatePreviewViewport();
     resetVideoViewportAspect();
     state.currentVideoFile = (source instanceof File) ? source : null;
@@ -443,6 +505,7 @@ document.addEventListener('DOMContentLoaded', () => {
     requestAnimationFrame(() => {
       updateCropOverlay();
       updateWatermarkOverlay();
+      updateProtectionOverlay();
     });
   }
 
@@ -531,6 +594,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isVideoWorkspaceActive()) return;
     // Ignore when typing inside input or textarea
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+    if (state.protectionTool) return;
 
     if (e.code === 'Space') {
       e.preventDefault();
@@ -569,6 +633,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     state.watermarkRect = normalizeWatermarkRect(saved?.watermarkRect);
     state.isWatermarkOverlayHidden = false;
+    state.protectionStrokes = normalizeProtectionStrokes(saved?.protectionStrokes);
+    state.protectionUndoActions = [];
+    state.protectionRedoActions = [];
+    sliderProtectionSize.value = String(Math.round(U.clampNumber(saved?.protectionBrushSize, 5, 500, 80)));
+    sliderProtectionStrength.value = String(U.clampNumber(saved?.protectionBrushStrength, 0, 1, 0.75));
+    sliderProtectionHardness.value = String(U.clampNumber(saved?.protectionBrushHardness, 0, 1, 0.55));
+    selectProtectionPreset.value = saved?.protectionPreset === 'solid' ? 'solid' : 'translucent';
+    chkShowProtectionMask.checked = saved?.showProtectionMask !== false;
+    chkEnableColorReplace.checked = Boolean(saved?.colorReplaceEnabled);
+    inputColorReplaceSource.value = U.normalizeColor(saved?.colorReplaceSource)?.hex || '#c82828';
+    inputColorReplaceTarget.value = U.normalizeColor(saved?.colorReplaceTarget)?.hex || '#1e64dc';
+    sliderColorReplaceTolerance.value = String(U.clampNumber(saved?.colorReplaceTolerance, 0, 1, 0.28));
+    sliderColorReplaceStrength.value = String(U.clampNumber(saved?.colorReplaceStrength, 0, 1, 1));
     sliderSimilarity.value = String(U.clampNumber(saved?.chromaSimilarity, 0, 1, 0.55));
     sliderBlend.value = String(U.clampNumber(saved?.chromaBlend, 0, 1, 0.18));
     sliderSpill.value = String(U.clampNumber(saved?.chromaSpill, 0, 1, 0.55));
@@ -592,6 +669,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderRuler();
     updateCropOverlay();
     updateWatermarkOverlay();
+    updateProtectionBrushUI();
+    updateProtectionOverlay();
+    updateColorReplaceUI();
     setPlaybackSpeed(saved?.playbackSpeed ?? 1, { toast: false, persist: false });
     state.previewFpsIsManual = Boolean(saved?.previewFpsIsManual);
     if (saved?.previewFps) inputFps.value = String(Math.max(1, Math.min(60, Number(saved.previewFps) || DEFAULT_AUTO_FPS)));
@@ -1431,6 +1511,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     if (state.isEyedropperActive) deactivateEyedropper();
+    if (state.protectionTool) deactivateProtectionBrush();
     state.isWatermarkSelectActive = true;
     state.isWatermarkOverlayHidden = false;
     state.watermarkPointer = null;
@@ -1502,6 +1583,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', () => {
     updateCropOverlay();
     updateWatermarkOverlay();
+    updateProtectionOverlay();
   });
 
   btnSelectWatermark.addEventListener('click', () => {
@@ -1557,16 +1639,262 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast('Đã chọn vùng watermark. Bấm Generate để áp dụng.', 'success');
   });
 
+  // === SUBJECT PROTECTION BRUSH ===
+  function updateProtectionBrushUI() {
+    const strokeCount = state.protectionStrokes.length;
+    lblProtectionSize.textContent = `${Math.round(Number(sliderProtectionSize.value) || 80)} px`;
+    lblProtectionStrength.textContent = `${Math.round(U.clampNumber(sliderProtectionStrength.value, 0, 1, 0.75) * 100)}%`;
+    lblProtectionHardness.textContent = `${Math.round(U.clampNumber(sliderProtectionHardness.value, 0, 1, 0.55) * 100)}%`;
+    protectionBrushStatus.textContent = strokeCount > 0
+      ? `${strokeCount} stroke${strokeCount === 1 ? '' : 's'} · applies to all frames`
+      : 'No protected strokes';
+    btnProtectionUndo.disabled = state.protectionUndoActions.length === 0;
+    btnProtectionRedo.disabled = state.protectionRedoActions.length === 0;
+    btnProtectionClear.disabled = strokeCount === 0;
+    btnProtectionBrush.classList.toggle('active', state.protectionTool === 'protect');
+    btnProtectionEraser.classList.toggle('active', state.protectionTool === 'erase');
+  }
+
+  function updateProtectionOverlay() {
+    if (!protectionBrushCanvas) return;
+    const shouldShow = state.videoLoaded
+      && !state.isEyedropperActive
+      && (Boolean(state.protectionTool) || (chkShowProtectionMask.checked && state.protectionStrokes.length > 0));
+    if (!shouldShow) {
+      protectionBrushCanvas.classList.remove('visible');
+      return;
+    }
+    const box = getVideoRenderBox();
+    if (!box || box.width < 1 || box.height < 1) {
+      protectionBrushCanvas.classList.remove('visible');
+      return;
+    }
+
+    protectionBrushCanvas.style.left = `${box.parentLeft}px`;
+    protectionBrushCanvas.style.top = `${box.parentTop}px`;
+    protectionBrushCanvas.style.width = `${box.width}px`;
+    protectionBrushCanvas.style.height = `${box.height}px`;
+    rasterizeProtectionMask(state.protectionStrokes, {
+      canvas: protectionBrushCanvas,
+      sourceWidth: state.videoWidth,
+      sourceHeight: state.videoHeight,
+      cropX: 0,
+      cropY: 0,
+      cropWidth: state.videoWidth,
+      cropHeight: state.videoHeight,
+      targetWidth: Math.max(1, Math.round(box.width)),
+      targetHeight: Math.max(1, Math.round(box.height)),
+      color: 'rgba(192,132,252,{alpha})'
+    });
+    protectionBrushCanvas.classList.add('visible');
+  }
+
+  function normalizedProtectionPoint(clientX, clientY, clampToVideo = false) {
+    const box = getVideoRenderBox();
+    if (!box) return null;
+    const isInside = clientX >= box.screenLeft && clientX <= box.screenLeft + box.width
+      && clientY >= box.screenTop && clientY <= box.screenTop + box.height;
+    if (!isInside && !clampToVideo) return null;
+    return {
+      x: Math.max(0, Math.min(1, (clientX - box.screenLeft) / box.width)),
+      y: Math.max(0, Math.min(1, (clientY - box.screenTop) / box.height))
+    };
+  }
+
+  function finishProtectionStroke(event) {
+    const stroke = state.activeProtectionStroke;
+    if (!stroke) return;
+    if (event?.pointerId != null && event.pointerId !== state.protectionPointerId) return;
+    try { protectionBrushCanvas.releasePointerCapture?.(state.protectionPointerId); } catch (_) { /* optional */ }
+    state.activeProtectionStroke = null;
+    state.protectionPointerId = null;
+    state.protectionUndoActions.push({ type: 'stroke', stroke });
+    state.protectionUndoActions = state.protectionUndoActions.slice(-100);
+    state.protectionRedoActions = [];
+    updateProtectionBrushUI();
+    updateProtectionOverlay();
+    saveClipStateDebounced();
+  }
+
+  function activateProtectionBrush(mode) {
+    if (!state.videoLoaded) {
+      showToast('Vui lòng tải video trước khi vẽ protection mask', 'error');
+      return;
+    }
+    if (state.isEyedropperActive) deactivateEyedropper();
+    if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
+    state.protectionTool = mode === 'erase' ? 'erase' : 'protect';
+    video.pause();
+    updateVideoPlayPauseBtn();
+    protectionBrushBanner.classList.add('active');
+    protectionBrushCanvas.classList.add('active');
+    videoViewport.classList.add('protection-painting');
+    updateProtectionBrushUI();
+    updateProtectionOverlay();
+    lucide.createIcons({ root: protectionBrushBanner });
+    showToast(state.protectionTool === 'erase'
+      ? 'Tẩy protection mask trên Source video'
+      : 'Vẽ vùng chủ thể cần bảo vệ. Mask áp dụng cho mọi frame.', 'info');
+  }
+
+  function deactivateProtectionBrush() {
+    if (state.activeProtectionStroke) finishProtectionStroke();
+    state.protectionTool = null;
+    protectionBrushBanner?.classList.remove('active');
+    protectionBrushCanvas?.classList.remove('active');
+    videoViewport?.classList.remove('protection-painting');
+    updateProtectionBrushUI();
+    updateProtectionOverlay();
+  }
+
+  btnProtectionBrush.addEventListener('click', () => {
+    if (state.protectionTool === 'protect') deactivateProtectionBrush();
+    else activateProtectionBrush('protect');
+  });
+  btnProtectionEraser.addEventListener('click', () => {
+    if (state.protectionTool === 'erase') deactivateProtectionBrush();
+    else activateProtectionBrush('erase');
+  });
+  btnCancelProtectionBrush.addEventListener('click', deactivateProtectionBrush);
+
+  protectionBrushCanvas.addEventListener('pointerdown', (event) => {
+    if (!state.protectionTool || !state.videoLoaded || event.button !== 0) return;
+    const point = normalizedProtectionPoint(event.clientX, event.clientY, false);
+    if (!point) return;
+    event.preventDefault();
+    const rawStrength = U.clampNumber(sliderProtectionStrength.value, 0, 1, 0.75);
+    const presetRetention = selectProtectionPreset.value === 'solid' ? 1 : 0.8;
+    const stroke = {
+      mode: state.protectionTool,
+      points: [point],
+      size: Math.round(U.clampNumber(sliderProtectionSize.value, 5, 500, 80)),
+      strength: state.protectionTool === 'erase' ? rawStrength : rawStrength * presetRetention,
+      hardness: U.clampNumber(sliderProtectionHardness.value, 0, 1, 0.55)
+    };
+    state.activeProtectionStroke = stroke;
+    state.protectionPointerId = event.pointerId;
+    state.protectionStrokes.push(stroke);
+    protectionBrushCanvas.setPointerCapture?.(event.pointerId);
+    updateProtectionOverlay();
+  });
+
+  protectionBrushCanvas.addEventListener('pointermove', (event) => {
+    const stroke = state.activeProtectionStroke;
+    if (!stroke || event.pointerId !== state.protectionPointerId) return;
+    const point = normalizedProtectionPoint(event.clientX, event.clientY, true);
+    if (!point) return;
+    const previous = stroke.points[stroke.points.length - 1];
+    const nativeDistance = Math.hypot(
+      (point.x - previous.x) * state.videoWidth,
+      (point.y - previous.y) * state.videoHeight
+    );
+    if (nativeDistance < Math.max(1, stroke.size * 0.035)) return;
+    stroke.points.push(point);
+    updateProtectionOverlay();
+  });
+
+  protectionBrushCanvas.addEventListener('pointerup', finishProtectionStroke);
+  protectionBrushCanvas.addEventListener('pointercancel', finishProtectionStroke);
+
+  btnProtectionUndo.addEventListener('click', () => {
+    const action = state.protectionUndoActions.pop();
+    if (!action) return;
+    if (action.type === 'stroke') state.protectionStrokes.pop();
+    else if (action.type === 'clear') state.protectionStrokes = action.strokes.slice();
+    state.protectionRedoActions.push(action);
+    updateProtectionBrushUI();
+    updateProtectionOverlay();
+    saveClipStateDebounced();
+  });
+
+  btnProtectionRedo.addEventListener('click', () => {
+    const action = state.protectionRedoActions.pop();
+    if (!action) return;
+    if (action.type === 'stroke') state.protectionStrokes.push(action.stroke);
+    else if (action.type === 'clear') state.protectionStrokes = [];
+    state.protectionUndoActions.push(action);
+    updateProtectionBrushUI();
+    updateProtectionOverlay();
+    saveClipStateDebounced();
+  });
+
+  btnProtectionClear.addEventListener('click', () => {
+    if (state.protectionStrokes.length === 0) return;
+    state.protectionUndoActions.push({ type: 'clear', strokes: state.protectionStrokes.slice() });
+    state.protectionUndoActions = state.protectionUndoActions.slice(-100);
+    state.protectionRedoActions = [];
+    state.protectionStrokes = [];
+    updateProtectionBrushUI();
+    updateProtectionOverlay();
+    saveClipStateDebounced();
+    showToast('Đã xóa protection mask. Có thể Undo để khôi phục.', 'info');
+  });
+
+  [sliderProtectionSize, sliderProtectionStrength, sliderProtectionHardness].forEach((control) => {
+    control.addEventListener('input', () => {
+      updateProtectionBrushUI();
+      saveClipStateDebounced();
+    });
+  });
+  selectProtectionPreset.addEventListener('change', saveClipStateDebounced);
+  chkShowProtectionMask.addEventListener('change', () => {
+    updateProtectionOverlay();
+    saveClipStateDebounced();
+  });
+  updateProtectionBrushUI();
+
+  // === SUBJECT COLOR REPLACEMENT ===
+  function updateColorReplaceUI() {
+    const source = U.normalizeColor(inputColorReplaceSource.value)?.hex || '#c82828';
+    const target = U.normalizeColor(inputColorReplaceTarget.value)?.hex || '#1e64dc';
+    lblColorReplaceTolerance.textContent = `${Math.round(U.clampNumber(sliderColorReplaceTolerance.value, 0, 1, 0.28) * 100)}%`;
+    lblColorReplaceStrength.textContent = `${Math.round(U.clampNumber(sliderColorReplaceStrength.value, 0, 1, 1) * 100)}%`;
+    colorReplaceSummary.textContent = `${source.toUpperCase()} → ${target.toUpperCase()}`;
+    colorReplaceSummary.classList.toggle('active', chkEnableColorReplace.checked);
+  }
+
+  function setColorReplaceSource(hex, { enable = true } = {}) {
+    const color = U.normalizeColor(hex);
+    if (!color) return false;
+    inputColorReplaceSource.value = color.hex;
+    if (enable) chkEnableColorReplace.checked = true;
+    updateColorReplaceUI();
+    saveClipStateDebounced();
+    return true;
+  }
+
+  [chkEnableColorReplace, inputColorReplaceSource, inputColorReplaceTarget,
+    sliderColorReplaceTolerance, sliderColorReplaceStrength].forEach((control) => {
+    control.addEventListener('input', () => {
+      updateColorReplaceUI();
+      saveClipStateDebounced();
+    });
+    control.addEventListener('change', () => {
+      updateColorReplaceUI();
+      saveClipStateDebounced();
+    });
+  });
+
+  btnPickColorReplaceSource.addEventListener('click', () => {
+    if (!state.videoLoaded) {
+      showToast('Vui lòng tải video trước khi chọn màu cần đổi', 'error');
+      return;
+    }
+    if (state.isEyedropperActive && state.eyedropperPurpose === 'recolor') deactivateEyedropper();
+    else activateEyedropper('recolor');
+  });
+  updateColorReplaceUI();
+
   // === EYEDROPPER & COLOR PICKING ===
   btnPickColor.addEventListener('click', () => {
     if (!state.videoLoaded) {
       showToast('Vui lòng tải video trước khi chọn màu', 'error');
       return;
     }
-    if (state.isEyedropperActive) {
+    if (state.isEyedropperActive && state.eyedropperPurpose === 'key') {
       deactivateEyedropper();
     } else {
-      activateEyedropper();
+      activateEyedropper('key');
     }
   });
 
@@ -1588,6 +1916,8 @@ document.addEventListener('DOMContentLoaded', () => {
       deactivateEyedropper();
     } else if (e.key === 'Escape' && state.isWatermarkSelectActive) {
       deactivateWatermarkSelect();
+    } else if (e.key === 'Escape' && state.protectionTool) {
+      deactivateProtectionBrush();
     }
   });
 
@@ -1628,14 +1958,31 @@ document.addEventListener('DOMContentLoaded', () => {
     state.eyedropperPanY = Math.max(-maxPanY, Math.min(maxPanY, state.eyedropperPanY));
   }
 
-  function activateEyedropper() {
+  function activateEyedropper(purpose = 'key') {
+    if (state.isEyedropperActive) deactivateEyedropper();
+    if (state.protectionTool) deactivateProtectionBrush();
+    if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
+    state.eyedropperPurpose = purpose === 'recolor' ? 'recolor' : 'key';
     state.isEyedropperActive = true;
     state.wasPreviewPlaying = state.isPlaying;
-    btnPickColor.classList.add('active');
-    btnPickColor.innerHTML = `<i data-lucide="crosshair" style="width: 13px; height: 13px;"></i><span>Click Video / Preview</span>`;
+    const isRecolorPick = state.eyedropperPurpose === 'recolor';
+    btnPickColor.classList.toggle('active', !isRecolorPick);
+    btnPickColorReplaceSource.classList.toggle('active', isRecolorPick);
+    if (!isRecolorPick) {
+      btnPickColor.innerHTML = `<i data-lucide="crosshair" style="width: 13px; height: 13px;"></i><span>Click Video / Preview</span>`;
+    } else {
+      btnPickColorReplaceSource.innerHTML = `<i data-lucide="crosshair" style="width: 13px; height: 13px;"></i><span>Pick from Video / Preview</span>`;
+    }
+    if (eyedropperBannerText) eyedropperBannerText.textContent = isRecolorPick
+      ? 'Click Video/Preview để chọn màu chủ thể cần đổi · Cuộn để zoom · Kéo để pan'
+      : 'Click Video/Preview để lấy màu nền · Cuộn để zoom · Kéo để pan';
+    if (previewEyedropperBannerText) previewEyedropperBannerText.textContent = isRecolorPick
+      ? 'Pick màu chủ thể từ Preview · Cuộn để zoom · Click để chọn'
+      : 'Pick màu nền từ Preview · Cuộn để zoom · Click để chọn';
     eyedropperBanner.classList.add('active');
     eyedropperOverlay.classList.add('active');
     videoViewport.classList.add('eyedropper-zooming');
+    updateProtectionOverlay();
 
     if (previewEyedropperBanner) previewEyedropperBanner.classList.add('active');
     if (previewEyedropperOverlay) previewEyedropperOverlay.classList.add('active');
@@ -1647,8 +1994,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.isPlaying) stopAnimationPreview();
     applyEyedropperVideoTransform();
 
-    showToast('Pick từ Source Video hoặc Preview · Cuộn để zoom · Click để lấy màu', 'info');
+    showToast(isRecolorPick
+      ? 'Chọn màu chủ thể cần đổi từ Source Video hoặc Preview'
+      : 'Pick màu nền từ Source Video hoặc Preview', 'info');
     lucide.createIcons({ root: btnPickColor });
+    lucide.createIcons({ root: btnPickColorReplaceSource });
     lucide.createIcons({ root: eyedropperBanner });
     if (previewEyedropperBanner) lucide.createIcons({ root: previewEyedropperBanner });
   }
@@ -1659,6 +2009,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.previewEyedropperPointer = null;
     btnPickColor.classList.remove('active');
     btnPickColor.innerHTML = `<i data-lucide="pipette" style="width: 13px; height: 13px;"></i><span>Pick Color from Video / Preview</span>`;
+    btnPickColorReplaceSource.classList.remove('active');
+    btnPickColorReplaceSource.innerHTML = `<i data-lucide="pipette" style="width: 13px; height: 13px;"></i><span>Pick source</span>`;
     eyedropperBanner.classList.remove('active');
     eyedropperOverlay.classList.remove('active');
     eyedropperLoupe.style.display = 'none';
@@ -1670,7 +2022,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if (spriteViewport) spriteViewport.classList.remove('eyedropper-zooming');
 
     resetEyedropperZoom();
+    updateProtectionOverlay();
     lucide.createIcons({ root: btnPickColor });
+    lucide.createIcons({ root: btnPickColorReplaceSource });
+  }
+
+  function acceptEyedropperColor(pixel, originLabel) {
+    const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
+    if (state.eyedropperPurpose === 'recolor') {
+      setColorReplaceSource(hex, { enable: true });
+      deactivateEyedropper();
+      showToast(`Màu cần đổi: ${hex} (${originLabel})`, 'success');
+      return true;
+    }
+    const added = addColor(pixel[0], pixel[1], pixel[2], hex);
+    deactivateEyedropper();
+    showToast(added ? `Đã thêm màu nền từ ${originLabel}: ${hex}` : `Màu ${hex} đã có trong danh sách`, added ? 'success' : 'info');
+    return true;
   }
 
   // Wheel zoom toward cursor while eyedropper is active
@@ -1844,11 +2212,7 @@ document.addEventListener('DOMContentLoaded', () => {
     sampleCtx.drawImage(video, 0, 0, state.videoWidth, state.videoHeight);
 
     const pixel = sampleCtx.getImageData(px, py, 1, 1).data;
-    const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
-
-    const added = addColor(pixel[0], pixel[1], pixel[2], hex);
-    deactivateEyedropper();
-    showToast(added ? `Đã nhận diện & thêm màu nền: ${hex}` : `Màu ${hex} đã có trong danh sách`, added ? 'success' : 'info');
+    acceptEyedropperColor(pixel, 'Source Video');
   });
 
   // Prevent legacy click handler from double-firing — handled via mouseup above
@@ -1953,15 +2317,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const pixel = ctx.getImageData(hit.px, hit.py, 1, 1).data;
 
     if (pixel[3] < 10) {
-      showToast('Pixel trong suốt — hãy chọn vùng còn màu nền', 'error');
+      showToast('Pixel trong suốt — hãy chọn một vùng còn nhìn thấy', 'error');
       return false;
     }
 
-    const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
-    const added = addColor(pixel[0], pixel[1], pixel[2], hex);
-    deactivateEyedropper();
-    showToast(added ? `Đã pick từ Preview: ${hex}` : `Màu ${hex} đã có trong danh sách`, added ? 'success' : 'info');
-    return true;
+    return acceptEyedropperColor(pixel, 'Preview');
   }
 
   if (previewEyedropperOverlay) {
@@ -2238,6 +2598,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     if (state.isGenerating) return;
+    if (state.protectionTool) deactivateProtectionBrush();
 
     state.isGenerating = true;
     btnGenerate.disabled = true;
@@ -2321,6 +2682,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const spill = U.clampNumber(sliderSpill.value, 0, 1, 0.55);
     const subjectProtection = U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50);
     const cleanupRadius = Math.round(U.clampNumber(sliderEdgeCleanup.value, 0, 3, 0));
+    const protectionMask = chkTransparentFormat.checked && state.protectionStrokes.length > 0
+      ? rasterizeProtectionMask(state.protectionStrokes, {
+        sourceWidth: state.videoWidth,
+        sourceHeight: state.videoHeight,
+        cropX: cLeft,
+        cropY: cTop,
+        cropWidth: cropW,
+        cropHeight: cropH,
+        targetWidth: cellW,
+        targetHeight: cellH
+      }).mask
+      : null;
+    const colorReplaceOptions = {
+      enabled: chkEnableColorReplace.checked,
+      sourceColor: U.normalizeColor(inputColorReplaceSource.value),
+      targetColor: U.normalizeColor(inputColorReplaceTarget.value),
+      tolerance: U.clampNumber(sliderColorReplaceTolerance.value, 0, 1, 0.28),
+      strength: U.clampNumber(sliderColorReplaceStrength.value, 0, 1, 1)
+    };
 
     state.generatedFrames = [];
     state.currentFrameIndex = 0;
@@ -2355,8 +2735,10 @@ document.addEventListener('DOMContentLoaded', () => {
         spill,
         subjectProtection,
         cleanupRadius,
+        protectionMask,
         keyColors: state.keyColors
       });
+      applyColorReplacement(imgData, colorReplaceOptions);
       clearWatermarkFromImageData(
         imgData,
         { x: cLeft, y: cTop, width: cropW, height: cropH },
