@@ -849,14 +849,44 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   syncPreserveColorControl();
 
+  const numSpriteSimilarity = byId('numSpriteSimilarity');
+  const numSpriteFeather = byId('numSpriteFeather');
+  const numSpriteSpill = byId('numSpriteSpill');
+  const numSpriteProtection = byId('numSpriteProtection');
+  const numSpriteCleanup = byId('numSpriteCleanup');
+
   [
-    [similarity, byId('spriteSimilarityValue'), (value) => value],
-    [feather, byId('spriteFeatherValue'), (value) => value],
-    [spill, byId('spriteSpillValue'), (value) => value],
-    [protection, byId('spriteProtectionValue'), (value) => value],
-    [cleanup, byId('spriteCleanupValue'), (value) => `${value} px`]
-  ].forEach(([input, label, format]) => {
-    input.addEventListener('input', () => { label.textContent = format(input.value); });
+    [similarity, numSpriteSimilarity, byId('spriteSimilarityValue'), 2],
+    [feather, numSpriteFeather, byId('spriteFeatherValue'), 2],
+    [spill, numSpriteSpill, byId('spriteSpillValue'), 2],
+    [protection, numSpriteProtection, byId('spriteProtectionValue'), 2],
+    [cleanup, numSpriteCleanup, byId('spriteCleanupValue'), 0]
+  ].forEach(([input, numInput, label, decimals]) => {
+    function update(val, fromNum = false) {
+      let num = parseFloat(val);
+      const min = parseFloat(input.min) || 0;
+      const max = parseFloat(input.max) || 1;
+      if (isNaN(num)) num = min;
+      num = Math.max(min, Math.min(max, num));
+      const formatted = decimals === 0 ? String(Math.round(num)) : num.toFixed(decimals);
+      input.value = String(num);
+      if (numInput && (!fromNum || document.activeElement !== numInput)) {
+        numInput.value = formatted;
+      }
+      if (label) {
+        label.textContent = decimals === 0 ? `${formatted} px` : formatted;
+      }
+    }
+
+    input.addEventListener('input', () => update(input.value));
+    if (numInput) {
+      numInput.addEventListener('input', () => {
+        if (numInput.value === '' || numInput.value === '-') return;
+        update(numInput.value, true);
+      });
+      numInput.addEventListener('change', () => update(numInput.value));
+      numInput.addEventListener('blur', () => update(numInput.value));
+    }
   });
 
   btnZoomOut.addEventListener('click', () => zoomBy(0.8));

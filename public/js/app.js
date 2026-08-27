@@ -149,15 +149,24 @@ document.addEventListener('DOMContentLoaded', () => {
   const watermarkStatus = document.getElementById('watermarkStatus');
   const inputDownloadName = document.getElementById('inputDownloadName');
   const sliderSimilarity = document.getElementById('sliderSimilarity');
+  const numSimilarity = document.getElementById('numSimilarity');
   const lblSimilarityVal = document.getElementById('lblSimilarityVal');
   const sliderBlend = document.getElementById('sliderBlend');
+  const numBlend = document.getElementById('numBlend');
   const lblBlendVal = document.getElementById('lblBlendVal');
   const sliderSpill = document.getElementById('sliderSpill');
+  const numSpill = document.getElementById('numSpill');
   const lblSpillVal = document.getElementById('lblSpillVal');
   const sliderSubjectProtection = document.getElementById('sliderSubjectProtection');
+  const numSubjectProtection = document.getElementById('numSubjectProtection');
   const lblSubjectProtectionVal = document.getElementById('lblSubjectProtectionVal');
   const sliderEdgeCleanup = document.getElementById('sliderEdgeCleanup');
+  const numEdgeCleanup = document.getElementById('numEdgeCleanup');
   const lblEdgeCleanupVal = document.getElementById('lblEdgeCleanupVal');
+  const headerProtectionBrush = document.getElementById('headerProtectionBrush');
+  const bodyProtectionBrush = document.getElementById('bodyProtectionBrush');
+  const lblCollapseProtectionBrush = document.getElementById('lblCollapseProtectionBrush');
+  const iconCollapseProtectionBrush = document.getElementById('iconCollapseProtectionBrush');
   const btnProtectionBrush = document.getElementById('btnProtectionBrush');
   const btnProtectionEraser = document.getElementById('btnProtectionEraser');
   const btnProtectionUndo = document.getElementById('btnProtectionUndo');
@@ -165,21 +174,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnProtectionClear = document.getElementById('btnProtectionClear');
   const chkShowProtectionMask = document.getElementById('chkShowProtectionMask');
   const sliderProtectionSize = document.getElementById('sliderProtectionSize');
+  const numProtectionSize = document.getElementById('numProtectionSize');
   const lblProtectionSize = document.getElementById('lblProtectionSize');
   const sliderProtectionStrength = document.getElementById('sliderProtectionStrength');
+  const numProtectionStrength = document.getElementById('numProtectionStrength');
   const lblProtectionStrength = document.getElementById('lblProtectionStrength');
   const sliderProtectionHardness = document.getElementById('sliderProtectionHardness');
+  const numProtectionHardness = document.getElementById('numProtectionHardness');
   const lblProtectionHardness = document.getElementById('lblProtectionHardness');
   const selectProtectionPreset = document.getElementById('selectProtectionPreset');
   const protectionBrushStatus = document.getElementById('protectionBrushStatus');
+  const headerColorReplace = document.getElementById('headerColorReplace');
+  const bodyColorReplace = document.getElementById('bodyColorReplace');
+  const lblCollapseColorReplace = document.getElementById('lblCollapseColorReplace');
+  const iconCollapseColorReplace = document.getElementById('iconCollapseColorReplace');
   const chkEnableColorReplace = document.getElementById('chkEnableColorReplace');
   const inputColorReplaceSource = document.getElementById('inputColorReplaceSource');
   const btnPickColorReplaceSource = document.getElementById('btnPickColorReplaceSource');
   const inputColorReplaceTarget = document.getElementById('inputColorReplaceTarget');
   const colorReplaceSummary = document.getElementById('colorReplaceSummary');
   const sliderColorReplaceTolerance = document.getElementById('sliderColorReplaceTolerance');
+  const numColorReplaceTolerance = document.getElementById('numColorReplaceTolerance');
   const lblColorReplaceTolerance = document.getElementById('lblColorReplaceTolerance');
   const sliderColorReplaceStrength = document.getElementById('sliderColorReplaceStrength');
+  const numColorReplaceStrength = document.getElementById('numColorReplaceStrength');
   const lblColorReplaceStrength = document.getElementById('lblColorReplaceStrength');
   const inputFps = document.getElementById('inputFps');
   const btnAutoFps = document.getElementById('btnAutoFps');
@@ -227,11 +245,11 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputSpeedCustomSettings', 'btnResetSpeed',
       'inputFps', 'btnAutoFps',
       // Chroma Key Settings
-      'sliderSimilarity', 'sliderBlend', 'sliderSpill', 'sliderSubjectProtection', 'sliderEdgeCleanup',
-      'btnProtectionBrush', 'btnProtectionEraser', 'btnProtectionUndo', 'btnProtectionRedo', 'btnProtectionClear',
-      'chkShowProtectionMask', 'sliderProtectionSize', 'sliderProtectionStrength', 'sliderProtectionHardness', 'selectProtectionPreset',
-      'chkEnableColorReplace', 'inputColorReplaceSource', 'btnPickColorReplaceSource', 'inputColorReplaceTarget',
-      'sliderColorReplaceTolerance', 'sliderColorReplaceStrength',
+      'sliderSimilarity', 'numSimilarity', 'sliderBlend', 'numBlend', 'sliderSpill', 'numSpill', 'sliderSubjectProtection', 'numSubjectProtection', 'sliderEdgeCleanup', 'numEdgeCleanup',
+      'headerProtectionBrush', 'btnProtectionBrush', 'btnProtectionEraser', 'btnProtectionUndo', 'btnProtectionRedo', 'btnProtectionClear',
+      'chkShowProtectionMask', 'sliderProtectionSize', 'numProtectionSize', 'sliderProtectionStrength', 'numProtectionStrength', 'sliderProtectionHardness', 'numProtectionHardness', 'selectProtectionPreset',
+      'headerColorReplace', 'chkEnableColorReplace', 'inputColorReplaceSource', 'btnPickColorReplaceSource', 'inputColorReplaceTarget',
+      'sliderColorReplaceTolerance', 'numColorReplaceTolerance', 'sliderColorReplaceStrength', 'numColorReplaceStrength',
       'chkTransparentFormat', 'selectFormat',
       'btnPickColor',
       'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
@@ -388,6 +406,138 @@ document.addEventListener('DOMContentLoaded', () => {
     const next = [color, ...recent.filter((item) => item.hex !== color.hex)].slice(0, 12);
     try { localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(next)); } catch (_) { /* optional */ }
     return next;
+  }
+
+  // === COLLAPSIBLE SECTIONS ===
+  const STORAGE_KEY_PROTECTION_COLLAPSE = 'video-editor:collapsed:protection-brush';
+  const STORAGE_KEY_COLOR_REPLACE_COLLAPSE = 'video-editor:collapsed:color-replace';
+
+  function setupCollapsibleSection({
+    headerEl,
+    bodyEl,
+    labelEl,
+    iconEl,
+    storageKey,
+    defaultExpanded = false,
+    onToggle
+  }) {
+    if (!headerEl || !bodyEl) {
+      return { expand: () => {}, collapse: () => {}, toggle: () => {}, isExpanded: () => true };
+    }
+
+    let isExpanded = defaultExpanded;
+    if (storageKey) {
+      try {
+        const stored = localStorage.getItem(storageKey);
+        if (stored !== null) isExpanded = stored === 'true';
+      } catch (_) {}
+    }
+
+    function setExpanded(expanded, { persist = true } = {}) {
+      isExpanded = Boolean(expanded);
+      const parentGroup = headerEl.closest('.collapsible-section');
+      if (parentGroup) {
+        parentGroup.classList.toggle('collapsed', !isExpanded);
+      }
+      bodyEl.style.display = isExpanded ? '' : 'none';
+      headerEl.setAttribute('aria-expanded', String(isExpanded));
+      if (labelEl) labelEl.textContent = isExpanded ? 'Collapse' : 'Expand';
+      if (iconEl) {
+        iconEl.setAttribute('data-lucide', isExpanded ? 'chevron-up' : 'chevron-down');
+        if (window.lucide && typeof lucide.createIcons === 'function') {
+          lucide.createIcons({ root: headerEl });
+        }
+      }
+      if (persist && storageKey) {
+        try {
+          localStorage.setItem(storageKey, String(isExpanded));
+        } catch (_) {}
+      }
+      if (typeof onToggle === 'function') onToggle(isExpanded);
+    }
+
+    headerEl.addEventListener('click', (e) => {
+      if (e.target.closest('button, input, select, a') && !e.target.closest('.section-collapse-action')) {
+        return;
+      }
+      setExpanded(!isExpanded);
+    });
+
+    headerEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        setExpanded(!isExpanded);
+      }
+    });
+
+    setExpanded(isExpanded, { persist: false });
+
+    return {
+      isExpanded: () => isExpanded,
+      setExpanded,
+      expand: () => setExpanded(true),
+      collapse: () => setExpanded(false),
+      toggle: () => setExpanded(!isExpanded)
+    };
+  }
+
+  const protectionBrushSection = setupCollapsibleSection({
+    headerEl: headerProtectionBrush,
+    bodyEl: bodyProtectionBrush,
+    labelEl: lblCollapseProtectionBrush,
+    iconEl: iconCollapseProtectionBrush,
+    storageKey: STORAGE_KEY_PROTECTION_COLLAPSE,
+    defaultExpanded: false
+  });
+
+  const colorReplaceSection = setupCollapsibleSection({
+    headerEl: headerColorReplace,
+    bodyEl: bodyColorReplace,
+    labelEl: lblCollapseColorReplace,
+    iconEl: iconCollapseColorReplace,
+    storageKey: STORAGE_KEY_COLOR_REPLACE_COLLAPSE,
+    defaultExpanded: false
+  });
+
+  // === SLIDER & NUMBER INPUT TWO-WAY SYNC ===
+  function syncSliderAndNumber(sliderEl, numberEl, { decimals = 2, onChange } = {}) {
+    if (!sliderEl || !numberEl) return;
+
+    function applyValue(rawVal, isFromNumber = false) {
+      const min = parseFloat(sliderEl.min) || 0;
+      const max = parseFloat(sliderEl.max) || 1;
+      let num = parseFloat(rawVal);
+      if (isNaN(num)) num = min;
+      num = Math.max(min, Math.min(max, num));
+      const formatted = decimals === 0 ? String(Math.round(num)) : num.toFixed(decimals);
+      sliderEl.value = String(num);
+      if (!isFromNumber || document.activeElement !== numberEl) {
+        numberEl.value = formatted;
+      }
+      if (onChange) onChange();
+    }
+
+    sliderEl.addEventListener('input', () => {
+      const num = parseFloat(sliderEl.value);
+      const formatted = decimals === 0 ? String(Math.round(num)) : num.toFixed(decimals);
+      if (document.activeElement !== numberEl) {
+        numberEl.value = formatted;
+      }
+      if (onChange) onChange();
+    });
+
+    numberEl.addEventListener('input', () => {
+      if (numberEl.value === '' || numberEl.value === '-') return;
+      applyValue(numberEl.value, true);
+    });
+
+    numberEl.addEventListener('change', () => {
+      applyValue(numberEl.value, false);
+    });
+
+    numberEl.addEventListener('blur', () => {
+      applyValue(numberEl.value, false);
+    });
   }
 
   // === INITIALIZATION ===
@@ -672,6 +822,12 @@ document.addEventListener('DOMContentLoaded', () => {
     updateProtectionBrushUI();
     updateProtectionOverlay();
     updateColorReplaceUI();
+    if (state.protectionStrokes.length > 0) {
+      protectionBrushSection.expand();
+    }
+    if (chkEnableColorReplace.checked) {
+      colorReplaceSection.expand();
+    }
     setPlaybackSpeed(saved?.playbackSpeed ?? 1, { toast: false, persist: false });
     state.previewFpsIsManual = Boolean(saved?.previewFpsIsManual);
     if (saved?.previewFps) inputFps.value = String(Math.max(1, Math.min(60, Number(saved.previewFps) || DEFAULT_AUTO_FPS)));
@@ -1642,9 +1798,17 @@ document.addEventListener('DOMContentLoaded', () => {
   // === SUBJECT PROTECTION BRUSH ===
   function updateProtectionBrushUI() {
     const strokeCount = state.protectionStrokes.length;
-    lblProtectionSize.textContent = `${Math.round(Number(sliderProtectionSize.value) || 80)} px`;
-    lblProtectionStrength.textContent = `${Math.round(U.clampNumber(sliderProtectionStrength.value, 0, 1, 0.75) * 100)}%`;
-    lblProtectionHardness.textContent = `${Math.round(U.clampNumber(sliderProtectionHardness.value, 0, 1, 0.55) * 100)}%`;
+    const size = Math.round(Number(sliderProtectionSize.value) || 80);
+    const strength = U.clampNumber(sliderProtectionStrength.value, 0, 1, 0.75);
+    const hardness = U.clampNumber(sliderProtectionHardness.value, 0, 1, 0.55);
+
+    if (numProtectionSize && document.activeElement !== numProtectionSize) numProtectionSize.value = String(size);
+    if (numProtectionStrength && document.activeElement !== numProtectionStrength) numProtectionStrength.value = strength.toFixed(2);
+    if (numProtectionHardness && document.activeElement !== numProtectionHardness) numProtectionHardness.value = hardness.toFixed(2);
+
+    lblProtectionSize.textContent = `${size} px`;
+    lblProtectionStrength.textContent = `${Math.round(strength * 100)}%`;
+    lblProtectionHardness.textContent = `${Math.round(hardness * 100)}%`;
     protectionBrushStatus.textContent = strokeCount > 0
       ? `${strokeCount} stroke${strokeCount === 1 ? '' : 's'} · applies to all frames`
       : 'No protected strokes';
@@ -1654,6 +1818,10 @@ document.addEventListener('DOMContentLoaded', () => {
     btnProtectionBrush.classList.toggle('active', state.protectionTool === 'protect');
     btnProtectionEraser.classList.toggle('active', state.protectionTool === 'erase');
   }
+
+  syncSliderAndNumber(sliderProtectionSize, numProtectionSize, { decimals: 0, onChange: () => { updateProtectionBrushUI(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderProtectionStrength, numProtectionStrength, { decimals: 2, onChange: () => { updateProtectionBrushUI(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderProtectionHardness, numProtectionHardness, { decimals: 2, onChange: () => { updateProtectionBrushUI(); saveClipStateDebounced(); } });
 
   function updateProtectionOverlay() {
     if (!protectionBrushCanvas) return;
@@ -1721,6 +1889,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('Vui lòng tải video trước khi vẽ protection mask', 'error');
       return;
     }
+    protectionBrushSection.expand();
     if (state.isEyedropperActive) deactivateEyedropper();
     if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
     state.protectionTool = mode === 'erase' ? 'erase' : 'protect';
@@ -1830,12 +1999,6 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast('Đã xóa protection mask. Có thể Undo để khôi phục.', 'info');
   });
 
-  [sliderProtectionSize, sliderProtectionStrength, sliderProtectionHardness].forEach((control) => {
-    control.addEventListener('input', () => {
-      updateProtectionBrushUI();
-      saveClipStateDebounced();
-    });
-  });
   selectProtectionPreset.addEventListener('change', saveClipStateDebounced);
   chkShowProtectionMask.addEventListener('change', () => {
     updateProtectionOverlay();
@@ -1847,24 +2010,41 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateColorReplaceUI() {
     const source = U.normalizeColor(inputColorReplaceSource.value)?.hex || '#c82828';
     const target = U.normalizeColor(inputColorReplaceTarget.value)?.hex || '#1e64dc';
-    lblColorReplaceTolerance.textContent = `${Math.round(U.clampNumber(sliderColorReplaceTolerance.value, 0, 1, 0.28) * 100)}%`;
-    lblColorReplaceStrength.textContent = `${Math.round(U.clampNumber(sliderColorReplaceStrength.value, 0, 1, 1) * 100)}%`;
+    const tol = U.clampNumber(sliderColorReplaceTolerance.value, 0, 1, 0.28);
+    const str = U.clampNumber(sliderColorReplaceStrength.value, 0, 1, 1);
+
+    if (numColorReplaceTolerance && document.activeElement !== numColorReplaceTolerance) numColorReplaceTolerance.value = tol.toFixed(2);
+    if (numColorReplaceStrength && document.activeElement !== numColorReplaceStrength) numColorReplaceStrength.value = str.toFixed(2);
+
+    lblColorReplaceTolerance.textContent = `${Math.round(tol * 100)}%`;
+    lblColorReplaceStrength.textContent = `${Math.round(str * 100)}%`;
     colorReplaceSummary.textContent = `${source.toUpperCase()} → ${target.toUpperCase()}`;
     colorReplaceSummary.classList.toggle('active', chkEnableColorReplace.checked);
   }
+
+  syncSliderAndNumber(sliderColorReplaceTolerance, numColorReplaceTolerance, { decimals: 2, onChange: () => { updateColorReplaceUI(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderColorReplaceStrength, numColorReplaceStrength, { decimals: 2, onChange: () => { updateColorReplaceUI(); saveClipStateDebounced(); } });
 
   function setColorReplaceSource(hex, { enable = true } = {}) {
     const color = U.normalizeColor(hex);
     if (!color) return false;
     inputColorReplaceSource.value = color.hex;
-    if (enable) chkEnableColorReplace.checked = true;
+    if (enable) {
+      chkEnableColorReplace.checked = true;
+      colorReplaceSection.expand();
+    }
     updateColorReplaceUI();
     saveClipStateDebounced();
     return true;
   }
 
-  [chkEnableColorReplace, inputColorReplaceSource, inputColorReplaceTarget,
-    sliderColorReplaceTolerance, sliderColorReplaceStrength].forEach((control) => {
+  chkEnableColorReplace.addEventListener('change', () => {
+    if (chkEnableColorReplace.checked) {
+      colorReplaceSection.expand();
+    }
+  });
+
+  [chkEnableColorReplace, inputColorReplaceSource, inputColorReplaceTarget].forEach((control) => {
     control.addEventListener('input', () => {
       updateColorReplaceUI();
       saveClipStateDebounced();
@@ -1880,6 +2060,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('Vui lòng tải video trước khi chọn màu cần đổi', 'error');
       return;
     }
+    colorReplaceSection.expand();
     if (state.isEyedropperActive && state.eyedropperPurpose === 'recolor') deactivateEyedropper();
     else activateEyedropper('recolor');
   });
@@ -2524,34 +2705,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateChromaSliderLabels() {
-    lblSimilarityVal.textContent = parseFloat(sliderSimilarity.value).toFixed(2);
-    lblBlendVal.textContent = parseFloat(sliderBlend.value).toFixed(2);
-    lblSpillVal.textContent = parseFloat(sliderSpill.value).toFixed(2);
-    lblSubjectProtectionVal.textContent = parseFloat(sliderSubjectProtection.value).toFixed(2);
-    lblEdgeCleanupVal.textContent = `${parseInt(sliderEdgeCleanup.value, 10) || 0} px`;
+    const sim = parseFloat(sliderSimilarity.value).toFixed(2);
+    const blend = parseFloat(sliderBlend.value).toFixed(2);
+    const spill = parseFloat(sliderSpill.value).toFixed(2);
+    const prot = parseFloat(sliderSubjectProtection.value).toFixed(2);
+    const cleanup = String(parseInt(sliderEdgeCleanup.value, 10) || 0);
+
+    if (numSimilarity && document.activeElement !== numSimilarity) numSimilarity.value = sim;
+    if (numBlend && document.activeElement !== numBlend) numBlend.value = blend;
+    if (numSpill && document.activeElement !== numSpill) numSpill.value = spill;
+    if (numSubjectProtection && document.activeElement !== numSubjectProtection) numSubjectProtection.value = prot;
+    if (numEdgeCleanup && document.activeElement !== numEdgeCleanup) numEdgeCleanup.value = cleanup;
+
+    lblSimilarityVal.textContent = sim;
+    lblBlendVal.textContent = blend;
+    lblSpillVal.textContent = spill;
+    lblSubjectProtectionVal.textContent = prot;
+    lblEdgeCleanupVal.textContent = `${cleanup} px`;
   }
 
   // Sliders display and persist their exact values, including zero.
-  sliderSimilarity.addEventListener('input', () => {
-    updateChromaSliderLabels();
-    saveClipStateDebounced();
-  });
-  sliderBlend.addEventListener('input', () => {
-    updateChromaSliderLabels();
-    saveClipStateDebounced();
-  });
-  sliderSpill.addEventListener('input', () => {
-    updateChromaSliderLabels();
-    saveClipStateDebounced();
-  });
-  sliderSubjectProtection.addEventListener('input', () => {
-    updateChromaSliderLabels();
-    saveClipStateDebounced();
-  });
-  sliderEdgeCleanup.addEventListener('input', () => {
-    updateChromaSliderLabels();
-    saveClipStateDebounced();
-  });
+  syncSliderAndNumber(sliderSimilarity, numSimilarity, { decimals: 2, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderBlend, numBlend, { decimals: 2, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderSpill, numSpill, { decimals: 2, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderSubjectProtection, numSubjectProtection, { decimals: 2, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderEdgeCleanup, numEdgeCleanup, { decimals: 0, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
 
   // Format toggle
   selectFormat.addEventListener('change', updateFormatLabels);

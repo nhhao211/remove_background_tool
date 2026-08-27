@@ -496,7 +496,8 @@
             </label>
             <div class="slider-group">
               <input type="range" id="sliderSimilarity" min="0" max="1" step="0.01" value="0.55">
-              <span id="lblSimilarityVal" class="slider-value">0.55</span>
+              <input type="number" id="numSimilarity" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.55" aria-label="Similarity value">
+              <span id="lblSimilarityVal" class="slider-value" style="display: none;">0.55</span>
             </div>
           </div>
 
@@ -507,7 +508,8 @@
             </label>
             <div class="slider-group">
               <input type="range" id="sliderBlend" min="0" max="1" step="0.01" value="0.18">
-              <span id="lblBlendVal" class="slider-value">0.18</span>
+              <input type="number" id="numBlend" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.18" aria-label="Blend value">
+              <span id="lblBlendVal" class="slider-value" style="display: none;">0.18</span>
             </div>
           </div>
 
@@ -518,7 +520,8 @@
             </label>
             <div class="slider-group">
               <input type="range" id="sliderSpill" min="0" max="1" step="0.01" value="0.55">
-              <span id="lblSpillVal" class="slider-value">0.55</span>
+              <input type="number" id="numSpill" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.55" aria-label="Spill suppression value">
+              <span id="lblSpillVal" class="slider-value" style="display: none;">0.55</span>
             </div>
           </div>
 
@@ -529,110 +532,150 @@
             </label>
             <div class="slider-group">
               <input type="range" id="sliderSubjectProtection" min="0" max="1" step="0.01" value="0.50">
-              <span id="lblSubjectProtectionVal" class="slider-value">0.50</span>
+              <input type="number" id="numSubjectProtection" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.50" aria-label="Subject color protection value">
+              <span id="lblSubjectProtectionVal" class="slider-value" style="display: none;">0.50</span>
             </div>
           </div>
 
           <div class="form-group">
             <label class="form-label" for="sliderEdgeCleanup">
-              <span>Edge Cleanup</span>
+              <span>Edge Cleanup (px)</span>
               <span class="hint">Erodes 0–3 px of colored fringe after keying</span>
             </label>
             <div class="slider-group">
               <input type="range" id="sliderEdgeCleanup" min="0" max="3" step="1" value="0">
-              <span id="lblEdgeCleanupVal" class="slider-value">0 px</span>
+              <input type="number" id="numEdgeCleanup" class="form-input slider-number-input" min="0" max="3" step="1" value="0" aria-label="Edge cleanup radius in pixels">
+              <span id="lblEdgeCleanupVal" class="slider-value" style="display: none;">0 px</span>
             </div>
           </div>
 
-          <div class="form-group protection-brush-group">
-            <label class="form-label">
-              <span>Subject Protect Brush</span>
-              <span id="protectionBrushStatus" class="hint">No protected strokes</span>
-            </label>
-            <div class="protection-brush-toolbar">
-              <button id="btnProtectionBrush" class="time-btn protection-tool-btn" type="button" title="Vẽ vùng cần bảo vệ màu và alpha của chủ thể">
-                <i data-lucide="paintbrush" style="width: 13px; height: 13px;"></i>
-                <span>Protect</span>
-              </button>
-              <button id="btnProtectionEraser" class="time-btn protection-tool-btn" type="button" title="Tẩy protection mask">
-                <i data-lucide="eraser" style="width: 13px; height: 13px;"></i>
-                <span>Erase</span>
-              </button>
-              <button id="btnProtectionUndo" class="time-btn icon-only-tool" type="button" title="Undo protection stroke" disabled>
-                <i data-lucide="undo-2" style="width: 13px; height: 13px;"></i>
-              </button>
-              <button id="btnProtectionRedo" class="time-btn icon-only-tool" type="button" title="Redo protection stroke" disabled>
-                <i data-lucide="redo-2" style="width: 13px; height: 13px;"></i>
-              </button>
-              <button id="btnProtectionClear" class="time-btn protection-tool-btn" type="button" title="Clear all protection strokes" disabled>
-                <i data-lucide="trash-2" style="width: 13px; height: 13px;"></i>
-                <span>Clear</span>
-              </button>
-              <label class="checkbox-row protection-mask-toggle">
-                <input type="checkbox" id="chkShowProtectionMask" checked>
-                <span>Show mask</span>
-              </label>
+          <div class="form-group protection-brush-group collapsible-section" id="groupProtectionBrush">
+            <div class="section-collapse-header" id="headerProtectionBrush" role="button" tabindex="0" aria-expanded="true" aria-controls="bodyProtectionBrush" title="Click to collapse / expand Subject Protect Brush">
+              <div class="section-collapse-title">
+                <i data-lucide="paintbrush" style="width: 14px; height: 14px; color: #c084fc;"></i>
+                <span class="section-collapse-name">Subject Protect Brush</span>
+                <span id="protectionBrushStatus" class="hint">No protected strokes</span>
+              </div>
+              <div class="section-collapse-action">
+                <span id="lblCollapseProtectionBrush" class="section-collapse-state-label">Collapse</span>
+                <i data-lucide="chevron-up" id="iconCollapseProtectionBrush" class="section-collapse-icon" style="width: 13px; height: 13px;"></i>
+              </div>
             </div>
-            <div class="protection-brush-controls">
-              <label>
-                <span>Size <strong id="lblProtectionSize">80 px</strong></span>
-                <input type="range" id="sliderProtectionSize" min="5" max="500" step="1" value="80">
-              </label>
-              <label>
-                <span>Strength <strong id="lblProtectionStrength">75%</strong></span>
-                <input type="range" id="sliderProtectionStrength" min="0" max="1" step="0.01" value="0.75">
-              </label>
-              <label>
-                <span>Hardness <strong id="lblProtectionHardness">55%</strong></span>
-                <input type="range" id="sliderProtectionHardness" min="0" max="1" step="0.01" value="0.55">
-              </label>
-              <label class="protection-preset-label">
-                <span>Detail type</span>
-                <select id="selectProtectionPreset" class="form-input protection-preset-select">
-                  <option value="translucent" selected>Translucent · light removal</option>
-                  <option value="solid">Solid · maximum protection</option>
-                </select>
-              </label>
+            <div id="bodyProtectionBrush" class="section-collapse-body">
+              <div class="protection-brush-toolbar">
+                <button id="btnProtectionBrush" class="time-btn protection-tool-btn" type="button" title="Vẽ vùng cần bảo vệ màu và alpha của chủ thể">
+                  <i data-lucide="paintbrush" style="width: 13px; height: 13px;"></i>
+                  <span>Protect</span>
+                </button>
+                <button id="btnProtectionEraser" class="time-btn protection-tool-btn" type="button" title="Tẩy protection mask">
+                  <i data-lucide="eraser" style="width: 13px; height: 13px;"></i>
+                  <span>Erase</span>
+                </button>
+                <button id="btnProtectionUndo" class="time-btn icon-only-tool" type="button" title="Undo protection stroke" disabled>
+                  <i data-lucide="undo-2" style="width: 13px; height: 13px;"></i>
+                </button>
+                <button id="btnProtectionRedo" class="time-btn icon-only-tool" type="button" title="Redo protection stroke" disabled>
+                  <i data-lucide="redo-2" style="width: 13px; height: 13px;"></i>
+                </button>
+                <button id="btnProtectionClear" class="time-btn protection-tool-btn" type="button" title="Clear all protection strokes" disabled>
+                  <i data-lucide="trash-2" style="width: 13px; height: 13px;"></i>
+                  <span>Clear</span>
+                </button>
+                <label class="checkbox-row protection-mask-toggle">
+                  <input type="checkbox" id="chkShowProtectionMask" checked>
+                  <span>Show mask</span>
+                </label>
+              </div>
+              <div class="protection-brush-controls">
+                <label>
+                  <span>Size (px)</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderProtectionSize" min="5" max="500" step="1" value="80">
+                    <input type="number" id="numProtectionSize" class="form-input slider-number-input" min="5" max="500" step="1" value="80" aria-label="Brush size in pixels">
+                    <strong id="lblProtectionSize" style="display: none;">80 px</strong>
+                  </div>
+                </label>
+                <label>
+                  <span>Strength</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderProtectionStrength" min="0" max="1" step="0.01" value="0.75">
+                    <input type="number" id="numProtectionStrength" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.75" aria-label="Brush strength">
+                    <strong id="lblProtectionStrength" style="display: none;">75%</strong>
+                  </div>
+                </label>
+                <label>
+                  <span>Hardness</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderProtectionHardness" min="0" max="1" step="0.01" value="0.55">
+                    <input type="number" id="numProtectionHardness" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.55" aria-label="Brush hardness">
+                    <strong id="lblProtectionHardness" style="display: none;">55%</strong>
+                  </div>
+                </label>
+                <label class="protection-preset-label">
+                  <span>Detail type</span>
+                  <select id="selectProtectionPreset" class="form-input protection-preset-select">
+                    <option value="translucent" selected>Translucent · light removal</option>
+                    <option value="solid">Solid · maximum protection</option>
+                  </select>
+                </label>
+              </div>
+              <p class="protection-brush-help">Translucent giữ lại 80% cường độ nét để nền vẫn xuyên nhẹ qua hoa mỏng, tóc, kính hoặc khói. Pixel trùng màu nền vẫn được giữ trong suốt để tránh kéo mảng background vào sprite. Generate lại sau khi vẽ.</p>
             </div>
-            <p class="protection-brush-help">Translucent giữ lại 80% cường độ nét để nền vẫn xuyên nhẹ qua hoa mỏng, tóc, kính hoặc khói. Pixel trùng màu nền vẫn được giữ trong suốt để tránh kéo mảng background vào sprite. Generate lại sau khi vẽ.</p>
           </div>
 
-          <div class="form-group color-replace-group">
-            <label class="form-label">
-              <span>Subject Color Replace</span>
-              <span class="hint">Recolors matching visible subject pixels</span>
-            </label>
-            <div class="color-replace-toolbar">
-              <label class="checkbox-row color-replace-enable">
-                <input type="checkbox" id="chkEnableColorReplace">
-                <span>Enable</span>
-              </label>
-              <label class="color-replace-swatch-field">
-                <span>From</span>
-                <input type="color" id="inputColorReplaceSource" value="#c82828" aria-label="Source color to replace">
-              </label>
-              <button id="btnPickColorReplaceSource" class="eyedropper-trigger-btn" type="button" title="Pick source color from Source Video or Sprite Preview">
-                <i data-lucide="pipette" style="width: 13px; height: 13px;"></i>
-                <span>Pick source</span>
-              </button>
-              <i data-lucide="arrow-right" class="color-replace-arrow" style="width: 16px; height: 16px;"></i>
-              <label class="color-replace-swatch-field">
-                <span>To</span>
-                <input type="color" id="inputColorReplaceTarget" value="#1e64dc" aria-label="Replacement target color">
-              </label>
-              <span id="colorReplaceSummary" class="color-replace-summary">#C82828 → #1E64DC</span>
+          <div class="form-group color-replace-group collapsible-section" id="groupColorReplace">
+            <div class="section-collapse-header" id="headerColorReplace" role="button" tabindex="0" aria-expanded="true" aria-controls="bodyColorReplace" title="Click to collapse / expand Subject Color Replace">
+              <div class="section-collapse-title">
+                <i data-lucide="palette" style="width: 14px; height: 14px; color: #60a5fa;"></i>
+                <span class="section-collapse-name">Subject Color Replace</span>
+                <span class="hint">Recolors matching visible subject pixels</span>
+              </div>
+              <div class="section-collapse-action">
+                <span id="lblCollapseColorReplace" class="section-collapse-state-label">Collapse</span>
+                <i data-lucide="chevron-up" id="iconCollapseColorReplace" class="section-collapse-icon" style="width: 14px; height: 14px;"></i>
+              </div>
             </div>
-            <div class="color-replace-controls">
-              <label>
-                <span>Tolerance <strong id="lblColorReplaceTolerance">28%</strong></span>
-                <input type="range" id="sliderColorReplaceTolerance" min="0" max="1" step="0.01" value="0.28">
-              </label>
-              <label>
-                <span>Strength <strong id="lblColorReplaceStrength">100%</strong></span>
-                <input type="range" id="sliderColorReplaceStrength" min="0" max="1" step="0.01" value="1">
-              </label>
+            <div id="bodyColorReplace" class="section-collapse-body">
+              <div class="color-replace-toolbar">
+                <label class="checkbox-row color-replace-enable">
+                  <input type="checkbox" id="chkEnableColorReplace">
+                  <span>Enable</span>
+                </label>
+                <label class="color-replace-swatch-field">
+                  <span>From</span>
+                  <input type="color" id="inputColorReplaceSource" value="#c82828" aria-label="Source color to replace">
+                </label>
+                <button id="btnPickColorReplaceSource" class="eyedropper-trigger-btn" type="button" title="Pick source color from Source Video or Sprite Preview">
+                  <i data-lucide="pipette" style="width: 13px; height: 13px;"></i>
+                  <span>Pick source</span>
+                </button>
+                <i data-lucide="arrow-right" class="color-replace-arrow" style="width: 16px; height: 16px;"></i>
+                <label class="color-replace-swatch-field">
+                  <span>To</span>
+                  <input type="color" id="inputColorReplaceTarget" value="#1e64dc" aria-label="Replacement target color">
+                </label>
+                <span id="colorReplaceSummary" class="color-replace-summary">#C82828 → #1E64DC</span>
+              </div>
+              <div class="color-replace-controls">
+                <label>
+                  <span>Tolerance</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderColorReplaceTolerance" min="0" max="1" step="0.01" value="0.28">
+                    <input type="number" id="numColorReplaceTolerance" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.28" aria-label="Color replace tolerance">
+                    <strong id="lblColorReplaceTolerance" style="display: none;">28%</strong>
+                  </div>
+                </label>
+                <label>
+                  <span>Strength</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderColorReplaceStrength" min="0" max="1" step="0.01" value="1">
+                    <input type="number" id="numColorReplaceStrength" class="form-input slider-number-input" min="0" max="1" step="0.01" value="1.00" aria-label="Color replace strength">
+                    <strong id="lblColorReplaceStrength" style="display: none;">100%</strong>
+                  </div>
+                </label>
+              </div>
+              <p class="protection-brush-help">Tolerance mở rộng dải màu được chọn. Thuật toán giữ chênh lệch sáng/tối của vùng gốc để bảo toàn highlight và bóng. Nhấn Generate lại để áp dụng.</p>
             </div>
-            <p class="protection-brush-help">Tolerance mở rộng dải màu được chọn. Thuật toán giữ chênh lệch sáng/tối của vùng gốc để bảo toàn highlight và bóng. Nhấn Generate lại để áp dụng.</p>
           </div>
 
           <!-- Chroma Key / Green Screen Removal Options -->
@@ -749,14 +792,26 @@
       </div>
 
       <div class="cleaner-control-section cleaner-sliders">
-        <label class="form-label" for="spriteSimilarity"><span>Similarity</span><span id="spriteSimilarityValue" class="slider-value">0.48</span></label>
-        <input id="spriteSimilarity" type="range" min="0" max="1" step="0.01" value="0.48">
+        <label class="form-label" for="spriteSimilarity"><span>Similarity</span></label>
+        <div class="slider-group">
+          <input id="spriteSimilarity" type="range" min="0" max="1" step="0.01" value="0.48">
+          <input id="numSpriteSimilarity" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.48" aria-label="Similarity value">
+          <span id="spriteSimilarityValue" class="slider-value" style="display: none;">0.48</span>
+        </div>
 
-        <label class="form-label" for="spriteFeather"><span>Edge Feather</span><span id="spriteFeatherValue" class="slider-value">0.20</span></label>
-        <input id="spriteFeather" type="range" min="0" max="1" step="0.01" value="0.20">
+        <label class="form-label" for="spriteFeather"><span>Edge Feather</span></label>
+        <div class="slider-group">
+          <input id="spriteFeather" type="range" min="0" max="1" step="0.01" value="0.20">
+          <input id="numSpriteFeather" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.20" aria-label="Edge Feather value">
+          <span id="spriteFeatherValue" class="slider-value" style="display: none;">0.20</span>
+        </div>
 
-        <label class="form-label" for="spriteSpill"><span>Spill Suppression</span><span id="spriteSpillValue" class="slider-value">0.55</span></label>
-        <input id="spriteSpill" type="range" min="0" max="1" step="0.01" value="0.55">
+        <label class="form-label" for="spriteSpill"><span>Spill Suppression</span></label>
+        <div class="slider-group">
+          <input id="spriteSpill" type="range" min="0" max="1" step="0.01" value="0.55">
+          <input id="numSpriteSpill" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.55" aria-label="Spill Suppression value">
+          <span id="spriteSpillValue" class="slider-value" style="display: none;">0.55</span>
+        </div>
 
         <label class="checkbox-row cleaner-preserve-colors">
           <input id="spritePreserveColors" type="checkbox" checked>
@@ -766,11 +821,19 @@
           </span>
         </label>
 
-        <label class="form-label" for="spriteProtection"><span>Subject Protection</span><span id="spriteProtectionValue" class="slider-value">0.55</span></label>
-        <input id="spriteProtection" type="range" min="0" max="1" step="0.01" value="0.55">
+        <label class="form-label" for="spriteProtection"><span>Subject Protection</span></label>
+        <div class="slider-group">
+          <input id="spriteProtection" type="range" min="0" max="1" step="0.01" value="0.55">
+          <input id="numSpriteProtection" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.55" aria-label="Subject Protection value">
+          <span id="spriteProtectionValue" class="slider-value" style="display: none;">0.55</span>
+        </div>
 
-        <label class="form-label" for="spriteCleanup"><span>Edge Cleanup</span><span id="spriteCleanupValue" class="slider-value">0 px</span></label>
-        <input id="spriteCleanup" type="range" min="0" max="3" step="1" value="0">
+        <label class="form-label" for="spriteCleanup"><span>Edge Cleanup (px)</span></label>
+        <div class="slider-group">
+          <input id="spriteCleanup" type="range" min="0" max="3" step="1" value="0">
+          <input id="numSpriteCleanup" class="form-input slider-number-input" type="number" min="0" max="3" step="1" value="0" aria-label="Edge Cleanup radius in pixels">
+          <span id="spriteCleanupValue" class="slider-value" style="display: none;">0 px</span>
+        </div>
       </div>
 
       <div class="cleaner-control-section">
