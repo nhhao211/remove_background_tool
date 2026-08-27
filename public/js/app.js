@@ -7,6 +7,13 @@ import { applyChromaKey } from './chroma-key.js';
 import { normalizeProtectionStrokes, rasterizeProtectionMask } from './protection-mask.js';
 import { applyColorReplacement } from './color-replace.js';
 import { detectSubjectBounds, calculateGuidelineShift, alignFrameCanvas, drawSubImageSafe } from './subject-alignment.js';
+import {
+  computeLoopTimestamps,
+  computeFrameDistance,
+  scanVideoForOptimalLoops,
+  applyLoopCrossfade,
+  createDiffHeatmapCanvas
+} from './loop-optimizer.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const DEFAULT_AUTO_FPS = 12;
@@ -235,6 +242,56 @@ document.addEventListener('DOMContentLoaded', () => {
   const lblFormatName = document.getElementById('lblFormatName');
   const selectFormat = document.getElementById('selectFormat');
 
+  // Loop Optimization & Seam Smoothing DOM Elements
+  const headerLoopSettings = document.getElementById('headerLoopSettings');
+  const bodyLoopSettings = document.getElementById('bodyLoopSettings');
+  const lblCollapseLoopSettings = document.getElementById('lblCollapseLoopSettings');
+  const iconCollapseLoopSettings = document.getElementById('iconCollapseLoopSettings');
+  const loopStatusBadge = document.getElementById('loopStatusBadge');
+  const chkClosedLoop = document.getElementById('chkClosedLoop');
+  const sliderLoopCrossfade = document.getElementById('sliderLoopCrossfade');
+  const numLoopCrossfade = document.getElementById('numLoopCrossfade');
+  const lblLoopCrossfadeVal = document.getElementById('lblLoopCrossfadeVal');
+  const chkPingPongLoop = document.getElementById('chkPingPongLoop');
+  const btnAutoLoopFinder = document.getElementById('btnAutoLoopFinder');
+  const btnOpenLoopModalFromSettings = document.getElementById('btnOpenLoopModalFromSettings');
+
+  // Auto Loop Seeker & Seam Inspector Modal DOM Elements
+  const modalLoopFinder = document.getElementById('modalLoopFinder');
+  const btnCloseLoopModal = document.getElementById('btnCloseLoopModal');
+  const selectLoopScope = document.getElementById('selectLoopScope');
+  const selectLoopSpeed = document.getElementById('selectLoopSpeed');
+  const inputLoopTargetFrames = document.getElementById('inputLoopTargetFrames');
+  const selectLoopTargetFps = document.getElementById('selectLoopTargetFps');
+  const lblLoopIdealDurationText = document.getElementById('lblLoopIdealDurationText');
+  const btnStartLoopScan = document.getElementById('btnStartLoopScan');
+  const lblStartLoopScan = document.getElementById('lblStartLoopScan');
+  const loopScanProgressContainer = document.getElementById('loopScanProgressContainer');
+  const loopScanProgressBar = document.getElementById('loopScanProgressBar');
+  const loopScanStatusText = document.getElementById('loopScanStatusText');
+  const loopCandidateCountBadge = document.getElementById('loopCandidateCountBadge');
+  const loopCandidatesList = document.getElementById('loopCandidatesList');
+  const loopSeamScoreBadge = document.getElementById('loopSeamScoreBadge');
+  const seamStartCanvas = document.getElementById('seamStartCanvas');
+  const seamEndCanvas = document.getElementById('seamEndCanvas');
+  const seamDiffCanvas = document.getElementById('seamDiffCanvas');
+  const seamLoopPlayerCanvas = document.getElementById('seamLoopPlayerCanvas');
+  const seamFullCycleCanvas = document.getElementById('seamFullCycleCanvas');
+  const lblFullCycleFrameBadge = document.getElementById('lblFullCycleFrameBadge');
+  const btnToggleFullCyclePlay = document.getElementById('btnToggleFullCyclePlay');
+  const iconFullCyclePlay = document.getElementById('iconFullCyclePlay');
+  const lblFullCyclePlay = document.getElementById('lblFullCyclePlay');
+  const seamStartTimeLabel = document.getElementById('seamStartTimeLabel');
+  const seamEndTimeLabel = document.getElementById('seamEndTimeLabel');
+  const btnToggleSeamPlay = document.getElementById('btnToggleSeamPlay');
+  const iconSeamPlay = document.getElementById('iconSeamPlay');
+  const lblSeamPlay = document.getElementById('lblSeamPlay');
+  const btnNudgeStartBack = document.getElementById('btnNudgeStartBack');
+  const btnNudgeStartForward = document.getElementById('btnNudgeStartForward');
+  const btnNudgeEndBack = document.getElementById('btnNudgeEndBack');
+  const btnNudgeEndForward = document.getElementById('btnNudgeEndForward');
+  const btnApplyLoopToTimeline = document.getElementById('btnApplyLoopToTimeline');
+
   // Eyedropper & Swatches
   const btnPickColor = document.getElementById('btnPickColor');
   const manualColorInput = document.getElementById('manualColorInput');
@@ -261,7 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'btnEditorSplit', 'btnEditorDuplicate', 'btnEditorDelete', 'btnEditorMute',
       ...Array.from(document.querySelectorAll('#speedPresets .speed-preset-btn')).map((element) => element.id || null),
       'inputSpeedCustom', 'btnEditorSkipBack', 'btnEditorPlay', 'btnEditorSkipForward',
-      'btnSetTrimStart', 'btnSetTrimEnd', 'btnResetTrim', 'trimHandleLeft', 'trimHandleRight',
+      'btnAutoLoopFinder', 'btnSetTrimStart', 'btnSetTrimEnd', 'btnResetTrim', 'trimHandleLeft', 'trimHandleRight',
       'trimStartInput', 'trimEndInput',
       'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'inputPreviewBgColor', 'btnPreviewMoveToCleaner', 'btnCancelPreviewEyedropper',
       'btnGenerate', 'btnMoveToCleaner', 'btnDownloadMain', 'btnDownloadBundleZip', 'btnDownloadSpriteOnly', 'btnDownloadAudioOnly', 'btnDropdownMoveToCleaner',
@@ -272,6 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputCropTop', 'inputCropBottom', 'inputCropLeft', 'inputCropRight',
       'btnSelectWatermark', 'btnClearWatermark', 'btnCancelWatermarkSelect',
       'headerSubjectAlignment', 'chkEnableGuideline', 'inputGuidelineX', 'selectGuidelineMode', 'chkEnableGuidelineY', 'inputGuidelineY', 'selectGuidelineYMode', 'btnGuidelineAutoDetect', 'btnGuidelineCenter', 'btnGuidelineResetCrop', 'chkShowGuidelineVideo', 'chkGuidelinePreview',
+      'headerLoopSettings', 'chkClosedLoop', 'sliderLoopCrossfade', 'numLoopCrossfade', 'chkPingPongLoop', 'btnOpenLoopModalFromSettings',
       'inputDownloadName',
       'inputSpeedCustomSettings', 'btnResetSpeed',
       'inputFps', 'btnAutoFps',
@@ -377,7 +435,15 @@ document.addEventListener('DOMContentLoaded', () => {
     showGuidelineVideo: true,
     showGuidelinePreview: true,
     isDraggingGuideline: false,
-    isDraggingGuidelineY: false
+    isDraggingGuidelineY: false,
+    // Loop Optimization & Periodicity Seeker state
+    isClosedLoop: true,
+    loopCrossfade: 0,
+    pingPongLoop: false,
+    pingPongDirection: 1,
+    loopCandidates: [],
+    selectedLoopCandidate: null,
+    isScanningLoops: false
   };
 
   const CLIP_STATE_KEY = 'video-editor:clip-states:v1';
@@ -438,6 +504,9 @@ document.addEventListener('DOMContentLoaded', () => {
       guidelineYAlignMode: state.guidelineYAlignMode,
       showGuidelineVideo: state.showGuidelineVideo,
       showGuidelinePreview: state.showGuidelinePreview,
+      isClosedLoop: state.isClosedLoop,
+      loopCrossfade: state.loopCrossfade,
+      pingPongLoop: state.pingPongLoop,
       updatedAt: Date.now()
     };
     try { localStorage.setItem(CLIP_STATE_KEY, JSON.stringify(states)); } catch (_) { /* storage is optional */ }
@@ -462,6 +531,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const STORAGE_KEY_PROTECTION_COLLAPSE = 'video-editor:collapsed:protection-brush';
   const STORAGE_KEY_COLOR_REPLACE_COLLAPSE = 'video-editor:collapsed:color-replace';
   const STORAGE_KEY_GUIDELINE_COLLAPSE = 'video-editor:collapsed:subject-alignment';
+  const STORAGE_KEY_LOOP_COLLAPSE = 'video-editor:collapsed:loop-settings';
 
   function setupCollapsibleSection({
     headerEl,
@@ -557,6 +627,15 @@ document.addEventListener('DOMContentLoaded', () => {
     iconEl: iconCollapseColorReplace,
     storageKey: STORAGE_KEY_COLOR_REPLACE_COLLAPSE,
     defaultExpanded: false
+  });
+
+  const loopSettingsSection = setupCollapsibleSection({
+    headerEl: headerLoopSettings,
+    bodyEl: bodyLoopSettings,
+    labelEl: lblCollapseLoopSettings,
+    iconEl: iconCollapseLoopSettings,
+    storageKey: STORAGE_KEY_LOOP_COLLAPSE,
+    defaultExpanded: true
   });
 
   // === SLIDER & NUMBER INPUT TWO-WAY SYNC ===
@@ -941,6 +1020,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (chkEnableColorReplace.checked) {
       colorReplaceSection.expand();
     }
+
+    state.isClosedLoop = saved?.isClosedLoop !== false;
+    chkClosedLoop.checked = state.isClosedLoop;
+    loopStatusBadge.textContent = state.isClosedLoop ? 'Closed Loop' : 'Open Range';
+    loopStatusBadge.style.color = state.isClosedLoop ? '#38bdf8' : '#94a3b8';
+
+    state.loopCrossfade = Math.max(0, Math.min(6, parseInt(saved?.loopCrossfade, 10) || 0));
+    sliderLoopCrossfade.value = String(state.loopCrossfade);
+    numLoopCrossfade.value = String(state.loopCrossfade);
+    lblLoopCrossfadeVal.textContent = state.loopCrossfade === 0 ? '0 frames (Off)' : `${state.loopCrossfade} frame${state.loopCrossfade > 1 ? 's' : ''}`;
+
+    state.pingPongLoop = Boolean(saved?.pingPongLoop);
+    chkPingPongLoop.checked = state.pingPongLoop;
+
     setPlaybackSpeed(saved?.playbackSpeed ?? 1, { toast: false, persist: false });
     state.previewFpsIsManual = Boolean(saved?.previewFpsIsManual);
     if (saved?.previewFps) inputFps.value = String(Math.max(1, Math.min(60, Number(saved.previewFps) || DEFAULT_AUTO_FPS)));
@@ -1509,14 +1602,28 @@ document.addEventListener('DOMContentLoaded', () => {
     renderRuler();
   });
 
-  function autoComputeFPS({ force = false } = {}) {
+  function autoComputeFPS({ force = false, toast = false } = {}) {
     if (!force && state.previewFpsIsManual) {
       updateSpeedEffectiveHint();
-      return;
+      return parseInt(inputFps.value, 10) || DEFAULT_AUTO_FPS;
     }
-    inputFps.value = DEFAULT_AUTO_FPS;
+    if (!state.videoLoaded) {
+      inputFps.value = DEFAULT_AUTO_FPS;
+      updateSpeedEffectiveHint();
+      return DEFAULT_AUTO_FPS;
+    }
+    const frames = parseInt(inputFrames?.value, 10) || 24;
+    const speed = Math.max(0.1, state.playbackSpeed || 1);
+    const duration = Math.max(0.05, state.trimEnd - state.trimStart);
+    const effectiveSecs = duration / speed;
+    const computedFps = Math.max(1, Math.min(60, Math.round(frames / effectiveSecs)));
+    inputFps.value = String(computedFps);
     state.previewFpsIsManual = false;
     updateSpeedEffectiveHint();
+    if (toast) {
+      showToast(`Auto FPS set to ${computedFps} FPS (${frames} frames / ${effectiveSecs.toFixed(2)}s)`, 'info');
+    }
+    return computedFps;
   }
 
   function updateSpeedEffectiveHint() {
@@ -2659,7 +2766,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && state.isEyedropperActive) {
+    if (e.key === 'Escape' && modalLoopFinder && modalLoopFinder.style.display !== 'none') {
+      closeLoopModal();
+    } else if (e.key === 'Escape' && state.isEyedropperActive) {
       deactivateEyedropper();
     } else if (e.key === 'Escape' && state.isWatermarkSelectActive) {
       deactivateWatermarkSelect();
@@ -3585,17 +3694,15 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     state.generatedFrames = [];
-    state.currentFrameIndex = 0;
-
     const startTime = state.trimStart;
     const endTime = state.trimEnd;
-    const timeSpan = endTime - startTime;
+    const timestamps = computeLoopTimestamps(startTime, endTime, totalFrames, chkClosedLoop.checked);
 
     // Pause video during extraction
     video.pause();
 
     for (let i = 0; i < totalFrames; i++) {
-      const targetTime = totalFrames > 1 ? startTime + (i / (totalFrames - 1)) * timeSpan : startTime;
+      const targetTime = timestamps[i];
       
       // Seek video to target frame time
       await seekVideoAsync(video, targetTime);
@@ -3703,6 +3810,22 @@ document.addEventListener('DOMContentLoaded', () => {
       progressBarFill.style.width = `${pct}%`;
     }
 
+    // Apply temporal seam crossfade blending if configured
+    const crossfadeFrames = parseInt(sliderLoopCrossfade?.value, 10) || 0;
+    if (crossfadeFrames > 0 && state.generatedFrames.length >= crossfadeFrames * 2) {
+      applyLoopCrossfade(state.generatedFrames, crossfadeFrames);
+
+      // Re-render full sprite sheet from the blended frames
+      sheetCtx.clearRect(0, 0, sheetW, sheetH);
+      for (let i = 0; i < totalFrames; i++) {
+        const colIndex = i % cellsAcross;
+        const rowIndex = Math.floor(i / cellsAcross);
+        const destX = colIndex * cellW;
+        const destY = rowIndex * cellH;
+        sheetCtx.drawImage(state.generatedFrames[i], destX, destY);
+      }
+    }
+
     state.fullSheetCanvas = sheetCanvas;
     updatePreviewViewport();
   }
@@ -3742,7 +3865,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     state.animationTimer = setInterval(() => {
       if (state.generatedFrames.length === 0) return;
-      state.currentFrameIndex = (state.currentFrameIndex + 1) % state.generatedFrames.length;
+      if (chkPingPongLoop.checked && state.generatedFrames.length > 2) {
+        state.currentFrameIndex += (state.pingPongDirection || 1);
+        if (state.currentFrameIndex >= state.generatedFrames.length - 1) {
+          state.currentFrameIndex = state.generatedFrames.length - 1;
+          state.pingPongDirection = -1;
+        } else if (state.currentFrameIndex <= 0) {
+          state.currentFrameIndex = 0;
+          state.pingPongDirection = 1;
+        }
+      } else {
+        state.currentFrameIndex = (state.currentFrameIndex + 1) % state.generatedFrames.length;
+      }
       updatePreviewViewport();
     }, intervalMs);
   }
@@ -4059,6 +4193,591 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   updateMoveToCleanerButtons();
+
+  // === AUTO LOOP SEEKER & SEAM INSPECTOR CONTROLLER ===
+  let activeSeamCandidate = null;
+  let seamPlayerTimer = null;
+  let seamPlayerFrames = [];
+  let seamPlayerIndex = 0;
+
+  let fullCycleTimer = null;
+  let fullCycleFrames = [];
+  let fullCycleIndex = 0;
+
+  function updateLoopTargetHint() {
+    if (!lblLoopIdealDurationText) return;
+    const speed = parseFloat(selectLoopSpeed?.value) || 2;
+    const targetFrames = parseInt(inputLoopTargetFrames?.value, 10) || 24;
+    const targetFps = parseInt(selectLoopTargetFps?.value, 10) || 12;
+    const idealDuration = (targetFrames * speed) / targetFps;
+    lblLoopIdealDurationText.textContent = `Mục tiêu: ${targetFrames} frames @ ${speed}x (${targetFps} FPS) ➔ Chu kỳ video gốc lý tưởng ~${idealDuration.toFixed(2)}s`;
+  }
+
+  selectLoopSpeed?.addEventListener('change', updateLoopTargetHint);
+  inputLoopTargetFrames?.addEventListener('input', updateLoopTargetHint);
+  selectLoopTargetFps?.addEventListener('change', updateLoopTargetHint);
+
+  function openLoopModal() {
+    if (!state.videoLoaded) {
+      showToast('Vui lòng tải video trước khi tìm chu kỳ Loop', 'error');
+      return;
+    }
+    video.pause();
+    stopAnimationPreview();
+    if (modalLoopFinder) modalLoopFinder.style.display = 'flex';
+
+    if (selectLoopSpeed) {
+      const curSpeed = state.playbackSpeed || 1;
+      const speedOptions = Array.from(selectLoopSpeed.options).map((o) => parseFloat(o.value));
+      if (speedOptions.includes(curSpeed)) {
+        selectLoopSpeed.value = String(curSpeed);
+      } else {
+        selectLoopSpeed.value = '2'; // Default recommended 2x for multi-action cycles
+      }
+    }
+    if (inputLoopTargetFrames) {
+      inputLoopTargetFrames.value = inputFrames?.value || '24';
+    }
+    if (selectLoopTargetFps) {
+      const curFps = parseInt(inputFps?.value, 10) || 12;
+      const fpsOptions = Array.from(selectLoopTargetFps.options).map((o) => parseInt(o.value, 10));
+      if (fpsOptions.includes(curFps)) {
+        selectLoopTargetFps.value = String(curFps);
+      } else {
+        selectLoopTargetFps.value = '12';
+      }
+    }
+    updateLoopTargetHint();
+
+    if (activeSeamCandidate) {
+      inspectSeamCandidate(activeSeamCandidate);
+    } else {
+      inspectCurrentTrimAsCandidate();
+    }
+  }
+
+  function closeLoopModal() {
+    stopSeamPlayer();
+    stopFullCyclePlayer();
+    if (modalLoopFinder) modalLoopFinder.style.display = 'none';
+  }
+
+  async function inspectCurrentTrimAsCandidate() {
+    const speed = parseFloat(selectLoopSpeed?.value) || state.playbackSpeed || 1;
+    const targetFps = parseInt(selectLoopTargetFps?.value, 10) || parseInt(inputFps?.value, 10) || 12;
+    const targetFrames = parseInt(inputLoopTargetFrames?.value, 10) || parseInt(inputFrames?.value, 10) || 24;
+    const dur = Math.max(0.05, state.trimEnd - state.trimStart);
+
+    const curCand = {
+      id: 'current_trim',
+      startTime: state.trimStart,
+      endTime: state.trimEnd,
+      duration: dur,
+      speed,
+      effectiveDuration: dur / speed,
+      calculatedFrames: Math.max(1, Math.round((dur / speed) * targetFps)),
+      calculatedFps: targetFps,
+      score: 0,
+      visualScore: 0,
+      frameFitScore: 0
+    };
+    await inspectSeamCandidate(curCand);
+  }
+
+  async function inspectSeamCandidate(cand) {
+    if (!cand || !state.videoLoaded) return;
+    activeSeamCandidate = cand;
+    if (btnApplyLoopToTimeline) btnApplyLoopToTimeline.disabled = false;
+
+    if (seamStartTimeLabel) seamStartTimeLabel.textContent = formatTime(cand.startTime);
+    if (seamEndTimeLabel) seamEndTimeLabel.textContent = formatTime(cand.endTime);
+
+    const cTop = parseInt(inputCropTop.value, 10) || 0;
+    const cBottom = parseInt(inputCropBottom.value, 10) || 0;
+    const cLeft = parseInt(inputCropLeft.value, 10) || 0;
+    const cRight = parseInt(inputCropRight.value, 10) || 0;
+    const cropW = Math.max(1, state.videoWidth - cLeft - cRight);
+    const cropH = Math.max(1, state.videoHeight - cTop - cBottom);
+
+    const inspectW = Math.min(220, cropW);
+    const inspectH = Math.round(inspectW * (cropH / cropW));
+
+    // 1. Capture Start Frame
+    await seekVideoAsync(video, cand.startTime);
+    if (seamStartCanvas) {
+      seamStartCanvas.width = inspectW;
+      seamStartCanvas.height = inspectH;
+      const ctxStart = seamStartCanvas.getContext('2d');
+      ctxStart.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, inspectW, inspectH);
+      if (chkTransparentFormat.checked && state.keyColors.length > 0) {
+        const imgDataS = ctxStart.getImageData(0, 0, inspectW, inspectH);
+        applyChromaKey(imgDataS, {
+          enabled: true,
+          similarity: parseFloat(sliderSimilarity.value),
+          blend: parseFloat(sliderBlend.value),
+          spill: parseFloat(sliderSpill.value),
+          subjectProtection: parseFloat(sliderSubjectProtection.value),
+          cleanupRadius: parseInt(sliderEdgeCleanup.value, 10),
+          keyColors: state.keyColors
+        });
+        ctxStart.putImageData(imgDataS, 0, 0);
+      }
+    }
+
+    // 2. Capture End Frame
+    await seekVideoAsync(video, cand.endTime);
+    if (seamEndCanvas) {
+      seamEndCanvas.width = inspectW;
+      seamEndCanvas.height = inspectH;
+      const ctxEnd = seamEndCanvas.getContext('2d');
+      ctxEnd.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, inspectW, inspectH);
+      if (chkTransparentFormat.checked && state.keyColors.length > 0) {
+        const imgDataE = ctxEnd.getImageData(0, 0, inspectW, inspectH);
+        applyChromaKey(imgDataE, {
+          enabled: true,
+          similarity: parseFloat(sliderSimilarity.value),
+          blend: parseFloat(sliderBlend.value),
+          spill: parseFloat(sliderSpill.value),
+          subjectProtection: parseFloat(sliderSubjectProtection.value),
+          cleanupRadius: parseInt(sliderEdgeCleanup.value, 10),
+          keyColors: state.keyColors
+        });
+        ctxEnd.putImageData(imgDataE, 0, 0);
+      }
+    }
+
+    // 3. Compute Frame Distance & Similarity Score
+    if (seamStartCanvas && seamEndCanvas) {
+      const ctxStart = seamStartCanvas.getContext('2d');
+      const ctxEnd = seamEndCanvas.getContext('2d');
+      const imgDataA = ctxStart.getImageData(0, 0, inspectW, inspectH);
+      const imgDataB = ctxEnd.getImageData(0, 0, inspectW, inspectH);
+      const metrics = computeFrameDistance(imgDataA, imgDataB, inspectW, inspectH);
+      const scorePct = metrics.similarity;
+
+      const candFrames = cand.calculatedFrames || 24;
+      const candSpeed = cand.speed || 1;
+      if (loopSeamScoreBadge) {
+        loopSeamScoreBadge.textContent = `${scorePct}% khớp viền · ${candFrames}f @ ${candSpeed}x`;
+        loopSeamScoreBadge.className = `loop-score-badge ${scorePct >= 90 ? 'high' : 'medium'}`;
+      }
+
+      // 4. Render Diff Heatmap
+      if (seamDiffCanvas) {
+        createDiffHeatmapCanvas(seamStartCanvas, seamEndCanvas, seamDiffCanvas);
+      }
+    }
+
+    // 5. Setup Live Seam Mini Player
+    await setupSeamPlayer(cand, inspectW, inspectH, cLeft, cTop, cropW, cropH);
+
+    // 6. Setup Full Action 24-Frame Player
+    await setupFullCyclePlayer(cand, inspectW, inspectH, cLeft, cTop, cropW, cropH);
+  }
+
+  async function setupSeamPlayer(cand, w, h, cLeft, cTop, cropW, cropH) {
+    stopSeamPlayer();
+    seamPlayerFrames = [];
+
+    const totalFrames = cand.calculatedFrames || parseInt(inputFrames?.value, 10) || 24;
+    const dt = Math.max(0.03, cand.duration / totalFrames);
+    const times = [
+      Math.max(0, cand.endTime - (dt * 2)),
+      Math.max(0, cand.endTime - dt),
+      cand.endTime,
+      cand.startTime,
+      Math.min(state.duration, cand.startTime + dt),
+      Math.min(state.duration, cand.startTime + (dt * 2))
+    ];
+
+    for (const t of times) {
+      await seekVideoAsync(video, t);
+      const cvs = document.createElement('canvas');
+      cvs.width = w;
+      cvs.height = h;
+      const ctx = cvs.getContext('2d');
+      ctx.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, w, h);
+      if (chkTransparentFormat.checked && state.keyColors.length > 0) {
+        const img = ctx.getImageData(0, 0, w, h);
+        applyChromaKey(img, {
+          enabled: true,
+          similarity: parseFloat(sliderSimilarity.value),
+          blend: parseFloat(sliderBlend.value),
+          spill: parseFloat(sliderSpill.value),
+          subjectProtection: parseFloat(sliderSubjectProtection.value),
+          cleanupRadius: parseInt(sliderEdgeCleanup.value, 10),
+          keyColors: state.keyColors
+        });
+        ctx.putImageData(img, 0, 0);
+      }
+      seamPlayerFrames.push(cvs);
+    }
+
+    if (seamLoopPlayerCanvas) {
+      seamLoopPlayerCanvas.width = w;
+      seamLoopPlayerCanvas.height = h;
+    }
+    startSeamPlayer();
+  }
+
+  function startSeamPlayer() {
+    stopSeamPlayer();
+    if (seamPlayerFrames.length === 0 || !seamLoopPlayerCanvas) return;
+    seamPlayerIndex = 0;
+    if (lblSeamPlay) lblSeamPlay.textContent = 'Pause';
+    if (iconSeamPlay) {
+      iconSeamPlay.setAttribute('data-lucide', 'pause');
+      lucide.createIcons({ root: btnToggleSeamPlay });
+    }
+
+    const fps = activeSeamCandidate?.calculatedFps || parseInt(inputFps?.value, 10) || 12;
+    const interval = 1000 / fps;
+
+    seamPlayerTimer = setInterval(() => {
+      if (seamPlayerFrames.length === 0 || !seamLoopPlayerCanvas) return;
+      seamPlayerIndex = (seamPlayerIndex + 1) % seamPlayerFrames.length;
+      const ctx = seamLoopPlayerCanvas.getContext('2d');
+      ctx.clearRect(0, 0, seamLoopPlayerCanvas.width, seamLoopPlayerCanvas.height);
+      ctx.drawImage(seamPlayerFrames[seamPlayerIndex], 0, 0);
+    }, interval);
+  }
+
+  function stopSeamPlayer() {
+    if (seamPlayerTimer) {
+      clearInterval(seamPlayerTimer);
+      seamPlayerTimer = null;
+    }
+    if (lblSeamPlay) lblSeamPlay.textContent = 'Play';
+    if (iconSeamPlay) {
+      iconSeamPlay.setAttribute('data-lucide', 'play');
+      lucide.createIcons({ root: btnToggleSeamPlay });
+    }
+  }
+
+  async function setupFullCyclePlayer(cand, w, h, cLeft, cTop, cropW, cropH) {
+    stopFullCyclePlayer();
+    fullCycleFrames = [];
+
+    const totalFrames = cand.calculatedFrames || parseInt(inputLoopTargetFrames?.value, 10) || 24;
+    const timestamps = computeLoopTimestamps(cand.startTime, cand.endTime, totalFrames, true);
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const t = timestamps[i];
+      await seekVideoAsync(video, t);
+      const cvs = document.createElement('canvas');
+      cvs.width = w;
+      cvs.height = h;
+      const ctx = cvs.getContext('2d');
+      ctx.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, w, h);
+      if (chkTransparentFormat.checked && state.keyColors.length > 0) {
+        const img = ctx.getImageData(0, 0, w, h);
+        applyChromaKey(img, {
+          enabled: true,
+          similarity: parseFloat(sliderSimilarity.value),
+          blend: parseFloat(sliderBlend.value),
+          spill: parseFloat(sliderSpill.value),
+          subjectProtection: parseFloat(sliderSubjectProtection.value),
+          cleanupRadius: parseInt(sliderEdgeCleanup.value, 10),
+          keyColors: state.keyColors
+        });
+        ctx.putImageData(img, 0, 0);
+      }
+      fullCycleFrames.push(cvs);
+    }
+
+    if (seamFullCycleCanvas) {
+      seamFullCycleCanvas.width = w;
+      seamFullCycleCanvas.height = h;
+    }
+    startFullCyclePlayer();
+  }
+
+  function startFullCyclePlayer() {
+    stopFullCyclePlayer();
+    if (fullCycleFrames.length === 0 || !seamFullCycleCanvas) return;
+    fullCycleIndex = 0;
+    if (lblFullCyclePlay) lblFullCyclePlay.textContent = 'Pause';
+    if (iconFullCyclePlay) {
+      iconFullCyclePlay.setAttribute('data-lucide', 'pause');
+      lucide.createIcons({ root: btnToggleFullCyclePlay });
+    }
+
+    const fps = activeSeamCandidate?.calculatedFps || parseInt(selectLoopTargetFps?.value, 10) || 12;
+    const interval = 1000 / fps;
+
+    fullCycleTimer = setInterval(() => {
+      if (fullCycleFrames.length === 0 || !seamFullCycleCanvas) return;
+      fullCycleIndex = (fullCycleIndex + 1) % fullCycleFrames.length;
+      const ctx = seamFullCycleCanvas.getContext('2d');
+      ctx.clearRect(0, 0, seamFullCycleCanvas.width, seamFullCycleCanvas.height);
+      ctx.drawImage(fullCycleFrames[fullCycleIndex], 0, 0);
+      if (lblFullCycleFrameBadge) {
+        lblFullCycleFrameBadge.textContent = `${fullCycleIndex + 1} / ${fullCycleFrames.length} frames`;
+      }
+    }, interval);
+  }
+
+  function stopFullCyclePlayer() {
+    if (fullCycleTimer) {
+      clearInterval(fullCycleTimer);
+      fullCycleTimer = null;
+    }
+    if (lblFullCyclePlay) lblFullCyclePlay.textContent = 'Play Action';
+    if (iconFullCyclePlay) {
+      iconFullCyclePlay.setAttribute('data-lucide', 'play');
+      lucide.createIcons({ root: btnToggleFullCyclePlay });
+    }
+  }
+
+  async function startLoopScan() {
+    if (!state.videoLoaded || state.isScanningLoops) return;
+    state.isScanningLoops = true;
+    if (btnStartLoopScan) btnStartLoopScan.disabled = true;
+    if (lblStartLoopScan) lblStartLoopScan.textContent = 'Đang quét...';
+    if (loopScanProgressContainer) loopScanProgressContainer.style.display = 'block';
+    if (loopScanProgressBar) loopScanProgressBar.style.width = '0%';
+    if (loopScanStatusText) loopScanStatusText.textContent = 'Bắt đầu trích xuất và phân tích chu kỳ video...';
+
+    const scope = selectLoopScope ? selectLoopScope.value : 'full';
+    const searchStart = scope === 'trim' ? state.trimStart : 0;
+    const searchEnd = scope === 'trim' ? state.trimEnd : state.duration;
+
+    const speed = parseFloat(selectLoopSpeed?.value) || 2;
+    const targetFrames = parseInt(inputLoopTargetFrames?.value, 10) || 24;
+    const targetFps = parseInt(selectLoopTargetFps?.value, 10) || 12;
+
+    const crop = {
+      top: parseInt(inputCropTop.value, 10) || 0,
+      bottom: parseInt(inputCropBottom.value, 10) || 0,
+      left: parseInt(inputCropLeft.value, 10) || 0,
+      right: parseInt(inputCropRight.value, 10) || 0
+    };
+
+    const chromaOptions = {
+      enabled: chkTransparentFormat.checked,
+      keyColors: state.keyColors,
+      similarity: parseFloat(sliderSimilarity.value),
+      blend: parseFloat(sliderBlend.value),
+      spill: parseFloat(sliderSpill.value),
+      subjectProtection: parseFloat(sliderSubjectProtection.value),
+      cleanupRadius: parseInt(sliderEdgeCleanup.value, 10)
+    };
+
+    try {
+      const candidates = await scanVideoForOptimalLoops(video, {
+        duration: state.duration,
+        searchStart,
+        searchEnd,
+        playbackSpeed: speed,
+        targetFrames,
+        targetFps,
+        sampleRate: 20,
+        chromaOptions,
+        cropOptions: crop,
+        seekVideoAsync,
+        onProgress: (pct, status) => {
+          if (loopScanProgressBar) loopScanProgressBar.style.width = `${pct}%`;
+          if (loopScanStatusText) loopScanStatusText.textContent = status;
+        }
+      });
+
+      state.loopCandidates = candidates;
+      renderLoopCandidates(candidates);
+
+      if (candidates.length > 0) {
+        inspectSeamCandidate(candidates[0]);
+        showToast(`Tìm thấy ${candidates.length} chu kỳ lặp (~${targetFrames} frames @ ${speed}x)!`, 'success');
+      } else {
+        showToast('Không tìm thấy chu kỳ lặp rõ rệt trong phạm vi này. Hãy thử đổi tốc độ Speed hoặc phạm vi quét.', 'info');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast(`Quét chu kỳ thất bại: ${err.message}`, 'error');
+      if (loopScanStatusText) loopScanStatusText.textContent = 'Quét thất bại.';
+    } finally {
+      state.isScanningLoops = false;
+      if (btnStartLoopScan) btnStartLoopScan.disabled = false;
+      if (lblStartLoopScan) lblStartLoopScan.textContent = 'Quét tìm chu kỳ ~24f';
+      setTimeout(() => {
+        if (loopScanProgressContainer) loopScanProgressContainer.style.display = 'none';
+      }, 1200);
+    }
+  }
+
+  function renderLoopCandidates(candidates) {
+    if (!loopCandidatesList) return;
+    loopCandidatesList.innerHTML = '';
+    if (loopCandidateCountBadge) loopCandidateCountBadge.textContent = `${candidates.length} found`;
+
+    if (!candidates || candidates.length === 0) {
+      loopCandidatesList.innerHTML = `
+        <div class="loop-empty-notice">
+          <i data-lucide="info" style="width: 28px; height: 28px; color: #64748b;"></i>
+          <p>Không tìm thấy chu kỳ lặp phù hợp. Hãy thử tăng tốc độ Speed hoặc mở rộng phạm vi quét.</p>
+        </div>
+      `;
+      lucide.createIcons({ root: loopCandidatesList });
+      return;
+    }
+
+    candidates.forEach((cand, idx) => {
+      const card = document.createElement('div');
+      card.className = `loop-candidate-card ${idx === 0 ? 'active' : ''}`;
+      card.dataset.id = cand.id;
+
+      const candFrames = cand.calculatedFrames || 24;
+      const candSpeed = cand.speed || 1;
+      const candFps = cand.calculatedFps || 12;
+
+      card.innerHTML = `
+        <div class="loop-card-top">
+          <span style="font-weight: 700; color: #f8fafc; font-size: 0.84rem;">Ứng viên #${idx + 1}</span>
+          <span class="loop-score-badge ${cand.score >= 88 ? 'high' : 'medium'}">${cand.score}% khớp</span>
+        </div>
+        <div class="loop-card-details">
+          <span>${formatTime(cand.startTime)} → ${formatTime(cand.endTime)} (${cand.duration.toFixed(2)}s video)</span>
+          <span>⚡ ${candSpeed}x Speed ➔ <strong>${candFrames} frames</strong> @ ${candFps} FPS (${cand.effectiveDuration.toFixed(2)}s)</span>
+        </div>
+        <div class="loop-card-thumbs">
+          <img class="loop-card-thumb-img" src="${cand.startThumb}" alt="Start" title="Frame 0 (Start)">
+          <i data-lucide="arrow-right" style="width: 14px; height: 14px; color: #38bdf8;"></i>
+          <img class="loop-card-thumb-img" src="${cand.endThumb}" alt="End" title="Frame End">
+        </div>
+        <div class="loop-card-actions">
+          <button class="time-btn btn-apply-cand" type="button" style="flex: 1; justify-content: center; font-size: 0.74rem;">
+            <i data-lucide="check" style="width: 12px; height: 12px;"></i>
+            <span>Áp dụng chu kỳ</span>
+          </button>
+        </div>
+      `;
+
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.btn-apply-cand')) {
+          applyCandidateToTimeline(cand);
+          return;
+        }
+        document.querySelectorAll('.loop-candidate-card').forEach((c) => c.classList.remove('active'));
+        card.classList.add('active');
+        inspectSeamCandidate(cand);
+      });
+
+      const btnApply = card.querySelector('.btn-apply-cand');
+      btnApply.addEventListener('click', (e) => {
+        e.stopPropagation();
+        applyCandidateToTimeline(cand);
+      });
+
+      loopCandidatesList.appendChild(card);
+    });
+
+    lucide.createIcons({ root: loopCandidatesList });
+  }
+
+  function applyCandidateToTimeline(cand) {
+    if (!cand) return;
+    applyTrimStart(cand.startTime, false);
+    applyTrimEnd(cand.endTime, true);
+
+    if (cand.speed) {
+      setPlaybackSpeed(cand.speed, { toast: false, syncInputs: true, persist: true });
+    }
+    if (cand.calculatedFrames) {
+      inputFrames.value = String(cand.calculatedFrames);
+    }
+    if (cand.calculatedFps) {
+      inputFps.value = String(cand.calculatedFps);
+      state.previewFpsIsManual = true;
+    }
+
+    updateSpeedEffectiveHint();
+    saveClipStateDebounced();
+    showToast(`Đã áp dụng chu kỳ: ${formatTime(cand.startTime)} → ${formatTime(cand.endTime)} (${cand.calculatedFrames || 24} frames @ ${cand.speed || 1}x)`, 'success');
+    closeLoopModal();
+  }
+
+  // Loop Modal Event Listeners
+  btnAutoLoopFinder?.addEventListener('click', openLoopModal);
+  btnOpenLoopModalFromSettings?.addEventListener('click', openLoopModal);
+  btnCloseLoopModal?.addEventListener('click', closeLoopModal);
+  btnStartLoopScan?.addEventListener('click', startLoopScan);
+  btnToggleSeamPlay?.addEventListener('click', () => {
+    if (seamPlayerTimer) stopSeamPlayer();
+    else startSeamPlayer();
+  });
+  btnToggleFullCyclePlay?.addEventListener('click', () => {
+    if (fullCycleTimer) stopFullCyclePlayer();
+    else startFullCyclePlayer();
+  });
+
+  btnNudgeStartBack?.addEventListener('click', async () => {
+    if (!activeSeamCandidate) return;
+    activeSeamCandidate.startTime = Math.max(0, activeSeamCandidate.startTime - 0.02);
+    activeSeamCandidate.duration = Math.max(0.05, activeSeamCandidate.endTime - activeSeamCandidate.startTime);
+    activeSeamCandidate.effectiveDuration = activeSeamCandidate.duration / (activeSeamCandidate.speed || 1);
+    await inspectSeamCandidate(activeSeamCandidate);
+  });
+
+  btnNudgeStartForward?.addEventListener('click', async () => {
+    if (!activeSeamCandidate) return;
+    activeSeamCandidate.startTime = Math.min(activeSeamCandidate.endTime - 0.05, activeSeamCandidate.startTime + 0.02);
+    activeSeamCandidate.duration = Math.max(0.05, activeSeamCandidate.endTime - activeSeamCandidate.startTime);
+    activeSeamCandidate.effectiveDuration = activeSeamCandidate.duration / (activeSeamCandidate.speed || 1);
+    await inspectSeamCandidate(activeSeamCandidate);
+  });
+
+  btnNudgeEndBack?.addEventListener('click', async () => {
+    if (!activeSeamCandidate) return;
+    activeSeamCandidate.endTime = Math.max(activeSeamCandidate.startTime + 0.05, activeSeamCandidate.endTime - 0.02);
+    activeSeamCandidate.duration = Math.max(0.05, activeSeamCandidate.endTime - activeSeamCandidate.startTime);
+    activeSeamCandidate.effectiveDuration = activeSeamCandidate.duration / (activeSeamCandidate.speed || 1);
+    await inspectSeamCandidate(activeSeamCandidate);
+  });
+
+  btnNudgeEndForward?.addEventListener('click', async () => {
+    if (!activeSeamCandidate) return;
+    activeSeamCandidate.endTime = Math.min(state.duration, activeSeamCandidate.endTime + 0.02);
+    activeSeamCandidate.duration = Math.max(0.05, activeSeamCandidate.endTime - activeSeamCandidate.startTime);
+    activeSeamCandidate.effectiveDuration = activeSeamCandidate.duration / (activeSeamCandidate.speed || 1);
+    await inspectSeamCandidate(activeSeamCandidate);
+  });
+
+  btnApplyLoopToTimeline?.addEventListener('click', () => {
+    if (activeSeamCandidate) {
+      applyCandidateToTimeline(activeSeamCandidate);
+    }
+  });
+
+  modalLoopFinder?.addEventListener('click', (e) => {
+    if (e.target === modalLoopFinder) closeLoopModal();
+  });
+
+  // Settings Sidebar Loop Controls
+  chkClosedLoop?.addEventListener('change', () => {
+    state.isClosedLoop = chkClosedLoop.checked;
+    if (loopStatusBadge) {
+      loopStatusBadge.textContent = state.isClosedLoop ? 'Closed Loop' : 'Open Range';
+      loopStatusBadge.style.color = state.isClosedLoop ? '#38bdf8' : '#94a3b8';
+    }
+    saveClipStateDebounced();
+  });
+
+  syncSliderAndNumber(sliderLoopCrossfade, numLoopCrossfade, {
+    decimals: 0,
+    onChange: () => {
+      const val = parseInt(sliderLoopCrossfade.value, 10) || 0;
+      state.loopCrossfade = val;
+      if (lblLoopCrossfadeVal) {
+        lblLoopCrossfadeVal.textContent = val === 0 ? '0 frames (Off)' : `${val} frame${val > 1 ? 's' : ''}`;
+      }
+      saveClipStateDebounced();
+    }
+  });
+
+  chkPingPongLoop?.addEventListener('change', () => {
+    state.pingPongLoop = chkPingPongLoop.checked;
+    state.pingPongDirection = 1;
+    saveClipStateDebounced();
+  });
 
   function downloadSpriteSheet() {
     if (!state.fullSheetCanvas) {

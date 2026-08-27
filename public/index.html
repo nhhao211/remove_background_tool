@@ -217,6 +217,10 @@
             </div>
             <div class="editor-tools-right">
               <span id="speedEffectiveHint" class="speed-effective-hint">Eff. 0.00s</span>
+              <button id="btnAutoLoopFinder" class="time-btn time-btn-loop" title="Tự động tìm chu kỳ Loop mượt mà (Auto Loop Seeker)">
+                <i data-lucide="repeat" style="width: 13px; height: 13px; color: #38bdf8;"></i>
+                <span>Auto Loop</span>
+              </button>
               <button id="btnSetTrimStart" class="time-btn" title="Gán Trim Start = thời điểm hiện tại">[ Set Start ]</button>
               <button id="btnSetTrimEnd" class="time-btn" title="Gán Trim End = thời điểm hiện tại">[ Set End ]</button>
               <button id="btnResetTrim" class="time-btn" title="Reset trim về full video">Reset</button>
@@ -561,6 +565,66 @@
                     <input type="checkbox" id="chkGuidelinePreview" checked>
                     <span>Show on Preview</span>
                   </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Seamless Animation Loop & Seam Smoothing -->
+            <div class="form-group guideline-tool-group collapsible-section" id="groupLoopSettings">
+              <div class="section-collapse-header" id="headerLoopSettings" role="button" tabindex="0" aria-expanded="true" aria-controls="bodyLoopSettings" title="Click to collapse / expand Loop Settings">
+                <div class="section-collapse-title">
+                  <i data-lucide="repeat" style="width: 14px; height: 14px; color: #38bdf8;"></i>
+                  <span class="section-collapse-name">Loop Mode & Seam Smoothing</span>
+                  <span id="loopStatusBadge" class="hint" style="color: #38bdf8;">Closed Loop</span>
+                </div>
+                <div class="section-collapse-action">
+                  <span id="lblCollapseLoopSettings" class="section-collapse-state-label">Collapse</span>
+                  <i data-lucide="chevron-up" id="iconCollapseLoopSettings" class="section-collapse-icon" style="width: 13px; height: 13px;"></i>
+                </div>
+              </div>
+              <div id="bodyLoopSettings" class="section-collapse-body">
+                <!-- Sampling mode toggle -->
+                <div class="guideline-enable-row">
+                  <label class="checkbox-row" title="Lấy N frame cách đều theo chu kỳ kín để loại bỏ hoàn toàn đúp frame ở viền">
+                    <input type="checkbox" id="chkClosedLoop" checked>
+                    <span><strong>Seamless Loop (Closed Cycle)</strong></span>
+                  </label>
+                </div>
+                <div class="hint" style="font-size: 0.72rem; color: #94a3b8; margin: 4px 0 8px 0; line-height: 1.35;">
+                  Lấy mẫu N bước tuần hoàn thay vì N-1, loại bỏ giật/khựng do lặp đúp cùng 1 pose khi chuyển từ frame cuối về frame đầu.
+                </div>
+
+                <!-- Seam Crossfade Slider -->
+                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(56, 189, 248, 0.2);">
+                  <div class="form-label-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <label class="form-label" for="sliderLoopCrossfade" style="margin-bottom: 0; font-size: 0.78rem;">
+                      <span>Seam Crossfade Blending</span>
+                    </label>
+                    <span class="slider-value" id="lblLoopCrossfadeVal" style="font-size: 0.75rem;">0 frames (Off)</span>
+                  </div>
+                  <div class="range-input-group" style="display: flex; align-items: center; gap: 8px;">
+                    <input type="range" id="sliderLoopCrossfade" min="0" max="6" step="1" value="0" style="flex: 1;">
+                    <input type="number" id="numLoopCrossfade" class="form-input compact-number" min="0" max="6" step="1" value="0" style="width: 44px; text-align: center;">
+                  </div>
+                  <div class="hint" style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px;">
+                    Hòa trộn mờ dần k frame cuối với đầu chu kỳ (tối ưu cho lửa, khói, nước, chuyển động ngẫu nhiên).
+                  </div>
+                </div>
+
+                <!-- Ping-Pong Loop Option -->
+                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(56, 189, 248, 0.2);">
+                  <label class="checkbox-row" style="font-size: 0.78rem;">
+                    <input type="checkbox" id="chkPingPongLoop">
+                    <span><strong>Ping-Pong Loop</strong> (Phát 0 → N → 0)</span>
+                  </label>
+                </div>
+
+                <!-- Auto Loop Finder Trigger Button -->
+                <div style="margin-top: 10px;">
+                  <button id="btnOpenLoopModalFromSettings" class="time-btn" type="button" style="width: 100%; justify-content: center; padding: 6px 10px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border-color: rgba(56, 189, 248, 0.35);">
+                    <i data-lucide="sparkles" style="width: 13px; height: 13px;"></i>
+                    <span>Auto Find Best Loop Cycle</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1152,6 +1216,188 @@
       </div>
     </section>
   </main>
+
+  <!-- Auto Loop Seeker & Seam Inspector Modal -->
+  <div id="modalLoopFinder" class="loop-modal-backdrop" style="display: none;">
+    <div class="loop-modal-container" role="dialog" aria-labelledby="loopModalTitle" aria-modal="true">
+      <div class="loop-modal-header">
+        <div class="loop-modal-title" id="loopModalTitle">
+          <i data-lucide="repeat" style="width: 20px; height: 20px; color: #38bdf8;"></i>
+          <span>Auto Loop Seeker & Seam Inspector</span>
+          <span class="brand-badge" style="font-size: 0.68rem; padding: 2px 6px;">Seamless Studio</span>
+        </div>
+        <button id="btnCloseLoopModal" class="btn-ctrl" type="button" title="Đóng modal (Esc)">✕</button>
+      </div>
+
+      <div class="loop-modal-body">
+        <!-- Scan controls toolbar -->
+        <div class="loop-scan-toolbar">
+          <div class="loop-scan-options">
+            <div class="loop-scan-field">
+              <label for="selectLoopScope">Phạm vi:</label>
+              <select id="selectLoopScope" class="form-input compact-select">
+                <option value="full" selected>Toàn bộ video (Full)</option>
+                <option value="trim">Vùng Trim hiện tại</option>
+              </select>
+            </div>
+            <div class="loop-scan-field" title="Tăng tốc video để nén chuỗi hành động dài vào chu kỳ ~24 frames">
+              <label for="selectLoopSpeed">Tốc độ (Speed):</label>
+              <select id="selectLoopSpeed" class="form-input compact-select">
+                <option value="1">1x (Gốc)</option>
+                <option value="1.5">1.5x</option>
+                <option value="2" selected>2x (Nhanh ×2 - Khuyên dùng)</option>
+                <option value="2.5">2.5x</option>
+                <option value="3">3x (Nhanh ×3 - Nhiều action)</option>
+                <option value="4">4x (Nhanh ×4)</option>
+                <option value="6">6x (Nhanh ×6)</option>
+              </select>
+            </div>
+            <div class="loop-scan-field" title="Số frame mục tiêu cần tạo ra (mặc định 24 frames)">
+              <label for="inputLoopTargetFrames">Target Frames:</label>
+              <input type="number" id="inputLoopTargetFrames" class="form-input compact-number" min="4" max="200" value="24" style="width: 48px; text-align: center;">
+            </div>
+            <div class="loop-scan-field" title="Tốc độ khung hình mong muốn khi phát animation">
+              <label for="selectLoopTargetFps">Target FPS:</label>
+              <select id="selectLoopTargetFps" class="form-input compact-select">
+                <option value="8">8 FPS</option>
+                <option value="10">10 FPS</option>
+                <option value="12" selected>12 FPS (Chuẩn)</option>
+                <option value="16">16 FPS</option>
+                <option value="20">20 FPS</option>
+                <option value="24">24 FPS</option>
+              </select>
+            </div>
+          </div>
+          <button id="btnStartLoopScan" class="btn-primary-blue" type="button">
+            <i data-lucide="search" style="width: 15px; height: 15px;"></i>
+            <span id="lblStartLoopScan">Quét tìm chu kỳ ~24f</span>
+          </button>
+        </div>
+
+        <!-- Target hint row -->
+        <div id="loopIdealDurationHint" class="loop-ideal-hint">
+          <i data-lucide="target" style="width: 14px; height: 14px; color: #38bdf8;"></i>
+          <span id="lblLoopIdealDurationText">Mục tiêu: 24 frames @ 2x (12 FPS) ➔ Chu kỳ video gốc ~4.00s</span>
+        </div>
+
+        <!-- Scan progress bar -->
+        <div id="loopScanProgressContainer" class="progress-bar-container" style="display: none; margin: 4px 0;">
+          <div id="loopScanProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+        <div id="loopScanStatusText" class="loop-scan-status">Sẵn sàng phân tích chuyển động video...</div>
+
+        <!-- Two column layout: Left = Candidate list, Right = Seam Inspector -->
+        <div class="loop-results-layout">
+          <!-- Candidates List Column -->
+          <div class="loop-candidates-panel">
+            <div class="loop-panel-heading">
+              <span>Ứng viên chu kỳ lặp (Ranked Cycles)</span>
+              <span id="loopCandidateCountBadge" class="time-display-badge">0 found</span>
+            </div>
+            <div id="loopCandidatesList" class="loop-candidates-list">
+              <div class="loop-empty-notice">
+                <i data-lucide="sparkles" style="width: 32px; height: 32px; color: #475569;"></i>
+                <p>Nhấn <strong>"Quét tìm chu kỳ ~24f"</strong> để tự động dò tìm các chuỗi hành động lặp mượt mà nhất.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Seam Inspector Column -->
+          <div class="loop-seam-panel">
+            <div class="loop-panel-heading">
+              <span>So sánh viền nối chu kỳ (Loop Seam Inspector)</span>
+              <span id="loopSeamScoreBadge" class="loop-score-badge">Chưa chọn chu kỳ</span>
+            </div>
+
+            <div class="seam-preview-grid">
+              <!-- Start Frame -->
+              <div class="seam-frame-card">
+                <div class="seam-card-label">Frame 0 (Start)</div>
+                <div class="seam-canvas-stage checkerboard-bg">
+                  <canvas id="seamStartCanvas" class="seam-canvas"></canvas>
+                </div>
+                <div id="seamStartTimeLabel" class="seam-time-label">00:00.00</div>
+              </div>
+
+              <!-- Transition Arrow & Live Mini Player -->
+              <div class="seam-transition-box">
+                <div class="seam-arrow-icon">
+                  <i data-lucide="arrow-right" style="width: 20px; height: 20px; color: #38bdf8;"></i>
+                </div>
+                <div class="seam-mini-player-box">
+                  <div class="seam-card-label">Live Seam Loop</div>
+                  <div class="seam-canvas-stage checkerboard-bg seam-mini-stage">
+                    <canvas id="seamLoopPlayerCanvas" class="seam-canvas"></canvas>
+                  </div>
+                  <button id="btnToggleSeamPlay" class="time-btn" type="button" style="margin-top: 4px; padding: 2px 8px; font-size: 0.72rem;">
+                    <i data-lucide="play" id="iconSeamPlay" style="width: 12px; height: 12px;"></i>
+                    <span id="lblSeamPlay">Play</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- End Frame -->
+              <div class="seam-frame-card">
+                <div class="seam-card-label">Frame N-1 (End)</div>
+                <div class="seam-canvas-stage checkerboard-bg">
+                  <canvas id="seamEndCanvas" class="seam-canvas"></canvas>
+                </div>
+                <div id="seamEndTimeLabel" class="seam-time-label">00:00.00</div>
+              </div>
+
+              <!-- Difference Heatmap -->
+              <div class="seam-frame-card seam-diff-card">
+                <div class="seam-card-label">Visual Diff Heatmap</div>
+                <div class="seam-canvas-stage checkerboard-bg">
+                  <canvas id="seamDiffCanvas" class="seam-canvas"></canvas>
+                </div>
+                <div class="seam-diff-legend">
+                  <span class="legend-item match">Xanh: Khớp</span>
+                  <span class="legend-item mismatch">Đỏ: Lệch</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Full Action 24-Frame Cycle Player Box -->
+            <div class="seam-full-cycle-box">
+              <div class="seam-full-cycle-header">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <i data-lucide="film" style="width: 14px; height: 14px; color: #38bdf8;"></i>
+                  <span style="font-weight: 650; font-size: 0.78rem; color: #e2e8f0;">Full Action Animation Preview</span>
+                  <span id="lblFullCycleFrameBadge" class="time-display-badge">0 / 24 frames</span>
+                </div>
+                <button id="btnToggleFullCyclePlay" class="time-btn" type="button" style="padding: 2px 10px;">
+                  <i data-lucide="play" id="iconFullCyclePlay" style="width: 12px; height: 12px;"></i>
+                  <span id="lblFullCyclePlay">Play Action</span>
+                </button>
+              </div>
+              <div class="seam-full-cycle-stage checkerboard-bg">
+                <canvas id="seamFullCycleCanvas" class="seam-canvas"></canvas>
+              </div>
+            </div>
+
+            <!-- Seam Fine-Tuning Controls -->
+            <div class="seam-fine-tune-bar">
+              <div class="fine-tune-group">
+                <span>Start:</span>
+                <button id="btnNudgeStartBack" class="time-btn" type="button" title="Lùi Trim Start 1 frame (-0.02s)">-1f</button>
+                <button id="btnNudgeStartForward" class="time-btn" type="button" title="Tiến Trim Start 1 frame (+0.02s)">+1f</button>
+              </div>
+              <div class="fine-tune-group">
+                <span>End:</span>
+                <button id="btnNudgeEndBack" class="time-btn" type="button" title="Lùi Trim End 1 frame (-0.02s)">-1f</button>
+                <button id="btnNudgeEndForward" class="time-btn" type="button" title="Tiến Trim End 1 frame (+0.02s)">+1f</button>
+              </div>
+              <button id="btnApplyLoopToTimeline" class="btn-primary-green" type="button" disabled style="margin-left: auto;">
+                <i data-lucide="check" style="width: 15px; height: 15px;"></i>
+                <span>Áp dụng vào Trim Timeline</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>
