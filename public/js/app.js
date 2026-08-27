@@ -6,6 +6,7 @@ import { EditorUtils as U } from './editor-utils.js';
 import { applyChromaKey } from './chroma-key.js';
 import { normalizeProtectionStrokes, rasterizeProtectionMask } from './protection-mask.js';
 import { applyColorReplacement } from './color-replace.js';
+import { detectSubjectBounds, calculateGuidelineShift, alignFrameCanvas, drawSubImageSafe } from './subject-alignment.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const DEFAULT_AUTO_FPS = 12;
@@ -14,6 +15,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const video = document.getElementById('sourceVideo');
   const videoViewport = document.getElementById('videoViewport');
   const cropOverlay = document.getElementById('cropOverlay');
+  const guidelineOverlay = document.getElementById('guidelineOverlay');
+  const verticalGuideline = document.getElementById('verticalGuideline');
+  const verticalGuidelineHandle = document.getElementById('verticalGuidelineHandle');
+  const verticalGuidelineBadge = document.getElementById('verticalGuidelineBadge');
+  const horizontalGuideline = document.getElementById('horizontalGuideline');
+  const horizontalGuidelineHandle = document.getElementById('horizontalGuidelineHandle');
+  const horizontalGuidelineBadge = document.getElementById('horizontalGuidelineBadge');
   const watermarkBanner = document.getElementById('watermarkBanner');
   const watermarkSelectOverlay = document.getElementById('watermarkSelectOverlay');
   const watermarkOverlay = document.getElementById('watermarkOverlay');
@@ -142,6 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const inputRows = document.getElementById('inputRows');
   const inputCols = document.getElementById('inputCols');
   const inputCellNative = document.getElementById('inputCellNative');
+  const cellSizeHint = document.getElementById('cellSizeHint');
   const inputCropTop = document.getElementById('inputCropTop');
   const inputCropBottom = document.getElementById('inputCropBottom');
   const inputCropLeft = document.getElementById('inputCropLeft');
@@ -149,6 +158,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnSelectWatermark = document.getElementById('btnSelectWatermark');
   const btnClearWatermark = document.getElementById('btnClearWatermark');
   const watermarkStatus = document.getElementById('watermarkStatus');
+  const groupSubjectAlignment = document.getElementById('groupSubjectAlignment');
+  const headerSubjectAlignment = document.getElementById('headerSubjectAlignment');
+  const bodySubjectAlignment = document.getElementById('bodySubjectAlignment');
+  const lblCollapseSubjectAlignment = document.getElementById('lblCollapseSubjectAlignment');
+  const iconCollapseSubjectAlignment = document.getElementById('iconCollapseSubjectAlignment');
+  const guidelineStatus = document.getElementById('guidelineStatus');
+  const chkEnableGuideline = document.getElementById('chkEnableGuideline');
+  const guidelineControlsX = document.getElementById('guidelineControlsX');
+  const inputGuidelineX = document.getElementById('inputGuidelineX');
+  const selectGuidelineMode = document.getElementById('selectGuidelineMode');
+  const chkEnableGuidelineY = document.getElementById('chkEnableGuidelineY');
+  const guidelineControlsY = document.getElementById('guidelineControlsY');
+  const inputGuidelineY = document.getElementById('inputGuidelineY');
+  const selectGuidelineYMode = document.getElementById('selectGuidelineYMode');
+  const btnGuidelineAutoDetect = document.getElementById('btnGuidelineAutoDetect');
+  const btnGuidelineCenter = document.getElementById('btnGuidelineCenter');
+  const btnGuidelineResetCrop = document.getElementById('btnGuidelineResetCrop');
+  const chkShowGuidelineVideo = document.getElementById('chkShowGuidelineVideo');
+  const chkGuidelinePreview = document.getElementById('chkGuidelinePreview');
   const inputDownloadName = document.getElementById('inputDownloadName');
   const sliderSimilarity = document.getElementById('sliderSimilarity');
   const numSimilarity = document.getElementById('numSimilarity');
@@ -243,6 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputRows', 'inputCols', 'inputCellNative',
       'inputCropTop', 'inputCropBottom', 'inputCropLeft', 'inputCropRight',
       'btnSelectWatermark', 'btnClearWatermark', 'btnCancelWatermarkSelect',
+      'headerSubjectAlignment', 'chkEnableGuideline', 'inputGuidelineX', 'selectGuidelineMode', 'chkEnableGuidelineY', 'inputGuidelineY', 'selectGuidelineYMode', 'btnGuidelineAutoDetect', 'btnGuidelineCenter', 'btnGuidelineResetCrop', 'chkShowGuidelineVideo', 'chkGuidelinePreview',
       'inputDownloadName',
       'inputSpeedCustomSettings', 'btnResetSpeed',
       'inputFps', 'btnAutoFps',
@@ -337,7 +366,18 @@ document.addEventListener('DOMContentLoaded', () => {
     previewFpsIsManual: false,
     activeColorIndex: null,
     timelinePointerId: null,
-    videoLoadToken: 0
+    videoLoadToken: 0,
+    // Subject Alignment Vertical (X) & Horizontal (Y) Guidelines state
+    guidelineEnabled: false,
+    guidelineX: 0,
+    guidelineAlignMode: 'left', // 'left' | 'center' | 'right'
+    guidelineYEnabled: false,
+    guidelineY: 0,
+    guidelineYAlignMode: 'top', // 'top' | 'center' | 'bottom'
+    showGuidelineVideo: true,
+    showGuidelinePreview: true,
+    isDraggingGuideline: false,
+    isDraggingGuidelineY: false
   };
 
   const CLIP_STATE_KEY = 'video-editor:clip-states:v1';
@@ -390,6 +430,14 @@ document.addEventListener('DOMContentLoaded', () => {
       colorReplaceTolerance: parseFloat(sliderColorReplaceTolerance.value),
       colorReplaceStrength: parseFloat(sliderColorReplaceStrength.value),
       watermarkRect: state.watermarkRect,
+      guidelineEnabled: state.guidelineEnabled,
+      guidelineX: state.guidelineX,
+      guidelineAlignMode: state.guidelineAlignMode,
+      guidelineYEnabled: state.guidelineYEnabled,
+      guidelineY: state.guidelineY,
+      guidelineYAlignMode: state.guidelineYAlignMode,
+      showGuidelineVideo: state.showGuidelineVideo,
+      showGuidelinePreview: state.showGuidelinePreview,
       updatedAt: Date.now()
     };
     try { localStorage.setItem(CLIP_STATE_KEY, JSON.stringify(states)); } catch (_) { /* storage is optional */ }
@@ -413,6 +461,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // === COLLAPSIBLE SECTIONS ===
   const STORAGE_KEY_PROTECTION_COLLAPSE = 'video-editor:collapsed:protection-brush';
   const STORAGE_KEY_COLOR_REPLACE_COLLAPSE = 'video-editor:collapsed:color-replace';
+  const STORAGE_KEY_GUIDELINE_COLLAPSE = 'video-editor:collapsed:subject-alignment';
 
   function setupCollapsibleSection({
     headerEl,
@@ -482,6 +531,15 @@ document.addEventListener('DOMContentLoaded', () => {
       toggle: () => setExpanded(!isExpanded)
     };
   }
+
+  const subjectAlignmentSection = setupCollapsibleSection({
+    headerEl: headerSubjectAlignment,
+    bodyEl: bodySubjectAlignment,
+    labelEl: lblCollapseSubjectAlignment,
+    iconEl: iconCollapseSubjectAlignment,
+    storageKey: STORAGE_KEY_GUIDELINE_COLLAPSE,
+    defaultExpanded: false
+  });
 
   const protectionBrushSection = setupCollapsibleSection({
     headerEl: headerProtectionBrush,
@@ -850,6 +908,33 @@ document.addEventListener('DOMContentLoaded', () => {
     updateProtectionBrushUI();
     updateProtectionOverlay();
     updateColorReplaceUI();
+    updateCellSizeUI();
+
+    state.guidelineEnabled = Boolean(saved?.guidelineEnabled);
+    chkEnableGuideline.checked = state.guidelineEnabled;
+    guidelineControlsX.style.display = state.guidelineEnabled ? 'flex' : 'none';
+    state.guidelineX = Math.max(0, Math.min(state.videoWidth, Number(saved?.guidelineX) || Math.round(state.videoWidth * 0.25)));
+    inputGuidelineX.value = String(state.guidelineX);
+    state.guidelineAlignMode = ['left', 'center', 'right'].includes(saved?.guidelineAlignMode) ? saved.guidelineAlignMode : 'left';
+    selectGuidelineMode.value = state.guidelineAlignMode;
+
+    state.guidelineYEnabled = Boolean(saved?.guidelineYEnabled);
+    chkEnableGuidelineY.checked = state.guidelineYEnabled;
+    guidelineControlsY.style.display = state.guidelineYEnabled ? 'flex' : 'none';
+    state.guidelineY = Math.max(0, Math.min(state.videoHeight, Number(saved?.guidelineY) || Math.round(state.videoHeight * 0.15)));
+    inputGuidelineY.value = String(state.guidelineY);
+    state.guidelineYAlignMode = ['top', 'center', 'bottom'].includes(saved?.guidelineYAlignMode) ? saved.guidelineYAlignMode : 'top';
+    selectGuidelineYMode.value = state.guidelineYAlignMode;
+
+    state.showGuidelineVideo = saved?.showGuidelineVideo !== false;
+    chkShowGuidelineVideo.checked = state.showGuidelineVideo;
+    state.showGuidelinePreview = saved?.showGuidelinePreview !== false;
+    chkGuidelinePreview.checked = state.showGuidelinePreview;
+    updateGuidelineOverlay();
+
+    if (state.guidelineEnabled || state.guidelineYEnabled) {
+      subjectAlignmentSection.expand();
+    }
     if (state.protectionStrokes.length > 0) {
       protectionBrushSection.expand();
     }
@@ -1758,17 +1843,470 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function updateCellSizeUI() {
+    if (!state.videoLoaded || !state.videoWidth || !state.videoHeight) {
+      if (cellSizeHint) cellSizeHint.textContent = '';
+      return;
+    }
+
+    const cTop = parseInt(inputCropTop.value, 10) || 0;
+    const cBottom = parseInt(inputCropBottom.value, 10) || 0;
+    const cLeft = parseInt(inputCropLeft.value, 10) || 0;
+    const cRight = parseInt(inputCropRight.value, 10) || 0;
+
+    const cropW = Math.max(1, state.videoWidth - cLeft - cRight);
+    const cropH = Math.max(1, state.videoHeight - cTop - cBottom);
+
+    const keepSource = chkKeepSourceSize.checked;
+    inputCellNative.disabled = keepSource;
+
+    let cellW, cellH;
+    if (keepSource) {
+      cellW = cropW;
+      cellH = cropH;
+      if (cellSizeHint) {
+        cellSizeHint.textContent = `${cellW}×${cellH} px`;
+        cellSizeHint.style.color = '#06b6d4';
+      }
+    } else {
+      cellW = parseInt(inputCellNative.value, 10) || 512;
+      cellH = Math.round(cellW * (cropH / cropW));
+      if (cellSizeHint) {
+        cellSizeHint.textContent = `${cellW}×${cellH} px`;
+        cellSizeHint.style.color = '';
+      }
+    }
+  }
+
   [inputCropTop, inputCropBottom, inputCropLeft, inputCropRight].forEach((input) => {
     input.addEventListener('input', () => {
       updateCropOverlay();
       updateWatermarkOverlay();
+      updateGuidelineOverlay();
+      updateCellSizeUI();
     });
   });
+
+  if (chkKeepSourceSize) {
+    chkKeepSourceSize.addEventListener('change', () => {
+      updateCellSizeUI();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    });
+  }
+
+  if (inputCellNative) {
+    inputCellNative.addEventListener('input', () => {
+      updateCellSizeUI();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    });
+  }
   window.addEventListener('resize', () => {
     updateCropOverlay();
     updateWatermarkOverlay();
+    updateGuidelineOverlay();
     updateProtectionOverlay();
   });
+
+  // === SUBJECT ALIGNMENT / VERTICAL & HORIZONTAL GUIDELINES ===
+  function updateGuidelineStatus() {
+    if (!guidelineStatus) return;
+    const parts = [];
+    if (state.guidelineEnabled) {
+      const modeX = state.guidelineAlignMode === 'center' ? 'Center' : state.guidelineAlignMode === 'right' ? 'Right' : 'Left';
+      parts.push(`X:${Math.round(state.guidelineX)}px (${modeX})`);
+    }
+    if (state.guidelineYEnabled) {
+      const modeY = state.guidelineYAlignMode === 'center' ? 'Center' : state.guidelineYAlignMode === 'bottom' ? 'Bottom' : 'Top';
+      parts.push(`Y:${Math.round(state.guidelineY)}px (${modeY})`);
+    }
+    if (parts.length === 0) {
+      guidelineStatus.textContent = 'Off';
+      guidelineStatus.style.color = '';
+    } else {
+      guidelineStatus.textContent = `On (${parts.join(' · ')})`;
+      guidelineStatus.style.color = '#06b6d4';
+    }
+  }
+
+  function updateGuidelineOverlay() {
+    updateGuidelineStatus();
+    const hasAny = state.guidelineEnabled || state.guidelineYEnabled;
+    if (!guidelineOverlay || !state.videoLoaded || !hasAny || !state.showGuidelineVideo) {
+      if (guidelineOverlay) guidelineOverlay.style.display = 'none';
+      return;
+    }
+
+    const box = getVideoRenderBox();
+    if (!box) {
+      guidelineOverlay.style.display = 'none';
+      return;
+    }
+
+    guidelineOverlay.style.display = 'block';
+
+    // Vertical line (X)
+    if (verticalGuideline) {
+      if (state.guidelineEnabled) {
+        verticalGuideline.style.display = 'flex';
+        const screenX = box.parentLeft + (state.guidelineX / box.scaleX);
+        verticalGuideline.style.left = `${screenX}px`;
+        verticalGuideline.style.top = `${box.parentTop}px`;
+        verticalGuideline.style.height = `${box.height}px`;
+        if (verticalGuidelineBadge) {
+          verticalGuidelineBadge.textContent = `X: ${Math.round(state.guidelineX)}px`;
+        }
+      } else {
+        verticalGuideline.style.display = 'none';
+      }
+    }
+
+    // Horizontal line (Y)
+    if (horizontalGuideline) {
+      if (state.guidelineYEnabled) {
+        horizontalGuideline.style.display = 'flex';
+        const screenY = box.parentTop + (state.guidelineY / box.scaleY);
+        horizontalGuideline.style.top = `${screenY}px`;
+        horizontalGuideline.style.left = `${box.parentLeft}px`;
+        horizontalGuideline.style.width = `${box.width}px`;
+        if (horizontalGuidelineBadge) {
+          horizontalGuidelineBadge.textContent = `Y: ${Math.round(state.guidelineY)}px`;
+        }
+      } else {
+        horizontalGuideline.style.display = 'none';
+      }
+    }
+  }
+
+  function setGuidelineFromPointer(e) {
+    const box = getVideoRenderBox();
+    if (!box) return;
+    const clientX = e.clientX;
+    const nativeX = (clientX - box.screenLeft) * box.scaleX;
+    state.guidelineX = Math.max(0, Math.min(state.videoWidth || 4096, Math.round(nativeX)));
+    if (inputGuidelineX) {
+      inputGuidelineX.value = String(state.guidelineX);
+    }
+    updateGuidelineOverlay();
+  }
+
+  function setGuidelineYFromPointer(e) {
+    const box = getVideoRenderBox();
+    if (!box) return;
+    const clientY = e.clientY;
+    const nativeY = (clientY - box.screenTop) * box.scaleY;
+    state.guidelineY = Math.max(0, Math.min(state.videoHeight || 4096, Math.round(nativeY)));
+    if (inputGuidelineY) {
+      inputGuidelineY.value = String(state.guidelineY);
+    }
+    updateGuidelineOverlay();
+  }
+
+  if (verticalGuideline) {
+    verticalGuideline.addEventListener('pointerdown', (e) => {
+      if (!state.videoLoaded || !state.guidelineEnabled) return;
+      state.isDraggingGuideline = true;
+      verticalGuideline.classList.add('is-dragging');
+      verticalGuideline.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+      setGuidelineFromPointer(e);
+    });
+
+    verticalGuideline.addEventListener('pointermove', (e) => {
+      if (!state.isDraggingGuideline) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setGuidelineFromPointer(e);
+    });
+
+    const stopGuidelineDrag = (e) => {
+      if (!state.isDraggingGuideline) return;
+      state.isDraggingGuideline = false;
+      verticalGuideline.classList.remove('is-dragging');
+      try {
+        verticalGuideline.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    };
+
+    verticalGuideline.addEventListener('pointerup', stopGuidelineDrag);
+    verticalGuideline.addEventListener('pointercancel', stopGuidelineDrag);
+
+    verticalGuideline.addEventListener('keydown', (e) => {
+      if (!state.videoLoaded || !state.guidelineEnabled) return;
+      const step = e.shiftKey ? 10 : 1;
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        state.guidelineX = Math.max(0, state.guidelineX - step);
+        if (inputGuidelineX) inputGuidelineX.value = String(state.guidelineX);
+        updateGuidelineOverlay();
+        saveClipStateDebounced();
+        updatePreviewViewport();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        state.guidelineX = Math.min(state.videoWidth || 4096, state.guidelineX + step);
+        if (inputGuidelineX) inputGuidelineX.value = String(state.guidelineX);
+        updateGuidelineOverlay();
+        saveClipStateDebounced();
+        updatePreviewViewport();
+      }
+    });
+  }
+
+  if (horizontalGuideline) {
+    horizontalGuideline.addEventListener('pointerdown', (e) => {
+      if (!state.videoLoaded || !state.guidelineYEnabled) return;
+      state.isDraggingGuidelineY = true;
+      horizontalGuideline.classList.add('is-dragging');
+      horizontalGuideline.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+      setGuidelineYFromPointer(e);
+    });
+
+    horizontalGuideline.addEventListener('pointermove', (e) => {
+      if (!state.isDraggingGuidelineY) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setGuidelineYFromPointer(e);
+    });
+
+    const stopGuidelineYDrag = (e) => {
+      if (!state.isDraggingGuidelineY) return;
+      state.isDraggingGuidelineY = false;
+      horizontalGuideline.classList.remove('is-dragging');
+      try {
+        horizontalGuideline.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    };
+
+    horizontalGuideline.addEventListener('pointerup', stopGuidelineYDrag);
+    horizontalGuideline.addEventListener('pointercancel', stopGuidelineYDrag);
+
+    horizontalGuideline.addEventListener('keydown', (e) => {
+      if (!state.videoLoaded || !state.guidelineYEnabled) return;
+      const step = e.shiftKey ? 10 : 1;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        state.guidelineY = Math.max(0, state.guidelineY - step);
+        if (inputGuidelineY) inputGuidelineY.value = String(state.guidelineY);
+        updateGuidelineOverlay();
+        saveClipStateDebounced();
+        updatePreviewViewport();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        state.guidelineY = Math.min(state.videoHeight || 4096, state.guidelineY + step);
+        if (inputGuidelineY) inputGuidelineY.value = String(state.guidelineY);
+        updateGuidelineOverlay();
+        saveClipStateDebounced();
+        updatePreviewViewport();
+      }
+    });
+  }
+
+  async function autoDetectSubjectGuideline() {
+    if (!state.videoLoaded) {
+      showToast('Vui lòng nạp video trước.', 'error');
+      return;
+    }
+    const fullW = state.videoWidth;
+    const fullH = state.videoHeight;
+
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = fullW;
+    tempCanvas.height = fullH;
+    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+
+    tempCtx.drawImage(video, 0, 0, fullW, fullH);
+
+    const imgData = tempCtx.getImageData(0, 0, fullW, fullH);
+    const similarity = U.clampNumber(sliderSimilarity.value, 0, 1, 0.55);
+    const blend = U.clampNumber(sliderBlend.value, 0, 1, 0.18);
+    const spill = U.clampNumber(sliderSpill.value, 0, 1, 0.55);
+    const subjectProtection = U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50);
+    const cleanupRadius = Math.round(U.clampNumber(sliderEdgeCleanup.value, 0, 3, 0));
+
+    applyChromaKey(imgData, {
+      enabled: chkTransparentFormat.checked,
+      similarity,
+      blend,
+      spill,
+      subjectProtection,
+      cleanupRadius,
+      keyColors: state.keyColors
+    });
+
+    const bounds = detectSubjectBounds(imgData, {
+      alphaThreshold: 25,
+      minPixelsPerCol: 3,
+      minPixelsPerRow: 3
+    });
+
+    if (!bounds) {
+      showToast('Không tìm thấy chủ thể ở frame hiện tại (hãy thử seek tới frame khác hoặc kiểm tra màu Chroma key).', 'error');
+      return;
+    }
+
+    let detectedX = bounds.minX;
+    if (state.guidelineAlignMode === 'center') detectedX = bounds.centerX;
+    else if (state.guidelineAlignMode === 'right') detectedX = bounds.maxX;
+
+    let detectedY = bounds.minY;
+    if (state.guidelineYAlignMode === 'center') detectedY = bounds.centerY;
+    else if (state.guidelineYAlignMode === 'bottom') detectedY = bounds.maxY;
+    else detectedY = bounds.minY;
+
+    state.guidelineX = Math.round(detectedX);
+    state.guidelineY = Math.round(detectedY);
+    if (inputGuidelineX) inputGuidelineX.value = String(state.guidelineX);
+    if (inputGuidelineY) inputGuidelineY.value = String(state.guidelineY);
+
+    updateGuidelineOverlay();
+    saveClipStateDebounced();
+    updatePreviewViewport();
+    showToast(`Đã nhận diện vị trí chủ thể: X = ${state.guidelineX}px, Y = ${state.guidelineY}px`, 'success');
+  }
+
+  if (chkEnableGuideline) {
+    chkEnableGuideline.addEventListener('change', () => {
+      state.guidelineEnabled = chkEnableGuideline.checked;
+      if (guidelineControlsX) {
+        guidelineControlsX.style.display = state.guidelineEnabled ? 'flex' : 'none';
+      }
+      if (state.guidelineEnabled && (!state.guidelineX || state.guidelineX === 0)) {
+        const cLeft = parseInt(inputCropLeft.value, 10) || 0;
+        const cRight = parseInt(inputCropRight.value, 10) || 0;
+        const cropW = Math.max(1, state.videoWidth - cLeft - cRight);
+        state.guidelineX = Math.round(cLeft + (cropW * 0.25));
+        if (inputGuidelineX) inputGuidelineX.value = String(state.guidelineX);
+      }
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+      if (state.guidelineEnabled) {
+        showToast('Đã bật trục dọc X. Nhấn Generate để tạo lại sprite sheet canh lề cố định.', 'info');
+      }
+    });
+  }
+
+  if (inputGuidelineX) {
+    inputGuidelineX.addEventListener('input', () => {
+      const val = parseInt(inputGuidelineX.value, 10);
+      state.guidelineX = U.clampNumber(val, 0, state.videoWidth || 4096, 0);
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    });
+  }
+
+  if (chkEnableGuidelineY) {
+    chkEnableGuidelineY.addEventListener('change', () => {
+      state.guidelineYEnabled = chkEnableGuidelineY.checked;
+      if (guidelineControlsY) {
+        guidelineControlsY.style.display = state.guidelineYEnabled ? 'flex' : 'none';
+      }
+      if (state.guidelineYEnabled && (!state.guidelineY || state.guidelineY === 0)) {
+        const cTop = parseInt(inputCropTop.value, 10) || 0;
+        const cBottom = parseInt(inputCropBottom.value, 10) || 0;
+        const cropH = Math.max(1, state.videoHeight - cTop - cBottom);
+        state.guidelineY = Math.round(cTop + (cropH * 0.15));
+        if (inputGuidelineY) inputGuidelineY.value = String(state.guidelineY);
+      }
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+      if (state.guidelineYEnabled) {
+        showToast('Đã bật trục ngang Y. Nhấn Generate để tạo lại sprite sheet canh lề cố định.', 'info');
+      }
+    });
+  }
+
+  if (inputGuidelineY) {
+    inputGuidelineY.addEventListener('input', () => {
+      const val = parseInt(inputGuidelineY.value, 10);
+      state.guidelineY = U.clampNumber(val, 0, state.videoHeight || 4096, 0);
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    });
+  }
+
+  if (selectGuidelineMode) {
+    selectGuidelineMode.addEventListener('change', () => {
+      state.guidelineAlignMode = selectGuidelineMode.value;
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    });
+  }
+
+  if (selectGuidelineYMode) {
+    selectGuidelineYMode.addEventListener('change', () => {
+      state.guidelineYAlignMode = selectGuidelineYMode.value;
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    });
+  }
+
+  if (btnGuidelineAutoDetect) {
+    btnGuidelineAutoDetect.addEventListener('click', autoDetectSubjectGuideline);
+  }
+
+  if (btnGuidelineCenter) {
+    btnGuidelineCenter.addEventListener('click', () => {
+      if (!state.videoLoaded) return;
+      const cLeft = parseInt(inputCropLeft.value, 10) || 0;
+      const cRight = parseInt(inputCropRight.value, 10) || 0;
+      const cTop = parseInt(inputCropTop.value, 10) || 0;
+      const cBottom = parseInt(inputCropBottom.value, 10) || 0;
+      const cropW = Math.max(1, state.videoWidth - cLeft - cRight);
+      const cropH = Math.max(1, state.videoHeight - cTop - cBottom);
+      state.guidelineX = Math.round(cLeft + (cropW / 2));
+      state.guidelineY = Math.round(cTop + (cropH / 2));
+      if (inputGuidelineX) inputGuidelineX.value = String(state.guidelineX);
+      if (inputGuidelineY) inputGuidelineY.value = String(state.guidelineY);
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    });
+  }
+
+  if (btnGuidelineResetCrop) {
+    btnGuidelineResetCrop.addEventListener('click', () => {
+      if (!state.videoLoaded) return;
+      const cLeft = parseInt(inputCropLeft.value, 10) || 0;
+      const cTop = parseInt(inputCropTop.value, 10) || 0;
+      state.guidelineX = cLeft;
+      state.guidelineY = cTop;
+      if (inputGuidelineX) inputGuidelineX.value = String(state.guidelineX);
+      if (inputGuidelineY) inputGuidelineY.value = String(state.guidelineY);
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+      updatePreviewViewport();
+    });
+  }
+
+  if (chkShowGuidelineVideo) {
+    chkShowGuidelineVideo.addEventListener('change', () => {
+      state.showGuidelineVideo = chkShowGuidelineVideo.checked;
+      updateGuidelineOverlay();
+      saveClipStateDebounced();
+    });
+  }
+
+  if (chkGuidelinePreview) {
+    chkGuidelinePreview.addEventListener('change', () => {
+      state.showGuidelinePreview = chkGuidelinePreview.checked;
+      updatePreviewViewport();
+      saveClipStateDebounced();
+    });
+  }
 
   btnSelectWatermark.addEventListener('click', () => {
     if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
@@ -3001,7 +3539,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const spill = U.clampNumber(sliderSpill.value, 0, 1, 0.55);
     const subjectProtection = U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50);
     const cleanupRadius = Math.round(U.clampNumber(sliderEdgeCleanup.value, 0, 3, 0));
-    const protectionMask = chkTransparentFormat.checked && state.protectionStrokes.length > 0
+
+    // Full video resolution canvas for 2D alignment so neither X nor Y is clipped
+    const fullW = state.videoWidth;
+    const fullH = state.videoHeight;
+    const fullFrameCanvas = document.createElement('canvas');
+    fullFrameCanvas.width = fullW;
+    fullFrameCanvas.height = fullH;
+    const fullFrameCtx = fullFrameCanvas.getContext('2d', { willReadFrequently: true });
+
+    const isGuidelineActive = state.guidelineEnabled || state.guidelineYEnabled;
+
+    const protectionMaskStandard = chkTransparentFormat.checked && state.protectionStrokes.length > 0
       ? rasterizeProtectionMask(state.protectionStrokes, {
         sourceWidth: state.videoWidth,
         sourceHeight: state.videoHeight,
@@ -3013,6 +3562,20 @@ document.addEventListener('DOMContentLoaded', () => {
         targetHeight: cellH
       }).mask
       : null;
+
+    const protectionMaskFull = chkTransparentFormat.checked && state.protectionStrokes.length > 0
+      ? rasterizeProtectionMask(state.protectionStrokes, {
+        sourceWidth: state.videoWidth,
+        sourceHeight: state.videoHeight,
+        cropX: 0,
+        cropY: 0,
+        cropWidth: fullW,
+        cropHeight: fullH,
+        targetWidth: fullW,
+        targetHeight: fullH
+      }).mask
+      : null;
+
     const colorReplaceOptions = {
       enabled: chkEnableColorReplace.checked,
       sourceColor: U.normalizeColor(inputColorReplaceSource.value),
@@ -3037,33 +3600,87 @@ document.addEventListener('DOMContentLoaded', () => {
       // Seek video to target frame time
       await seekVideoAsync(video, targetTime);
 
-      // Draw cropped video frame
       frameCtx.clearRect(0, 0, cellW, cellH);
-      frameCtx.drawImage(
-        video,
-        cLeft, cTop, cropW, cropH,
-        0, 0, cellW, cellH
-      );
 
-      // Apply Background Removal Chroma Key Filter
-      const imgData = frameCtx.getImageData(0, 0, cellW, cellH);
-      applyChromaKey(imgData, {
-        enabled: chkTransparentFormat.checked,
-        similarity,
-        blend,
-        spill,
-        subjectProtection,
-        cleanupRadius,
-        protectionMask,
-        keyColors: state.keyColors
-      });
-      applyColorReplacement(imgData, colorReplaceOptions);
-      clearWatermarkFromImageData(
-        imgData,
-        { x: cLeft, y: cTop, width: cropW, height: cropH },
-        { width: cellW, height: cellH }
-      );
-      frameCtx.putImageData(imgData, 0, 0);
+      if (isGuidelineActive) {
+        // Extract full video frame to capture all content in X and Y without any premature clipping
+        fullFrameCtx.clearRect(0, 0, fullW, fullH);
+        fullFrameCtx.drawImage(video, 0, 0, fullW, fullH);
+
+        const fullImgData = fullFrameCtx.getImageData(0, 0, fullW, fullH);
+        applyChromaKey(fullImgData, {
+          enabled: chkTransparentFormat.checked,
+          similarity,
+          blend,
+          spill,
+          subjectProtection,
+          cleanupRadius,
+          protectionMask: protectionMaskFull,
+          keyColors: state.keyColors
+        });
+        applyColorReplacement(fullImgData, colorReplaceOptions);
+        clearWatermarkFromImageData(
+          fullImgData,
+          { x: 0, y: 0, width: fullW, height: fullH },
+          { width: fullW, height: fullH }
+        );
+        fullFrameCtx.putImageData(fullImgData, 0, 0);
+
+        // Detect true subject bounds across full frame
+        const bounds = detectSubjectBounds(fullImgData, {
+          alphaThreshold: 25,
+          minPixelsPerCol: 3,
+          minPixelsPerRow: 3
+        });
+
+        let sourceX = cLeft;
+        let sourceY = cTop;
+
+        if (bounds) {
+          if (state.guidelineEnabled) {
+            let anchorX = bounds.minX;
+            if (state.guidelineAlignMode === 'center') anchorX = bounds.centerX;
+            else if (state.guidelineAlignMode === 'right') anchorX = bounds.maxX;
+            sourceX = anchorX - (state.guidelineX - cLeft);
+          }
+          if (state.guidelineYEnabled) {
+            let anchorY = bounds.minY;
+            if (state.guidelineYAlignMode === 'center') anchorY = bounds.centerY;
+            else if (state.guidelineYAlignMode === 'bottom') anchorY = bounds.maxY;
+            else anchorY = bounds.minY;
+            sourceY = anchorY - (state.guidelineY - cTop);
+          }
+        }
+
+        // Draw from fullFrameCanvas to frameCanvas preserving full dimensions and exact cell size
+        drawSubImageSafe(frameCtx, fullFrameCanvas, sourceX, sourceY, cropW, cropH, 0, 0, cellW, cellH);
+      } else {
+        // Standard crop extraction
+        frameCtx.drawImage(
+          video,
+          cLeft, cTop, cropW, cropH,
+          0, 0, cellW, cellH
+        );
+
+        const imgData = frameCtx.getImageData(0, 0, cellW, cellH);
+        applyChromaKey(imgData, {
+          enabled: chkTransparentFormat.checked,
+          similarity,
+          blend,
+          spill,
+          subjectProtection,
+          cleanupRadius,
+          protectionMask: protectionMaskStandard,
+          keyColors: state.keyColors
+        });
+        applyColorReplacement(imgData, colorReplaceOptions);
+        clearWatermarkFromImageData(
+          imgData,
+          { x: cLeft, y: cTop, width: cropW, height: cropH },
+          { width: cellW, height: cellH }
+        );
+        frameCtx.putImageData(imgData, 0, 0);
+      }
 
       // Store individual frame canvas for animation preview
       const singleFrameCopy = document.createElement('canvas');
@@ -3110,7 +3727,7 @@ document.addEventListener('DOMContentLoaded', () => {
           vid.removeEventListener('seeked', onSeeked);
           resolve();
         }
-      }, 200);
+      }, 1000);
     });
   }
 
@@ -3153,10 +3770,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   btnPlayPause.addEventListener('click', () => {
-    if (state.generatedFrames.length === 0) {
-      showToast('Generate a sprite sheet first', 'info');
-      return;
-    }
+    if (state.generatedFrames.length === 0) return;
     if (state.isPlaying) {
       stopAnimationPreview();
     } else {
@@ -3165,20 +3779,23 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnToggleMode.addEventListener('click', () => {
-    if (state.previewMode === 'play') {
-      state.previewMode = 'sheet';
-      btnToggleMode.classList.add('active');
-      textToggleMode.textContent = 'Anim';
-    } else {
-      state.previewMode = 'play';
-      btnToggleMode.classList.remove('active');
-      textToggleMode.textContent = 'Sheet';
-    }
+    state.previewMode = state.previewMode === 'play' ? 'sheet' : 'play';
+    textToggleMode.textContent = state.previewMode === 'play' ? 'Anim' : 'Sheet';
+    btnToggleMode.classList.toggle('active', state.previewMode === 'sheet');
     updatePreviewViewport();
   });
 
+  btnAutoFps.addEventListener('click', () => {
+    const fps = autoComputeFPS({ force: true, toast: true });
+    if (state.isPlaying) {
+      startAnimationPreview();
+    }
+    saveClipStateDebounced();
+  });
+
   inputFps.addEventListener('change', () => {
-    const fps = Math.max(1, Math.min(60, parseInt(inputFps.value, 10) || DEFAULT_AUTO_FPS));
+    let fps = parseInt(inputFps.value, 10) || 12;
+    fps = Math.max(1, Math.min(60, fps));
     inputFps.value = String(fps);
     state.previewFpsIsManual = fps !== DEFAULT_AUTO_FPS;
     if (state.isPlaying) {
@@ -3235,6 +3852,83 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.moveTo(0, r * cellH);
         ctx.lineTo(previewCanvas.width, r * cellH);
         ctx.stroke();
+      }
+    }
+
+    // Draw guidelines on preview if enabled
+    if (state.showGuidelinePreview && (state.guidelineEnabled || state.guidelineYEnabled)) {
+      const cLeft = parseInt(inputCropLeft.value, 10) || 0;
+      const cRight = parseInt(inputCropRight.value, 10) || 0;
+      const cTop = parseInt(inputCropTop.value, 10) || 0;
+      const cBottom = parseInt(inputCropBottom.value, 10) || 0;
+      const cropW = Math.max(1, state.videoWidth - cLeft - cRight);
+      const cropH = Math.max(1, state.videoHeight - cTop - cBottom);
+      const keepSource = chkKeepSourceSize.checked;
+      const cellNative = parseInt(inputCellNative.value, 10) || 512;
+      const cellW = keepSource ? cropW : cellNative;
+      const cellH = keepSource ? cropH : Math.round(cellNative * (cropH / cropW));
+
+      const targetCellX = Math.round((state.guidelineX - cLeft) * (cellW / cropW));
+      const targetCellY = Math.round((state.guidelineY - cTop) * (cellH / cropH));
+
+      if (state.previewMode === 'play') {
+        ctx.save();
+        if (state.guidelineEnabled && targetCellX >= 0 && targetCellX <= previewCanvas.width) {
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.85)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(targetCellX + 0.5, 0);
+          ctx.lineTo(targetCellX + 0.5, previewCanvas.height);
+          ctx.stroke();
+        }
+        if (state.guidelineYEnabled && targetCellY >= 0 && targetCellY <= previewCanvas.height) {
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.85)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(0, targetCellY + 0.5);
+          ctx.lineTo(previewCanvas.width, targetCellY + 0.5);
+          ctx.stroke();
+        }
+        ctx.restore();
+      } else {
+        const rows = parseInt(inputRows.value, 10) || 6;
+        const cols = parseInt(inputCols.value, 10) || 4;
+        const sheetCellW = previewCanvas.width / cols;
+        const sheetCellH = previewCanvas.height / rows;
+        const scaledTargetX = (targetCellX / cellW) * sheetCellW;
+        const scaledTargetY = (targetCellY / cellH) * sheetCellH;
+
+        ctx.save();
+        ctx.setLineDash([3, 3]);
+        if (state.guidelineEnabled) {
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.65)';
+          ctx.lineWidth = 1;
+          for (let c = 0; c < cols; c++) {
+            const gx = Math.round((c * sheetCellW) + scaledTargetX);
+            if (gx >= 0 && gx <= previewCanvas.width) {
+              ctx.beginPath();
+              ctx.moveTo(gx + 0.5, 0);
+              ctx.lineTo(gx + 0.5, previewCanvas.height);
+              ctx.stroke();
+            }
+          }
+        }
+        if (state.guidelineYEnabled) {
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.65)';
+          ctx.lineWidth = 1;
+          for (let r = 0; r < rows; r++) {
+            const gy = Math.round((r * sheetCellH) + scaledTargetY);
+            if (gy >= 0 && gy <= previewCanvas.height) {
+              ctx.beginPath();
+              ctx.moveTo(0, gy + 0.5);
+              ctx.lineTo(previewCanvas.width, gy + 0.5);
+              ctx.stroke();
+            }
+          }
+        }
+        ctx.restore();
       }
     }
 

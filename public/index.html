@@ -112,6 +112,24 @@
           <!-- Crop Boundary Box Overlay -->
           <div id="cropOverlay" class="crop-overlay"></div>
 
+          <!-- Subject Alignment Vertical & Horizontal Guidelines Overlay -->
+          <div id="guidelineOverlay" class="guideline-overlay">
+            <div id="verticalGuideline" class="vertical-guideline" role="slider" aria-label="Vertical alignment guideline" tabindex="0">
+              <div class="vertical-guideline-line"></div>
+              <div id="verticalGuidelineHandle" class="vertical-guideline-handle" title="Kéo để di chuyển trục dọc (X)">
+                <i data-lucide="grip-vertical" style="width: 12px; height: 12px;"></i>
+              </div>
+              <div id="verticalGuidelineBadge" class="vertical-guideline-badge">X: 0px</div>
+            </div>
+            <div id="horizontalGuideline" class="horizontal-guideline" role="slider" aria-label="Horizontal alignment guideline" tabindex="0">
+              <div class="horizontal-guideline-line"></div>
+              <div id="horizontalGuidelineHandle" class="horizontal-guideline-handle" title="Kéo để di chuyển trục ngang (Y)">
+                <i data-lucide="grip-horizontal" style="width: 12px; height: 12px;"></i>
+              </div>
+              <div id="horizontalGuidelineBadge" class="horizontal-guideline-badge">Y: 0px</div>
+            </div>
+          </div>
+
           <!-- Watermark Eraser Selection -->
           <div id="watermarkBanner" class="watermark-banner">
             <div class="watermark-banner-left">
@@ -413,6 +431,7 @@
             <div class="form-group">
               <label class="form-label" for="inputCellNative">
                 <span>Cell (native)</span>
+                <span id="cellSizeHint" class="hint">1920×1080</span>
               </label>
               <input type="number" id="inputCellNative" class="form-input compact-number" min="16" max="4096" value="512">
             </div>
@@ -451,6 +470,98 @@
                   <i data-lucide="eraser" style="width: 13px; height: 13px;"></i>
                   <span>Clear</span>
                 </button>
+              </div>
+            </div>
+
+            <!-- Subject Alignment & Stabilization (Trục gióng dọc & ngang) -->
+            <div class="form-group guideline-tool-group collapsible-section" id="groupSubjectAlignment">
+              <div class="section-collapse-header" id="headerSubjectAlignment" role="button" tabindex="0" aria-expanded="true" aria-controls="bodySubjectAlignment" title="Click to collapse / expand Subject Alignment">
+                <div class="section-collapse-title">
+                  <i data-lucide="crosshair" style="width: 14px; height: 14px; color: #06b6d4;"></i>
+                  <span class="section-collapse-name">Subject Alignment (Trục gióng X & Y)</span>
+                  <span id="guidelineStatus" class="hint">Off</span>
+                </div>
+                <div class="section-collapse-action">
+                  <span id="lblCollapseSubjectAlignment" class="section-collapse-state-label">Collapse</span>
+                  <i data-lucide="chevron-up" id="iconCollapseSubjectAlignment" class="section-collapse-icon" style="width: 13px; height: 13px;"></i>
+                </div>
+              </div>
+              <div id="bodySubjectAlignment" class="section-collapse-body">
+                <!-- Vertical Guideline (X) -->
+                <div class="guideline-axis-block">
+                  <div class="guideline-enable-row">
+                    <label class="checkbox-row">
+                      <input type="checkbox" id="chkEnableGuideline">
+                      <span><strong>Trục dọc X (Vertical Alignment)</strong></span>
+                    </label>
+                  </div>
+                  <div id="guidelineControlsX" class="guideline-controls" style="display: none;">
+                    <div class="guideline-field-row">
+                      <label class="form-sublabel" for="inputGuidelineX">
+                        <span>Guideline X (px)</span>
+                        <input type="number" id="inputGuidelineX" class="form-input compact-number" min="0" value="0">
+                      </label>
+                      <label class="form-sublabel" for="selectGuidelineMode">
+                        <span>Align Mode X</span>
+                        <select id="selectGuidelineMode" class="form-input" style="padding: 4px 6px; font-size: 0.8rem;">
+                          <option value="left" selected>Left Edge (Sát lề trái)</option>
+                          <option value="center">Center (Canh giữa)</option>
+                          <option value="right">Right Edge (Sát lề phải)</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Horizontal Guideline (Y) -->
+                <div class="guideline-axis-block" style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(245, 158, 11, 0.25);">
+                  <div class="guideline-enable-row">
+                    <label class="checkbox-row">
+                      <input type="checkbox" id="chkEnableGuidelineY">
+                      <span><strong>Trục ngang Y (Horizontal Alignment)</strong></span>
+                    </label>
+                  </div>
+                  <div id="guidelineControlsY" class="guideline-controls" style="display: none;">
+                    <div class="guideline-field-row">
+                      <label class="form-sublabel" for="inputGuidelineY">
+                        <span>Guideline Y (px)</span>
+                        <input type="number" id="inputGuidelineY" class="form-input compact-number" min="0" value="0">
+                      </label>
+                      <label class="form-sublabel" for="selectGuidelineYMode">
+                        <span>Align Mode Y</span>
+                        <select id="selectGuidelineYMode" class="form-input" style="padding: 4px 6px; font-size: 0.8rem;">
+                          <option value="top" selected>Top Edge (Sát mép trên - Mở rộng xuống dưới)</option>
+                          <option value="bottom">Bottom / Feet (Sát đáy / Chân - Mở rộng lên trên)</option>
+                          <option value="center">Center (Canh giữa trục Y)</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Action buttons & toggles -->
+                <div class="guideline-actions-row" style="margin-top: 10px;">
+                  <button id="btnGuidelineAutoDetect" class="time-btn" type="button" title="Tự động phát hiện vị trí chủ thể ở frame hiện tại cho cả X và Y">
+                    <i data-lucide="wand-2" style="width: 12px; height: 12px; color: #06b6d4;"></i>
+                    <span>Auto Detect (X & Y)</span>
+                  </button>
+                  <button id="btnGuidelineCenter" class="time-btn" type="button" title="Đặt trục gióng tại tâm giữa">
+                    <span>Center</span>
+                  </button>
+                  <button id="btnGuidelineResetCrop" class="time-btn" type="button" title="Đặt trục gióng theo góc vùng crop">
+                    <span>Reset Crop</span>
+                  </button>
+                </div>
+                <div class="guideline-toggles-row" style="margin-top: 6px;">
+                  <label class="checkbox-row" style="font-size: 0.78rem;">
+                    <input type="checkbox" id="chkShowGuidelineVideo" checked>
+                    <span>Show on Video</span>
+                  </label>
+                  <label class="checkbox-row" style="font-size: 0.78rem;">
+                    <input type="checkbox" id="chkGuidelinePreview" checked>
+                    <span>Show on Preview</span>
+                  </label>
+                </div>
               </div>
             </div>
 

@@ -1156,6 +1156,245 @@ body {
   z-index: 25;
 }
 
+/* Vertical Guideline Overlay on Video Viewport */
+.guideline-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 35;
+  display: none;
+}
+
+.vertical-guideline {
+  position: absolute;
+  top: 0;
+  width: 28px;
+  margin-left: -14px;
+  height: 100%;
+  pointer-events: auto;
+  cursor: col-resize;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  user-select: none;
+  touch-action: none;
+  z-index: 36;
+}
+
+.vertical-guideline-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: #06b6d4;
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.8), 0 0 2px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+
+.vertical-guideline:hover .vertical-guideline-line,
+.vertical-guideline.is-dragging .vertical-guideline-line {
+  background: #22d3ee;
+  width: 2.5px;
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.95), 0 0 4px rgba(255, 255, 255, 1);
+}
+
+.vertical-guideline-handle {
+  position: absolute;
+  top: 6px;
+  width: 22px;
+  height: 22px;
+  background: #0891b2;
+  border: 1.5px solid #cffafe;
+  border-radius: 50%;
+  color: #ecfeff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 6px rgba(6, 182, 212, 0.6);
+  cursor: col-resize;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+  z-index: 37;
+}
+
+.vertical-guideline:hover .vertical-guideline-handle,
+.vertical-guideline.is-dragging .vertical-guideline-handle {
+  transform: scale(1.15);
+  background: #06b6d4;
+  border-color: #ffffff;
+}
+
+.vertical-guideline-badge {
+  position: absolute;
+  top: 32px;
+  padding: 2px 6px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(6, 182, 212, 0.5);
+  border-radius: 4px;
+  color: #cffafe;
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-family: monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.vertical-guideline:hover .vertical-guideline-badge,
+.vertical-guideline.is-dragging .vertical-guideline-badge {
+  opacity: 1;
+  background: rgba(8, 51, 68, 0.95);
+  border-color: #22d3ee;
+}
+
+/* Horizontal Guideline */
+.horizontal-guideline {
+  position: absolute;
+  left: 0;
+  height: 28px;
+  margin-top: -14px;
+  width: 100%;
+  pointer-events: auto;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  user-select: none;
+  touch-action: none;
+  z-index: 36;
+}
+
+.horizontal-guideline-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.8), 0 0 2px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+
+.horizontal-guideline:hover .horizontal-guideline-line,
+.horizontal-guideline.is-dragging .horizontal-guideline-line {
+  background: #fbbf24;
+  height: 2.5px;
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.95), 0 0 4px rgba(255, 255, 255, 1);
+}
+
+.horizontal-guideline-handle {
+  position: absolute;
+  left: 6px;
+  width: 22px;
+  height: 22px;
+  background: #d97706;
+  border: 1.5px solid #fef3c7;
+  border-radius: 50%;
+  color: #fffbeb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 6px rgba(245, 158, 11, 0.6);
+  cursor: row-resize;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+  z-index: 37;
+}
+
+.horizontal-guideline:hover .horizontal-guideline-handle,
+.horizontal-guideline.is-dragging .horizontal-guideline-handle {
+  transform: scale(1.15);
+  background: #f59e0b;
+  border-color: #ffffff;
+}
+
+.horizontal-guideline-badge {
+  position: absolute;
+  left: 32px;
+  padding: 2px 6px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  border-radius: 4px;
+  color: #fef3c7;
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-family: monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.horizontal-guideline:hover .horizontal-guideline-badge,
+.horizontal-guideline.is-dragging .horizontal-guideline-badge {
+  opacity: 1;
+  background: rgba(69, 26, 3, 0.95);
+  border-color: #fbbf24;
+}
+
+/* Guideline Settings Styles */
+.guideline-tool-group {
+  grid-column: 1 / -1;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(6, 182, 212, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.guideline-enable-row {
+  margin-bottom: 8px;
+}
+
+.guideline-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(6, 182, 212, 0.2);
+}
+
+.guideline-field-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.guideline-field-row .form-sublabel {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.guideline-actions-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.guideline-actions-row .time-btn {
+  flex: 1;
+  min-width: 70px;
+  padding: 3px 6px;
+  font-size: 0.74rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.guideline-toggles-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
 .watermark-banner {
   position: absolute;
   top: 12px;
