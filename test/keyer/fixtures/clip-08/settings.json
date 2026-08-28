@@ -1,0 +1,38 @@
+{
+  "path": "sheet",
+  "label": "Sprite sheet, 2x2 cells",
+  "keyColors": [
+    {
+      "r": 24,
+      "g": 198,
+      "b": 62
+    }
+  ],
+  "options": {
+    "similarity": 0.48,
+    "feather": 0.2,
+    "spill": 0.55,
+    "subjectProtection": 0.55,
+    "cleanupRadius": 0,
+    "preserveColors": true,
+    "autoDetect": false,
+    "rows": 2,
+    "cols": 2
+  },
+  "variants": [
+    {
+      "name": "global",
+      "perCell": false
+    },
+    {
+      "name": "per-cell",
+      "perCell": true
+    },
+    {
+      "name": "auto-detect",
+      "perCell": false,
+      "autoDetect": true,
+      "keyColors": []
+    }
+  ]
+}

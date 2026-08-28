@@ -1,0 +1,24 @@
+{
+  "path": "video",
+  "label": "Two key colours in one frame",
+  "keyColors": [
+    {
+      "r": 24,
+      "g": 198,
+      "b": 62
+    },
+    {
+      "r": 38,
+      "g": 72,
+      "b": 196
+    }
+  ],
+  "options": {
+    "enabled": true,
+    "similarity": 0.55,
+    "blend": 0.18,
+    "spill": 0.55,
+    "subjectProtection": 0.5,
+    "cleanupRadius": 0
+  }
+}
