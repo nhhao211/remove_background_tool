@@ -726,6 +726,22 @@
             </div>
           </div>
 
+          <div class="form-group">
+            <label class="form-label" for="sliderChromaSmooth">
+              <span>Chroma Smoothing</span>
+              <span class="hint">Làm mịn các lỗi lấy mẫu 4:2:0 từ video; màu chủ thể không bị ảnh hưởng</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="chkChromaSmooth" checked>
+              <span>Làm mịn các kênh màu trước khi khóa</span>
+            </label>
+            <div class="slider-group">
+              <input type="range" id="sliderChromaSmooth" min="1" max="2" step="1" value="1">
+              <input type="number" id="numChromaSmooth" class="form-input slider-number-input" min="1" max="2" step="1" value="1" aria-label="Chroma smoothing radius">
+              <span id="lblChromaSmoothVal" class="slider-value" style="display: none;">1</span>
+            </div>
+          </div>
+
           <div class="form-group protection-brush-group collapsible-section" id="groupProtectionBrush">
             <div class="section-collapse-header" id="headerProtectionBrush" role="button" tabindex="0" aria-expanded="true" aria-controls="bodyProtectionBrush" title="Click to collapse / expand Subject Protect Brush">
               <div class="section-collapse-title">

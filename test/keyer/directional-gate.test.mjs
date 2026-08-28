@@ -18,7 +18,8 @@
  * which is the exact regression these phases have to avoid.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 import path from 'node:path';
 
 import { CLIP_NAMES } from './corpus-generator.mjs';
@@ -84,7 +85,7 @@ const keyer = await loadKeyer();
 /** Current output and the frozen reference, measured with the same functions. */
 const measured = new Map();
 
-beforeAll(async () => {
+test.before(async () => {
   for (const clipName of CLIP_NAMES) {
     const outputs = await runClip(keyer, clipName);
     const output = outputs[0];
@@ -111,7 +112,7 @@ beforeAll(async () => {
       coreDrift: coreRGBDelta(output.image.data, referenceImage.data)
     });
   }
-}, 120_000);
+});
 
 /**
  * Clips whose ground-truth fit the linear-light wiring made worse.
@@ -122,33 +123,33 @@ beforeAll(async () => {
  * bandSAD 90.90 against the reference's 92.66, driven by clip-07 at 104.21 ->
  * 97.58); clip-01 is the one clip that moved the other way, by 1.35.
  *
- * This is `it.fails`, not a skip or a relaxed bound. The assertion still runs
- * and still has to fail; when step 5's re-tuning lands and the metric recovers,
- * this test goes red and forces its own removal. A skip would rot silently.
+ * This test deliberately checks that the regression still exists. It is inverted
+ * from the normal assertion to preserve self-clearing debt: it goes red the moment
+ * the underlying issue is fixed, forcing its own removal.
  */
 const KNOWN_REGRESSIONS = new Set(['clip-01:bandSAD']);
 
-const gate = (clipName, metric) =>
-  (KNOWN_REGRESSIONS.has(`${clipName}:${metric}`) ? it.fails : it);
-
-describe('directional gate', () => {
-  describe('fringeContrast moves toward zero', () => {
+await test('directional gate', async (t) => {
+  await t.test('fringeContrast moves toward zero', async (t) => {
     // Signed: negative is a dark rim, positive a light one. Magnitude is what
     // has to shrink, so the comparison is on absolute value.
     for (const clipName of CLIP_NAMES) {
-      gate(clipName, 'fringeContrast')(`${clipName}`, ({ skip }) => {
+      await t.test(`${clipName}`, (t) => {
         const { current, reference, softBand } = measured.get(clipName);
-        skip(
-          softBand < MIN_SOFT_BAND,
-          `soft band is ${softBand} px, under the ${MIN_SOFT_BAND} px this metric needs to mean anything`
+        if (softBand < MIN_SOFT_BAND) {
+          return t.skip(
+            `soft band is ${softBand} px, under the ${MIN_SOFT_BAND} px this metric needs to mean anything`
+          );
+        }
+        assert.ok(
+          Math.abs(current.fringeContrast) <= Math.abs(reference.fringeContrast) + NOISE_FLOOR,
+          `${clipName}: fringe contrast must not worsen (current: ${current.fringeContrast.toFixed(3)}, reference: ${reference.fringeContrast.toFixed(3)})`
         );
-        expect(Math.abs(current.fringeContrast))
-          .toBeLessThanOrEqual(Math.abs(reference.fringeContrast) + NOISE_FLOOR);
       });
     }
   });
 
-  describe('bilinear halo does not worsen', () => {
+  await t.test('bilinear halo does not worsen', async (t) => {
     // What a downstream consumer sees after scaling the sheet: RGB left in
     // low-alpha pixels blooms into a rim. Phase 6's guided filter is what should
     // move this; here it only has to not get worse.
@@ -158,41 +159,61 @@ describe('directional gate', () => {
     // raw scores a dark rim getting lighter as a regression, which is backwards
     // for every clip whose rim happens to be dark.
     for (const clipName of CLIP_NAMES) {
-      gate(clipName, 'haloCheck')(`${clipName}`, ({ skip }) => {
+      await t.test(`${clipName}`, (t) => {
         const { current, reference, softBand } = measured.get(clipName);
         // Same denominator problem, inherited: the upsample multiplies the band
         // by the scale factor but cannot create detail that was not there.
-        skip(
-          softBand < MIN_SOFT_BAND,
-          `soft band is ${softBand} px, under the ${MIN_SOFT_BAND} px this metric needs to mean anything`
+        if (softBand < MIN_SOFT_BAND) {
+          return t.skip(
+            `soft band is ${softBand} px, under the ${MIN_SOFT_BAND} px this metric needs to mean anything`
+          );
+        }
+        assert.ok(
+          Math.abs(current.haloCheck) <= Math.abs(reference.haloCheck) + NOISE_FLOOR,
+          `${clipName}: halo check must not worsen (current: ${current.haloCheck.toFixed(3)}, reference: ${reference.haloCheck.toFixed(3)})`
         );
-        expect(Math.abs(current.haloCheck))
-          .toBeLessThanOrEqual(Math.abs(reference.haloCheck) + NOISE_FLOOR);
       });
     }
   });
 
-  describe('band-limited fit to ground truth does not worsen', () => {
+  await t.test('band-limited fit to ground truth does not worsen', async (t) => {
     // Restricted to the soft-edge band. Measured over the whole frame it would
     // be dominated by the interior, where every implementation agrees, and would
     // move too little to gate on.
     for (const clipName of CLIP_NAMES) {
-      gate(clipName, 'bandSAD')(`${clipName}`, () => {
+      await t.test(`${clipName}`, () => {
         const { current, reference, hasGroundTruth } = measured.get(clipName);
         if (!hasGroundTruth) {
-          expect(current.bandSAD).toBeNull();
+          assert.equal(current.bandSAD, null);
           return;
         }
-        expect(current.bandSAD).toBeLessThanOrEqual(reference.bandSAD + NOISE_FLOOR);
+
+        // This test deliberately checks that a known regression still exists.
+        if (KNOWN_REGRESSIONS.has(`${clipName}:bandSAD`)) {
+          // clip-01 bandSAD no longer regresses — delete this test and move clip-01 back into the gate
+          assert.ok(
+            current.bandSAD > reference.bandSAD + NOISE_FLOOR,
+            `clip-01 bandSAD no longer regresses — delete this test and move clip-01 back into the gate (current: ${current.bandSAD.toFixed(3)}, reference: ${reference.bandSAD.toFixed(3)})`
+          );
+          return;
+        }
+
+        assert.ok(
+          current.bandSAD <= reference.bandSAD + NOISE_FLOOR,
+          `${clipName}: band SAD must not worsen (current: ${current.bandSAD.toFixed(3)}, reference: ${reference.bandSAD.toFixed(3)})`
+        );
       });
     }
   });
 
-  describe('subject core colour stays put', () => {
+  await t.test('subject core colour stays put', async (t) => {
     for (const clipName of CLIP_NAMES) {
-      it(`${clipName}`, () => {
+      await t.test(`${clipName}`, () => {
         const { coreDrift } = measured.get(clipName);
-        expect(coreDrift).toBeLessThan(CORE_DRIFT_LIMIT);
+        assert.ok(
+          coreDrift < CORE_DRIFT_LIMIT,
+          `${clipName}: core drift must be < ${CORE_DRIFT_LIMIT}, got ${coreDrift.toFixed(3)}`
+        );
       });
     }
   });

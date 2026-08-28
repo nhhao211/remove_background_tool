@@ -9,7 +9,8 @@
  * These functions are pure and take no DOM, so they import straight into Node.
  */
 
-import { describe, it, expect } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
 import { JS_DIR } from './keyer-runner.mjs';
 
@@ -30,41 +31,46 @@ function srgbToLinearExact(c) {
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
-describe('sRGB <-> linear LUTs', () => {
-  it('SRGB_TO_LINEAR matches the transfer function at every 8-bit input', () => {
-    expect(SRGB_TO_LINEAR).toHaveLength(256);
+function assertCloseTo(actual, expected, epsilon, msg) {
+  assert.ok(Math.abs(actual - expected) < epsilon, msg || `${actual} ≈ ${expected} ±${epsilon}`);
+}
+
+await test('sRGB <-> linear LUTs', async (t) => {
+  await t.test('SRGB_TO_LINEAR matches the transfer function at every 8-bit input', () => {
+    assert.equal(SRGB_TO_LINEAR.length, 256);
     for (let i = 0; i < 256; i += 1) {
-      expect(SRGB_TO_LINEAR[i]).toBeCloseTo(srgbToLinearExact(i / 255), 6);
+      assertCloseTo(SRGB_TO_LINEAR[i], srgbToLinearExact(i / 255), 1e-6,
+        `SRGB_TO_LINEAR[${i}] correct`);
     }
   });
 
-  it('anchors at both ends', () => {
-    expect(SRGB_TO_LINEAR[0]).toBe(0);
-    expect(SRGB_TO_LINEAR[255]).toBeCloseTo(1, 6);
-    expect(linearToSrgb8(0)).toBe(0);
-    expect(linearToSrgb8(1)).toBe(255);
+  await t.test('anchors at both ends', () => {
+    assert.equal(SRGB_TO_LINEAR[0], 0);
+    assertCloseTo(SRGB_TO_LINEAR[255], 1, 1e-6);
+    assert.equal(linearToSrgb8(0), 0);
+    assert.equal(linearToSrgb8(1), 255);
   });
 
-  it('round trips exactly for all 256 8-bit values', () => {
+  await t.test('round trips exactly for all 256 8-bit values', () => {
     const broken = [];
     for (let i = 0; i < 256; i += 1) {
       const back = linearToSrgb8(SRGB_TO_LINEAR[i]);
       if (back !== i) broken.push(`${i} -> ${back}`);
     }
-    expect(broken, `round trip is not exact for: ${broken.join(', ')}`).toEqual([]);
+    assert.deepEqual(broken, [], `round trip is not exact for: ${broken.join(', ')}`);
   });
 
-  it('clamps outside 0..1 rather than indexing past the table', () => {
+  await t.test('clamps outside 0..1 rather than indexing past the table', () => {
     // Phase 7's unpremultiply can produce these; an out-of-bounds read would
     // yield NaN and poison the frame silently.
-    expect(linearToSrgb8(-0.5)).toBe(0);
-    expect(linearToSrgb8(1.5)).toBe(255);
-    expect(Number.isFinite(linearToSrgb8(1 - 1e-9))).toBe(true);
+    assert.equal(linearToSrgb8(-0.5), 0);
+    assert.equal(linearToSrgb8(1.5), 255);
+    assert.ok(Number.isFinite(linearToSrgb8(1 - 1e-9)));
   });
 });
 
-describe('float buffer conversion', () => {
-  it('carries 8-bit RGBA through linear and back unchanged', () => {
+await test('float buffer conversion', async (t) => {
+  await t.test('carries 8-bit RGBA through linear and back unchanged', () => {
     const width = 16;
     const height = 16;
     const data = new Uint8ClampedArray(width * height * 4);
@@ -78,20 +84,20 @@ describe('float buffer conversion', () => {
     const buffer = toLinearBuffer({ data, width, height });
     const back = toSrgbImageData(buffer);
 
-    expect(Array.from(back.data)).toEqual(Array.from(data));
+    assert.deepEqual(Array.from(back.data), Array.from(data));
   });
 
-  it('keeps alpha linear and unpremultiplied', () => {
+  await t.test('keeps alpha linear and unpremultiplied', () => {
     const data = new Uint8ClampedArray([200, 100, 50, 8]);
     const buffer = toLinearBuffer({ data, width: 1, height: 1 });
     // Alpha is not gamma encoded: 8/255 stays 8/255, and RGB is untouched by it.
-    expect(buffer.a[0]).toBeCloseTo(8 / 255, 6);
-    expect(buffer.r[0]).toBeCloseTo(SRGB_TO_LINEAR[200], 6);
-    expect(toSrgbImageData(buffer).data[3]).toBe(8);
+    assertCloseTo(buffer.a[0], 8 / 255, 1e-6);
+    assertCloseTo(buffer.r[0], SRGB_TO_LINEAR[200], 1e-6);
+    assert.equal(toSrgbImageData(buffer).data[3], 8);
   });
 });
 
-describe('YCbCr with normalised axes', () => {
+await test('YCbCr with normalised axes', async (t) => {
   const makeBuffer = (pixels) => {
     const width = pixels.length;
     const buffer = {
@@ -110,20 +116,20 @@ describe('YCbCr with normalised axes', () => {
     return buffer;
   };
 
-  it('uses BT.709 luma', () => {
+  await t.test('uses BT.709 luma', () => {
     const buffer = makeBuffer([[0.25, 0.5, 0.75]]);
     const { y } = rgbToYCbCr(buffer);
-    expect(y[0]).toBeCloseTo((0.2126 * 0.25) + (0.7152 * 0.5) + (0.0722 * 0.75), 6);
+    assertCloseTo(y[0], (0.2126 * 0.25) + (0.7152 * 0.5) + (0.0722 * 0.75), 1e-6);
   });
 
-  it('normalises the chroma axes by 0.564 and 0.713', () => {
+  await t.test('normalises the chroma axes by 0.564 and 0.713', () => {
     const buffer = makeBuffer([[0.25, 0.5, 0.75]]);
     const { y, cb, cr } = rgbToYCbCr(buffer);
-    expect(cb[0]).toBeCloseTo((0.75 - y[0]) * 0.564, 6);
-    expect(cr[0]).toBeCloseTo((0.25 - y[0]) * 0.713, 6);
+    assertCloseTo(cb[0], (0.75 - y[0]) * 0.564, 1e-6);
+    assertCloseTo(cr[0], (0.25 - y[0]) * 0.713, 1e-6);
   });
 
-  it('round trips back to the original linear RGB', () => {
+  await t.test('round trips back to the original linear RGB', () => {
     // The inverse must undo the *same* primaries the forward transform used.
     // Mixing BT.601 coefficients into the inverse of a BT.709 forward shifts
     // green, which would land as a colour cast on every keyed frame in phase 4.
@@ -140,14 +146,14 @@ describe('YCbCr with normalised axes', () => {
     yCbCrToRgb(ycbcr, target);
 
     pixels.forEach(([r, g, b], i) => {
-      expect(target.r[i], `pixel ${i} red`).toBeCloseTo(r, 5);
-      expect(target.g[i], `pixel ${i} green`).toBeCloseTo(g, 5);
-      expect(target.b[i], `pixel ${i} blue`).toBeCloseTo(b, 5);
+      assertCloseTo(target.r[i], r, 1e-5, `pixel ${i} red`);
+      assertCloseTo(target.g[i], g, 1e-5, `pixel ${i} green`);
+      assertCloseTo(target.b[i], b, 1e-5, `pixel ${i} blue`);
     });
   });
 });
 
-describe('separable box blur', () => {
+await test('separable box blur', async (t) => {
   /** Naive two-pass reference, window clipped at the borders. */
   function naiveBlur(source, width, height, radius) {
     const horizontal = new Float32Array(source.length);
@@ -192,7 +198,7 @@ describe('separable box blur', () => {
     return channel;
   };
 
-  it('matches the naive implementation at radius 1 and 2', () => {
+  await t.test('matches the naive implementation at radius 1 and 2', () => {
     for (const radius of [1, 2]) {
       const width = 9;
       const height = 7;
@@ -202,19 +208,19 @@ describe('separable box blur', () => {
       const expected = naiveBlur(source, width, height, radius);
 
       for (let i = 0; i < expected.length; i += 1) {
-        expect(actual[i], `radius ${radius}, index ${i}`).toBeCloseTo(expected[i], 5);
+        assertCloseTo(actual[i], expected[i], 1e-5, `radius ${radius}, index ${i}`);
       }
     }
   });
 
-  it('leaves the channel untouched at radius 0', () => {
+  await t.test('leaves the channel untouched at radius 0', () => {
     const source = seeded(5, 5);
     const actual = Float32Array.from(source);
     boxBlurSeparable(actual, 5, 5, 0);
-    expect(Array.from(actual)).toEqual(Array.from(source));
+    assert.deepEqual(Array.from(actual), Array.from(source));
   });
 
-  it('stays finite when the radius exceeds the image', () => {
+  await t.test('stays finite when the radius exceeds the image', () => {
     // The internal radius cap is derived from the image size. If that cap is
     // ever fractional, the sliding window indexes at a non-integer offset,
     // reads `undefined`, and turns the whole channel into NaN.
@@ -223,7 +229,7 @@ describe('separable box blur', () => {
     const actual = seeded(width, height);
     boxBlurSeparable(actual, width, height, 3);
     for (let i = 0; i < actual.length; i += 1) {
-      expect(Number.isFinite(actual[i]), `index ${i} is not finite`).toBe(true);
+      assert.ok(Number.isFinite(actual[i]), `index ${i} is not finite`);
     }
   });
 });

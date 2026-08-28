@@ -200,6 +200,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const sliderEdgeCleanup = document.getElementById('sliderEdgeCleanup');
   const numEdgeCleanup = document.getElementById('numEdgeCleanup');
   const lblEdgeCleanupVal = document.getElementById('lblEdgeCleanupVal');
+  const chkChromaSmooth = document.getElementById('chkChromaSmooth');
+  const sliderChromaSmooth = document.getElementById('sliderChromaSmooth');
+  const numChromaSmooth = document.getElementById('numChromaSmooth');
+  const lblChromaSmoothVal = document.getElementById('lblChromaSmoothVal');
   const headerProtectionBrush = document.getElementById('headerProtectionBrush');
   const bodyProtectionBrush = document.getElementById('bodyProtectionBrush');
   const lblCollapseProtectionBrush = document.getElementById('lblCollapseProtectionBrush');
@@ -446,7 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
     isScanningLoops: false
   };
 
-  const CLIP_STATE_KEY = 'video-editor:clip-states:v1';
+  const CLIP_STATE_KEY = 'video-editor:clip-states:v2';
   const RECENT_COLORS_KEY = 'video-editor:recent-colors:v1';
   let saveStateTimer = null;
 
@@ -462,7 +466,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const stored = readJsonStorage(CLIP_STATE_KEY, {});
     const states = Array.isArray(stored) ? {} : stored;
     const saved = states[state.sourceId];
-    if (!saved || ![1, 2, 3].includes(saved.schemaVersion)) return null;
+    if (!saved || ![1, 2, 3, 4].includes(saved.schemaVersion)) return null;
     return saved;
   }
 
@@ -471,7 +475,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const stored = readJsonStorage(CLIP_STATE_KEY, {});
     const states = Array.isArray(stored) ? {} : stored;
     states[state.sourceId] = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       sourceId: state.sourceId,
       trimStart: state.trimStart,
       trimEnd: state.trimEnd,
@@ -484,6 +488,8 @@ document.addEventListener('DOMContentLoaded', () => {
       chromaSpill: parseFloat(sliderSpill.value),
       chromaSubjectProtection: parseFloat(sliderSubjectProtection.value),
       chromaEdgeCleanup: parseInt(sliderEdgeCleanup.value, 10),
+      chromaSmoothEnabled: chkChromaSmooth.checked,
+      chromaSmoothRadius: parseInt(sliderChromaSmooth.value, 10),
       protectionStrokes: normalizeProtectionStrokes(state.protectionStrokes),
       protectionBrushSize: parseInt(sliderProtectionSize.value, 10),
       protectionBrushStrength: parseFloat(sliderProtectionStrength.value),
@@ -532,6 +538,12 @@ document.addEventListener('DOMContentLoaded', () => {
       spill: U.clampNumber(sliderSpill.value, 0, 1, 0.55),
       subjectProtection: U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50),
       cleanupRadius: Math.round(U.clampNumber(sliderEdgeCleanup.value, 0, 3, 0)),
+      // Every frame on the video path comes from decoded video, so chroma
+      // subsampling is the norm and smoothing is on by default. The keyer itself
+      // defaults it off — it cannot know the source, and the sprite-sheet path
+      // in sprite-remover.js feeds it PNGs, which have nothing to correct.
+      chromaSmoothEnabled: chkChromaSmooth.checked,
+      chromaSmoothRadius: Math.round(U.clampNumber(sliderChromaSmooth.value, 1, 2, 1)),
       keyColors: state.keyColors,
       ...overrides
     };
@@ -986,6 +998,8 @@ document.addEventListener('DOMContentLoaded', () => {
     sliderSpill.value = String(U.clampNumber(saved?.chromaSpill, 0, 1, 0.55));
     sliderSubjectProtection.value = String(U.clampNumber(saved?.chromaSubjectProtection, 0, 1, 0.50));
     sliderEdgeCleanup.value = String(Math.round(U.clampNumber(saved?.chromaEdgeCleanup, 0, 3, 0)));
+    chkChromaSmooth.checked = saved?.chromaSmoothEnabled !== false;
+    sliderChromaSmooth.value = String(Math.round(U.clampNumber(saved?.chromaSmoothRadius, 1, 2, 1)));
     updateChromaSliderLabels();
 
     trimStartInput.value = state.trimStart.toFixed(2);
@@ -3505,18 +3519,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const spill = parseFloat(sliderSpill.value).toFixed(2);
     const prot = parseFloat(sliderSubjectProtection.value).toFixed(2);
     const cleanup = String(parseInt(sliderEdgeCleanup.value, 10) || 0);
+    const chromaSmooth = String(parseInt(sliderChromaSmooth.value, 10) || 1);
 
     if (numSimilarity && document.activeElement !== numSimilarity) numSimilarity.value = sim;
     if (numBlend && document.activeElement !== numBlend) numBlend.value = blend;
     if (numSpill && document.activeElement !== numSpill) numSpill.value = spill;
     if (numSubjectProtection && document.activeElement !== numSubjectProtection) numSubjectProtection.value = prot;
     if (numEdgeCleanup && document.activeElement !== numEdgeCleanup) numEdgeCleanup.value = cleanup;
+    if (numChromaSmooth && document.activeElement !== numChromaSmooth) numChromaSmooth.value = chromaSmooth;
 
     lblSimilarityVal.textContent = sim;
     lblBlendVal.textContent = blend;
     lblSpillVal.textContent = spill;
     lblSubjectProtectionVal.textContent = prot;
     lblEdgeCleanupVal.textContent = `${cleanup} px`;
+    lblChromaSmoothVal.textContent = chromaSmooth;
   }
 
   // Sliders display and persist their exact values, including zero.
@@ -3525,6 +3542,8 @@ document.addEventListener('DOMContentLoaded', () => {
   syncSliderAndNumber(sliderSpill, numSpill, { decimals: 2, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
   syncSliderAndNumber(sliderSubjectProtection, numSubjectProtection, { decimals: 2, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
   syncSliderAndNumber(sliderEdgeCleanup, numEdgeCleanup, { decimals: 0, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderChromaSmooth, numChromaSmooth, { decimals: 0, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
+  chkChromaSmooth.addEventListener('change', () => { updateChromaSliderLabels(); saveClipStateDebounced(); });
 
   // Format toggle
   selectFormat.addEventListener('change', updateFormatLabels);

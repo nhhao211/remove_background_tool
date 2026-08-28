@@ -5,7 +5,8 @@
  * softening would have flagged correct edge work as a regression.
  */
 
-import { describe, it, expect } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
 import { ImageData, fillRect, fillCircle } from './image.mjs';
 import {
@@ -28,59 +29,63 @@ function solid(width, height, [r, g, b, a]) {
   return image;
 }
 
-describe('alphaSAD', () => {
-  it('is zero for identical buffers', () => {
+function assertCloseTo(actual, expected, epsilon, msg) {
+  assert.ok(Math.abs(actual - expected) < epsilon, msg || `${actual} ≈ ${expected} ±${epsilon}`);
+}
+
+await test('alphaSAD', async (t) => {
+  await t.test('is zero for identical buffers', () => {
     const a = solid(8, 8, [10, 20, 30, 128]);
     const b = solid(8, 8, [90, 90, 90, 128]);
-    expect(alphaSAD(a.data, b.data)).toBe(0);
+    assert.equal(alphaSAD(a.data, b.data), 0);
   });
 
-  it('counts only alpha, and counts every differing pixel', () => {
+  await t.test('counts only alpha, and counts every differing pixel', () => {
     const a = solid(4, 4, [0, 0, 0, 200]);
     const b = solid(4, 4, [0, 0, 0, 190]);
-    expect(alphaSAD(a.data, b.data)).toBe(16 * 10);
+    assert.equal(alphaSAD(a.data, b.data), 16 * 10);
   });
 
-  it('is infinite for mismatched sizes rather than silently passing', () => {
-    expect(alphaSAD(solid(4, 4, [0, 0, 0, 0]).data, solid(8, 8, [0, 0, 0, 0]).data)).toBe(Infinity);
+  await t.test('is infinite for mismatched sizes rather than silently passing', () => {
+    assert.equal(alphaSAD(solid(4, 4, [0, 0, 0, 0]).data, solid(8, 8, [0, 0, 0, 0]).data), Infinity);
   });
 });
 
-describe('coreRGBDelta', () => {
-  it('ignores pixels that are not opaque in both buffers', () => {
+await test('coreRGBDelta', async (t) => {
+  await t.test('ignores pixels that are not opaque in both buffers', () => {
     const a = solid(4, 4, [200, 200, 200, 255]);
     const b = solid(4, 4, [0, 0, 0, 254]);
-    expect(coreRGBDelta(a.data, b.data)).toBe(0);
+    assert.equal(coreRGBDelta(a.data, b.data), 0);
   });
 
-  it('averages per channel over opaque pixels', () => {
+  await t.test('averages per channel over opaque pixels', () => {
     const a = solid(4, 4, [100, 100, 100, 255]);
     const b = solid(4, 4, [90, 100, 110, 255]);
-    expect(coreRGBDelta(a.data, b.data)).toBeCloseTo((10 + 0 + 10) / 3, 10);
+    assertCloseTo(coreRGBDelta(a.data, b.data), (10 + 0 + 10) / 3, 10);
   });
 });
 
-describe('composite', () => {
-  it('blends arithmetically without a premultiplied round trip', () => {
+await test('composite', async (t) => {
+  await t.test('blends arithmetically without a premultiplied round trip', () => {
     const image = solid(2, 2, [255, 0, 0, 128]);
     const out = composite(image, [0, 0, 255]);
     const alpha = 128 / 255;
-    expect(out[0]).toBe(Math.round(255 * alpha));
-    expect(out[2]).toBe(Math.round(255 * (1 - alpha)));
-    expect(out[3]).toBe(255);
+    assert.equal(out[0], Math.round(255 * alpha));
+    assert.equal(out[2], Math.round(255 * (1 - alpha)));
+    assert.equal(out[3], 255);
   });
 
-  it('preserves colour at very low alpha, where a canvas would quantise it away', () => {
+  await t.test('preserves colour at very low alpha, where a canvas would quantise it away', () => {
     const image = solid(2, 2, [255, 128, 64, 1]);
     const out = composite(image, [0, 0, 0]);
     // 255 * 1/255 == 1: the channel survives. A premultiplied canvas hop would
     // round this to 0 and lose the edge colour entirely.
-    expect(out[0]).toBe(1);
+    assert.equal(out[0], 1);
   });
 });
 
-describe('fringeContrast', () => {
-  it('is zero when the edge matches the interior', () => {
+await test('fringeContrast', async (t) => {
+  await t.test('is zero when the edge matches the interior', () => {
     const image = new ImageData(32, 32);
     fillRect(image, 0, 0, 32, 32, [0, 0, 0]);
     for (let offset = 3; offset < image.data.length; offset += 4) image.data[offset] = 0;
@@ -96,10 +101,10 @@ describe('fringeContrast', () => {
         image.data[offset + 3] = border ? 128 : 255;
       }
     }
-    expect(fringeContrast(image)).toBeCloseTo(0, 6);
+    assertCloseTo(fringeContrast(image), 0, 1e-6);
   });
 
-  it('reports a negative value for a dark rim and a positive one for a light rim', () => {
+  await t.test('reports a negative value for a dark rim and a positive one for a light rim', () => {
     const build = (rimLuma) => {
       const image = new ImageData(32, 32);
       for (let y = 8; y < 24; y += 1) {
@@ -115,19 +120,19 @@ describe('fringeContrast', () => {
       }
       return image;
     };
-    expect(fringeContrast(build(40))).toBeLessThan(-100);
-    expect(fringeContrast(build(255))).toBeGreaterThan(30);
+    assert.ok(fringeContrast(build(40)) < -100, 'dark rim must be negative');
+    assert.ok(fringeContrast(build(255)) > 30, 'light rim must be positive');
   });
 
-  it('is not maximised by a uniformly half-transparent frame', () => {
+  await t.test('is not maximised by a uniformly half-transparent frame', () => {
     // No pixel has an opaque neighbour, so there is nothing to compare against
     // and the score stays at zero instead of rewarding blanket softening.
-    expect(fringeContrast(solid(16, 16, [128, 128, 128, 128]))).toBe(0);
+    assert.equal(fringeContrast(solid(16, 16, [128, 128, 128, 128])), 0);
   });
 });
 
-describe('bandSAD', () => {
-  it('scores only where the ground truth is genuinely partial', () => {
+await test('bandSAD', async (t) => {
+  await t.test('scores only where the ground truth is genuinely partial', () => {
     const truth = new Uint8ClampedArray(4 * 4 * 4);
     const current = new Uint8ClampedArray(4 * 4 * 4);
     for (let pixel = 0; pixel < 16; pixel += 1) {
@@ -137,10 +142,10 @@ describe('bandSAD', () => {
     }
     // The eight fully opaque truth pixels are ignored even though they differ
     // by 255; only the four soft ones count, at 20 each.
-    expect(bandSAD(current, truth)).toBe(20);
+    assert.equal(bandSAD(current, truth), 20);
   });
 
-  it('rewards a crisper matte that matches a crisp truth', () => {
+  await t.test('rewards a crisper matte that matches a crisp truth', () => {
     const truth = new Uint8ClampedArray(8 * 4);
     const soft = new Uint8ClampedArray(8 * 4);
     const crisp = new Uint8ClampedArray(8 * 4);
@@ -150,12 +155,13 @@ describe('bandSAD', () => {
       soft[offset] = 128;
       crisp[offset] = 48;
     }
-    expect(bandSAD(crisp, truth)).toBeLessThan(bandSAD(soft, truth));
+    assert.ok(bandSAD(crisp, truth) < bandSAD(soft, truth),
+      'crisper must score better than soft');
   });
 });
 
-describe('bilinearHaloCheck', () => {
-  it('exposes a rim that only appears once the matte is filtered', () => {
+await test('bilinearHaloCheck', async (t) => {
+  await t.test('exposes a rim that only appears once the matte is filtered', () => {
     // Opaque white disc on transparent black. At native size there is no
     // partial alpha at all, so fringeContrast sees nothing.
     const image = new ImageData(24, 24);
@@ -169,9 +175,9 @@ describe('bilinearHaloCheck', () => {
         image.data[offset + 2] = 0;
       }
     }
-    expect(fringeContrast(image)).toBe(0);
+    assert.equal(fringeContrast(image), 0);
     // Upsampling mixes the black, zero-alpha surround into the edge, which is
     // the grey rim users report. The signed score must be clearly negative.
-    expect(bilinearHaloCheck(image)).toBeLessThan(-20);
+    assert.ok(bilinearHaloCheck(image) < -20, 'halo must be clearly negative');
   });
 });
