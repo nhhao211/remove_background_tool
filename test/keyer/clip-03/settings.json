@@ -1,0 +1,19 @@
+{
+  "path": "video",
+  "label": "Subject hue close to the key",
+  "keyColors": [
+    {
+      "r": 24,
+      "g": 198,
+      "b": 62
+    }
+  ],
+  "options": {
+    "enabled": true,
+    "similarity": 0.55,
+    "blend": 0.18,
+    "spill": 0.55,
+    "subjectProtection": 0.5,
+    "cleanupRadius": 0
+  }
+}
