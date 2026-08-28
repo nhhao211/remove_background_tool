@@ -130,9 +130,10 @@ export async function loadPNG(filepath) {
     const chunkCrc = readU32BE(data, offset + 8 + length);
     const computedCrc = crc32(data, offset + 4, offset + 8 + length);
 
-    // Note: CRC validation is skipped for now. The important thing is that we
-    // decode and re-encode RGBA pixel data correctly. If CRC validation becomes
-    // necessary, it should be added here with proper byte ordering.
+    // CRC validation is skipped: these PNGs are repo-local fixtures, and a
+    // corrupted file would fail loudly at inflate(). The check adds cost without
+    // detecting a class of failure we control against. Validation could be added
+    // here if needed, with proper byte-order handling for the checksum.
 
     if (chunkType === 'IHDR') {
       if (length !== 13) throw new Error('PNG: IHDR chunk must be 13 bytes');

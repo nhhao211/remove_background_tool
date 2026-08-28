@@ -22,7 +22,7 @@ import { loadPNG, exists } from './png.mjs';
 import { FRAMES_PER_CLIP } from './corpus-generator.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const JS_DIR = path.resolve(here, '../../public/tools/remove-background/js');
+export const JS_DIR = path.resolve(here, '../../public/js');
 export const FIXTURES_DIR = path.join(here, 'fixtures');
 /** Golden output. Regenerated deliberately; guards against unintended drift. */
 export const BASELINE_DIR = path.join(here, 'baseline');
