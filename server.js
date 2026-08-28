@@ -11,8 +11,54 @@ import { EditorUtils } from './public/js/editor-utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Load environment variables from .env file if present
+function loadEnvFile(envPath) {
+  if (fs.existsSync(envPath)) {
+    try {
+      const content = fs.readFileSync(envPath, 'utf8');
+      const lines = content.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx !== -1) {
+          const key = trimmed.slice(0, eqIdx).trim();
+          let val = trimmed.slice(eqIdx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (process.env[key] === undefined) {
+            process.env[key] = val;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+}
+
+loadEnvFile(path.join(__dirname, '.env'));
+
+function resolvePort() {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--port' || arg === '-p') {
+      const val = parseInt(args[i + 1], 10);
+      if (Number.isFinite(val) && val > 0 && val <= 65535) return val;
+    } else if (arg.startsWith('--port=')) {
+      const val = parseInt(arg.split('=')[1], 10);
+      if (Number.isFinite(val) && val > 0 && val <= 65535) return val;
+    }
+  }
+  if (process.env.PORT) {
+    const val = parseInt(process.env.PORT, 10);
+    if (Number.isFinite(val) && val > 0 && val <= 65535) return val;
+  }
+  return 3000;
+}
+
 const app = express();
-let PORT = parseInt(process.env.PORT, 10) || 3000;
+let PORT = resolvePort();
 
 // Setup directories
 const uploadsDir = path.join(__dirname, 'uploads');

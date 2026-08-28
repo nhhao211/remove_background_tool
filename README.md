@@ -36,8 +36,36 @@ Hoặc chế độ phát triển (auto reload):
 npm run dev
 ```
 
-### 3. Mở trên trình duyệt:
-Truy cập: **[http://localhost:3000](http://localhost:3000)**
+### 3. Đổi Port chạy ứng dụng (Mặc định: 3000):
+Bạn có thể đổi cổng bằng 1 trong các cách sau:
+
+- **Cách 1: Dùng file `.env` (Khuyên dùng)**
+  Tạo file `.env` ở thư mục gốc (tham khảo `.env.example`):
+  ```env
+  PORT=8080
+  ```
+  Sau đó chạy `npm start` hoặc `npm run dev`.
+
+- **Cách 2: Truyền biến môi trường trên dòng lệnh (macOS / Linux)**
+  ```bash
+  PORT=8080 npm start
+  # hoặc
+  PORT=8080 npm run dev
+  ```
+  *(Trên Windows PowerShell: `$env:PORT="8080"; npm start`)*
+
+- **Cách 3: Truyền tham số CLI (`--port` hoặc `-p`)**
+  ```bash
+  node server.js --port 8080
+  # hoặc qua npm:
+  npm start -- --port 8080
+  npm run dev -- --port 8080
+  ```
+
+> *Lưu ý: Nếu port được cấu hình đang bị ứng dụng khác chiếm dụng, server sẽ tự động phát hiện và thử mở port tiếp theo (ví dụ: 8081).*
+
+### 4. Mở trên trình duyệt:
+Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http://localhost:8080)** hoặc **[http://localhost:3000](http://localhost:3000)**).
 
 ---
 
