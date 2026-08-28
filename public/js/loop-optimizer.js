@@ -6,7 +6,7 @@
  * and temporal crossfade blending to eliminate animation stutter/jump at loop seams.
  */
 
-import { applyChromaKey } from './chroma-key.js';
+import { runKeyer } from './keyer/index.js';
 
 /**
  * Calculates sampling timestamps for animation generation.
@@ -274,9 +274,10 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
       0, 0, thumbW, thumbH
     );
 
-    const imgData = thumbCtx.getImageData(0, 0, thumbW, thumbH);
+    let imgData = thumbCtx.getImageData(0, 0, thumbW, thumbH);
     if (chromaOptions.enabled && chromaOptions.keyColors && chromaOptions.keyColors.length > 0) {
-      applyChromaKey(imgData, chromaOptions);
+      const keyResult = runKeyer(imgData, chromaOptions);
+      imgData = keyResult.imageData;
       thumbCtx.putImageData(imgData, 0, 0);
     }
 

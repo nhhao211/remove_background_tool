@@ -1,4 +1,4 @@
-import { processSpriteSheet } from './background-removal.js';
+import { runKeyer } from './keyer/index.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const byId = (id) => document.getElementById(id);
@@ -504,7 +504,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const working = cloneImageData(state.original);
-      const result = processSpriteSheet(working, processOptions(autoDetect));
+      const result = runKeyer(working, { connected: true, ...processOptions(autoDetect) });
       state.result = result.imageData;
       state.detectedColors = autoDetect
         ? result.keyColors.filter((color) => !state.manualColors.some((manual) => manual.hex === color.hex))

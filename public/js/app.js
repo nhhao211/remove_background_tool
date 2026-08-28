@@ -3,7 +3,7 @@
  */
 
 import { EditorUtils as U } from './editor-utils.js';
-import { applyChromaKey } from './chroma-key.js';
+import { runKeyer } from './keyer/index.js';
 import { normalizeProtectionStrokes, rasterizeProtectionMask } from './protection-mask.js';
 import { applyColorReplacement } from './color-replace.js';
 import { detectSubjectBounds, calculateGuidelineShift, alignFrameCanvas, drawSubImageSafe } from './subject-alignment.js';
@@ -515,6 +515,26 @@ document.addEventListener('DOMContentLoaded', () => {
   function saveClipStateDebounced() {
     clearTimeout(saveStateTimer);
     saveStateTimer = setTimeout(saveClipState, 180);
+  }
+
+  /**
+   * Builds chroma keying options from current UI controls.
+   * All numeric values are clamped to prevent invalid keyer input.
+   * Called per-frame: the returned object is handed to runKeyer, which
+   * returns a new ImageData for the video path, so per-frame overrides
+   * (like protection masks) differ between branches.
+   */
+  function buildChromaOptions(overrides = {}) {
+    return {
+      enabled: chkTransparentFormat.checked,
+      similarity: U.clampNumber(sliderSimilarity.value, 0, 1, 0.55),
+      blend: U.clampNumber(sliderBlend.value, 0, 1, 0.18),
+      spill: U.clampNumber(sliderSpill.value, 0, 1, 0.55),
+      subjectProtection: U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50),
+      cleanupRadius: Math.round(U.clampNumber(sliderEdgeCleanup.value, 0, 3, 0)),
+      keyColors: state.keyColors,
+      ...overrides
+    };
   }
 
   function saveRecentColor(color) {
@@ -2231,22 +2251,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     tempCtx.drawImage(video, 0, 0, fullW, fullH);
 
-    const imgData = tempCtx.getImageData(0, 0, fullW, fullH);
-    const similarity = U.clampNumber(sliderSimilarity.value, 0, 1, 0.55);
-    const blend = U.clampNumber(sliderBlend.value, 0, 1, 0.18);
-    const spill = U.clampNumber(sliderSpill.value, 0, 1, 0.55);
-    const subjectProtection = U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50);
-    const cleanupRadius = Math.round(U.clampNumber(sliderEdgeCleanup.value, 0, 3, 0));
-
-    applyChromaKey(imgData, {
-      enabled: chkTransparentFormat.checked,
-      similarity,
-      blend,
-      spill,
-      subjectProtection,
-      cleanupRadius,
-      keyColors: state.keyColors
-    });
+    let imgData = tempCtx.getImageData(0, 0, fullW, fullH);
+    const keyResult = runKeyer(imgData, buildChromaOptions());
+    imgData = keyResult.imageData;
 
     const bounds = detectSubjectBounds(imgData, {
       alphaThreshold: 25,
@@ -3714,17 +3721,9 @@ document.addEventListener('DOMContentLoaded', () => {
         fullFrameCtx.clearRect(0, 0, fullW, fullH);
         fullFrameCtx.drawImage(video, 0, 0, fullW, fullH);
 
-        const fullImgData = fullFrameCtx.getImageData(0, 0, fullW, fullH);
-        applyChromaKey(fullImgData, {
-          enabled: chkTransparentFormat.checked,
-          similarity,
-          blend,
-          spill,
-          subjectProtection,
-          cleanupRadius,
-          protectionMask: protectionMaskFull,
-          keyColors: state.keyColors
-        });
+        let fullImgData = fullFrameCtx.getImageData(0, 0, fullW, fullH);
+        const fullKeyResult = runKeyer(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }));
+        fullImgData = fullKeyResult.imageData;
         applyColorReplacement(fullImgData, colorReplaceOptions);
         clearWatermarkFromImageData(
           fullImgData,
@@ -3769,17 +3768,9 @@ document.addEventListener('DOMContentLoaded', () => {
           0, 0, cellW, cellH
         );
 
-        const imgData = frameCtx.getImageData(0, 0, cellW, cellH);
-        applyChromaKey(imgData, {
-          enabled: chkTransparentFormat.checked,
-          similarity,
-          blend,
-          spill,
-          subjectProtection,
-          cleanupRadius,
-          protectionMask: protectionMaskStandard,
-          keyColors: state.keyColors
-        });
+        let imgData = frameCtx.getImageData(0, 0, cellW, cellH);
+        const cellKeyResult = runKeyer(imgData, buildChromaOptions({ protectionMask: protectionMaskStandard }));
+        imgData = cellKeyResult.imageData;
         applyColorReplacement(imgData, colorReplaceOptions);
         clearWatermarkFromImageData(
           imgData,
@@ -4310,16 +4301,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const ctxStart = seamStartCanvas.getContext('2d');
       ctxStart.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, inspectW, inspectH);
       if (chkTransparentFormat.checked && state.keyColors.length > 0) {
-        const imgDataS = ctxStart.getImageData(0, 0, inspectW, inspectH);
-        applyChromaKey(imgDataS, {
-          enabled: true,
-          similarity: parseFloat(sliderSimilarity.value),
-          blend: parseFloat(sliderBlend.value),
-          spill: parseFloat(sliderSpill.value),
-          subjectProtection: parseFloat(sliderSubjectProtection.value),
-          cleanupRadius: parseInt(sliderEdgeCleanup.value, 10),
-          keyColors: state.keyColors
-        });
+        let imgDataS = ctxStart.getImageData(0, 0, inspectW, inspectH);
+        const startKeyResult = runKeyer(imgDataS, buildChromaOptions({ enabled: true }));
+        imgDataS = startKeyResult.imageData;
         ctxStart.putImageData(imgDataS, 0, 0);
       }
     }
@@ -4332,16 +4316,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const ctxEnd = seamEndCanvas.getContext('2d');
       ctxEnd.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, inspectW, inspectH);
       if (chkTransparentFormat.checked && state.keyColors.length > 0) {
-        const imgDataE = ctxEnd.getImageData(0, 0, inspectW, inspectH);
-        applyChromaKey(imgDataE, {
-          enabled: true,
-          similarity: parseFloat(sliderSimilarity.value),
-          blend: parseFloat(sliderBlend.value),
-          spill: parseFloat(sliderSpill.value),
-          subjectProtection: parseFloat(sliderSubjectProtection.value),
-          cleanupRadius: parseInt(sliderEdgeCleanup.value, 10),
-          keyColors: state.keyColors
-        });
+        let imgDataE = ctxEnd.getImageData(0, 0, inspectW, inspectH);
+        const endKeyResult = runKeyer(imgDataE, buildChromaOptions({ enabled: true }));
+        imgDataE = endKeyResult.imageData;
         ctxEnd.putImageData(imgDataE, 0, 0);
       }
     }
@@ -4398,16 +4375,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const ctx = cvs.getContext('2d');
       ctx.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, w, h);
       if (chkTransparentFormat.checked && state.keyColors.length > 0) {
-        const img = ctx.getImageData(0, 0, w, h);
-        applyChromaKey(img, {
-          enabled: true,
-          similarity: parseFloat(sliderSimilarity.value),
-          blend: parseFloat(sliderBlend.value),
-          spill: parseFloat(sliderSpill.value),
-          subjectProtection: parseFloat(sliderSubjectProtection.value),
-          cleanupRadius: parseInt(sliderEdgeCleanup.value, 10),
-          keyColors: state.keyColors
-        });
+        let img = ctx.getImageData(0, 0, w, h);
+        const imgKeyResult = runKeyer(img, buildChromaOptions({ enabled: true }));
+        img = imgKeyResult.imageData;
         ctx.putImageData(img, 0, 0);
       }
       seamPlayerFrames.push(cvs);
@@ -4470,16 +4440,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const ctx = cvs.getContext('2d');
       ctx.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, w, h);
       if (chkTransparentFormat.checked && state.keyColors.length > 0) {
-        const img = ctx.getImageData(0, 0, w, h);
-        applyChromaKey(img, {
-          enabled: true,
-          similarity: parseFloat(sliderSimilarity.value),
-          blend: parseFloat(sliderBlend.value),
-          spill: parseFloat(sliderSpill.value),
-          subjectProtection: parseFloat(sliderSubjectProtection.value),
-          cleanupRadius: parseInt(sliderEdgeCleanup.value, 10),
-          keyColors: state.keyColors
-        });
+        let img = ctx.getImageData(0, 0, w, h);
+        const cycleKeyResult = runKeyer(img, buildChromaOptions({ enabled: true }));
+        img = cycleKeyResult.imageData;
         ctx.putImageData(img, 0, 0);
       }
       fullCycleFrames.push(cvs);
