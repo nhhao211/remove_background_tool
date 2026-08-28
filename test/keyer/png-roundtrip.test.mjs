@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { loadPNG, savePNG } from './png.mjs';
 
 test('PNG codec round-trip: fixture pixels survive decode->encode->decode', async () => {
-  const fixture1 = './test/keyer/clip-01/frame-000.png';
+  const fixture1 = './test/keyer/fixtures/clip-01/frame-000.png';
 
   // Load original
   const original = await loadPNG(fixture1);
