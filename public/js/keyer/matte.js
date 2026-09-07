@@ -23,7 +23,7 @@ import { suppressSpill } from './spill.js';
  * Video path. Colour-distance matte, no connectivity.
  *
  * `options.protectionMask` is a FLAT Uint8ClampedArray of one byte per pixel,
- * not an ImageData — `protection-mask.js` unpacks alpha into it before calling.
+ * not an ImageData — `stroke-mask.js` unpacks alpha into it before calling.
  * The length check below is the only guard, so a wrong-shaped mask is ignored
  * rather than throwing.
  *

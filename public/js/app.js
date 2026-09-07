@@ -4,7 +4,8 @@
 
 import { EditorUtils as U } from './editor-utils.js';
 import { runKeyer } from './keyer/index.js';
-import { normalizeProtectionStrokes, rasterizeProtectionMask } from './protection-mask.js';
+import { normalizeStrokes, rasterizeStrokeMask } from './stroke-mask.js';
+import { applyEraseMask } from './erase-mask.js';
 import { applyColorReplacement } from './color-replace.js';
 import { detectSubjectBounds, calculateGuidelineShift, alignFrameCanvas, drawSubImageSafe } from './subject-alignment.js';
 import {
@@ -36,6 +37,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const protectionBrushBanner = document.getElementById('protectionBrushBanner');
   const protectionBrushCanvas = document.getElementById('protectionBrushCanvas');
   const btnCancelProtectionBrush = document.getElementById('btnCancelProtectionBrush');
+  const eraseBrushBanner = document.getElementById('eraseBrushBanner');
+  const eraseBrushBannerText = document.getElementById('eraseBrushBannerText');
+  const eraseBrushCanvas = document.getElementById('eraseBrushCanvas');
+  const btnCancelEraseBrush = document.getElementById('btnCancelEraseBrush');
   const eyedropperLoupe = document.getElementById('eyedropperLoupe');
   const eyedropperCanvas = document.getElementById('eyedropperCanvas');
   const eyedropperColorBadge = document.getElementById('eyedropperColorBadge');
@@ -225,6 +230,27 @@ document.addEventListener('DOMContentLoaded', () => {
   const lblProtectionHardness = document.getElementById('lblProtectionHardness');
   const selectProtectionPreset = document.getElementById('selectProtectionPreset');
   const protectionBrushStatus = document.getElementById('protectionBrushStatus');
+
+  const headerEraseBrush = document.getElementById('headerEraseBrush');
+  const bodyEraseBrush = document.getElementById('bodyEraseBrush');
+  const lblCollapseEraseBrush = document.getElementById('lblCollapseEraseBrush');
+  const iconCollapseEraseBrush = document.getElementById('iconCollapseEraseBrush');
+  const btnEraseBrush = document.getElementById('btnEraseBrush');
+  const btnEraseRestore = document.getElementById('btnEraseRestore');
+  const btnEraseUndo = document.getElementById('btnEraseUndo');
+  const btnEraseRedo = document.getElementById('btnEraseRedo');
+  const btnEraseClear = document.getElementById('btnEraseClear');
+  const chkShowEraseMask = document.getElementById('chkShowEraseMask');
+  const sliderEraseSize = document.getElementById('sliderEraseSize');
+  const numEraseSize = document.getElementById('numEraseSize');
+  const lblEraseSize = document.getElementById('lblEraseSize');
+  const sliderEraseStrength = document.getElementById('sliderEraseStrength');
+  const numEraseStrength = document.getElementById('numEraseStrength');
+  const lblEraseStrength = document.getElementById('lblEraseStrength');
+  const sliderEraseHardness = document.getElementById('sliderEraseHardness');
+  const numEraseHardness = document.getElementById('numEraseHardness');
+  const lblEraseHardness = document.getElementById('lblEraseHardness');
+  const eraseBrushStatus = document.getElementById('eraseBrushStatus');
   const headerColorReplace = document.getElementById('headerColorReplace');
   const bodyColorReplace = document.getElementById('bodyColorReplace');
   const lblCollapseColorReplace = document.getElementById('lblCollapseColorReplace');
@@ -341,6 +367,8 @@ document.addEventListener('DOMContentLoaded', () => {
       'sliderSimilarity', 'numSimilarity', 'sliderBlend', 'numBlend', 'sliderSpill', 'numSpill', 'sliderSubjectProtection', 'numSubjectProtection', 'sliderEdgeCleanup', 'numEdgeCleanup',
       'headerProtectionBrush', 'btnProtectionBrush', 'btnProtectionEraser', 'btnProtectionUndo', 'btnProtectionRedo', 'btnProtectionClear',
       'chkShowProtectionMask', 'sliderProtectionSize', 'numProtectionSize', 'sliderProtectionStrength', 'numProtectionStrength', 'sliderProtectionHardness', 'numProtectionHardness', 'selectProtectionPreset',
+      'headerEraseBrush', 'btnEraseBrush', 'btnEraseRestore', 'btnEraseUndo', 'btnEraseRedo', 'btnEraseClear',
+      'chkShowEraseMask', 'sliderEraseSize', 'numEraseSize', 'sliderEraseStrength', 'numEraseStrength', 'sliderEraseHardness', 'numEraseHardness',
       'headerColorReplace', 'chkEnableColorReplace', 'inputColorReplaceSource', 'btnPickColorReplaceSource', 'inputColorReplaceTarget',
       'sliderColorReplaceTolerance', 'numColorReplaceTolerance', 'sliderColorReplaceStrength', 'numColorReplaceStrength',
       'chkTransparentFormat', 'selectFormat',
@@ -367,8 +395,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   window.addEventListener('workspacechange', (event) => {
-    if (event.detail?.workspace !== 'video') deactivateProtectionBrush();
-    else requestAnimationFrame(updateProtectionOverlay);
+    if (event.detail?.workspace !== 'video') {
+      deactivateProtectionBrush();
+      deactivateEraseBrush();
+    } else {
+      requestAnimationFrame(() => {
+        updateProtectionOverlay();
+        updateEraseOverlay();
+      });
+    }
   });
 
   // === STATE ===
@@ -402,6 +437,19 @@ document.addEventListener('DOMContentLoaded', () => {
     protectionRedoActions: [],
     protectionPointerId: null,
     activeProtectionStroke: null,
+    eraseTool: null, // 'erase' | 'restore' | null
+    eraseStrokes: [],
+    eraseUndoActions: [],
+    eraseRedoActions: [],
+    erasePointerId: null,
+    activeEraseStroke: null,
+    eraseCursor: null, // { x, y } in erase-overlay pixels, for the brush ring
+    // Phase 2 live re-apply: pre-erase copies of the generated frames plus the
+    // sheet geometry needed to recomposite them without seeking the video again.
+    rawFrames: [],
+    sheetLayout: null,
+    eraseLiveAvailable: false,
+    eraseRegenerateHintShown: false,
     previewEyedropperPointer: null,
     previewEyedropperLastMouse: null,
     wasPreviewPlaying: false,
@@ -490,12 +538,17 @@ document.addEventListener('DOMContentLoaded', () => {
       chromaEdgeCleanup: parseInt(sliderEdgeCleanup.value, 10),
       chromaSmoothEnabled: chkChromaSmooth.checked,
       chromaSmoothRadius: parseInt(sliderChromaSmooth.value, 10),
-      protectionStrokes: normalizeProtectionStrokes(state.protectionStrokes),
+      protectionStrokes: normalizeStrokes(state.protectionStrokes),
       protectionBrushSize: parseInt(sliderProtectionSize.value, 10),
       protectionBrushStrength: parseFloat(sliderProtectionStrength.value),
       protectionBrushHardness: parseFloat(sliderProtectionHardness.value),
       protectionPreset: selectProtectionPreset.value,
       showProtectionMask: chkShowProtectionMask.checked,
+      eraseStrokes: normalizeStrokes(state.eraseStrokes),
+      eraseBrushSize: parseInt(sliderEraseSize.value, 10),
+      eraseBrushStrength: parseFloat(sliderEraseStrength.value),
+      eraseBrushHardness: parseFloat(sliderEraseHardness.value),
+      showEraseMask: chkShowEraseMask.checked,
       colorReplaceEnabled: chkEnableColorReplace.checked,
       colorReplaceSource: inputColorReplaceSource.value,
       colorReplaceTarget: inputColorReplaceTarget.value,
@@ -561,6 +614,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // === COLLAPSIBLE SECTIONS ===
   const STORAGE_KEY_PROTECTION_COLLAPSE = 'video-editor:collapsed:protection-brush';
+  const STORAGE_KEY_ERASE_COLLAPSE = 'video-editor:collapsed:erase-brush';
   const STORAGE_KEY_COLOR_REPLACE_COLLAPSE = 'video-editor:collapsed:color-replace';
   const STORAGE_KEY_GUIDELINE_COLLAPSE = 'video-editor:collapsed:subject-alignment';
   const STORAGE_KEY_LOOP_COLLAPSE = 'video-editor:collapsed:loop-settings';
@@ -649,6 +703,15 @@ document.addEventListener('DOMContentLoaded', () => {
     labelEl: lblCollapseProtectionBrush,
     iconEl: iconCollapseProtectionBrush,
     storageKey: STORAGE_KEY_PROTECTION_COLLAPSE,
+    defaultExpanded: false
+  });
+
+  const eraseBrushSection = setupCollapsibleSection({
+    headerEl: headerEraseBrush,
+    bodyEl: bodyEraseBrush,
+    labelEl: lblCollapseEraseBrush,
+    iconEl: iconCollapseEraseBrush,
+    storageKey: STORAGE_KEY_ERASE_COLLAPSE,
     defaultExpanded: false
   });
 
@@ -770,8 +833,15 @@ document.addEventListener('DOMContentLoaded', () => {
     state.protectionStrokes = [];
     state.protectionUndoActions = [];
     state.protectionRedoActions = [];
+    deactivateEraseBrush();
+    state.eraseStrokes = [];
+    state.eraseUndoActions = [];
+    state.eraseRedoActions = [];
+    markEraseStrokesChanged();
+    discardLiveEraseCache();
     updateWatermarkOverlay();
     updateProtectionOverlay();
+    updateEraseOverlay();
     updatePreviewViewport();
     resetVideoViewportAspect();
     state.currentVideoFile = (source instanceof File) ? source : null;
@@ -827,6 +897,7 @@ document.addEventListener('DOMContentLoaded', () => {
       updateCropOverlay();
       updateWatermarkOverlay();
       updateProtectionOverlay();
+      updateEraseOverlay();
     });
   }
 
@@ -915,7 +986,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isVideoWorkspaceActive()) return;
     // Ignore when typing inside input or textarea
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
-    if (state.protectionTool) return;
+    // While a brush is armed the video transport shortcuts would fight the
+    // painting session, but `[` / `]` still resize the active brush.
+    if (state.protectionTool || state.eraseTool) {
+      if (e.key === '[' || e.key === ']') {
+        e.preventDefault();
+        nudgeActiveBrushSize(e.key === ']' ? 1 : -1, e.shiftKey);
+      }
+      return;
+    }
 
     if (state.isEyedropperActive) {
       const step = e.shiftKey ? 10 : (e.altKey ? 5 : 1);
@@ -980,7 +1059,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     state.watermarkRect = normalizeWatermarkRect(saved?.watermarkRect);
     state.isWatermarkOverlayHidden = false;
-    state.protectionStrokes = normalizeProtectionStrokes(saved?.protectionStrokes);
+    state.protectionStrokes = normalizeStrokes(saved?.protectionStrokes);
     state.protectionUndoActions = [];
     state.protectionRedoActions = [];
     sliderProtectionSize.value = String(Math.round(U.clampNumber(saved?.protectionBrushSize, 5, 500, 80)));
@@ -988,6 +1067,14 @@ document.addEventListener('DOMContentLoaded', () => {
     sliderProtectionHardness.value = String(U.clampNumber(saved?.protectionBrushHardness, 0, 1, 0.55));
     selectProtectionPreset.value = saved?.protectionPreset === 'solid' ? 'solid' : 'translucent';
     chkShowProtectionMask.checked = saved?.showProtectionMask !== false;
+    state.eraseStrokes = normalizeStrokes(saved?.eraseStrokes);
+    state.eraseUndoActions = [];
+    state.eraseRedoActions = [];
+    markEraseStrokesChanged();
+    sliderEraseSize.value = String(Math.round(U.clampNumber(saved?.eraseBrushSize, 5, 500, 80)));
+    sliderEraseStrength.value = String(U.clampNumber(saved?.eraseBrushStrength, 0, 1, 1));
+    sliderEraseHardness.value = String(U.clampNumber(saved?.eraseBrushHardness, 0, 1, 0.80));
+    chkShowEraseMask.checked = saved?.showEraseMask !== false;
     chkEnableColorReplace.checked = Boolean(saved?.colorReplaceEnabled);
     inputColorReplaceSource.value = U.normalizeColor(saved?.colorReplaceSource)?.hex || '#c82828';
     inputColorReplaceTarget.value = U.normalizeColor(saved?.colorReplaceTarget)?.hex || '#1e64dc';
@@ -1020,6 +1107,8 @@ document.addEventListener('DOMContentLoaded', () => {
     updateWatermarkOverlay();
     updateProtectionBrushUI();
     updateProtectionOverlay();
+    updateEraseBrushUI();
+    updateEraseOverlay();
     updateColorReplaceUI();
     updateCellSizeUI();
 
@@ -1050,6 +1139,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (state.protectionStrokes.length > 0) {
       protectionBrushSection.expand();
+    }
+    if (state.eraseStrokes.length > 0) {
+      eraseBrushSection.expand();
     }
     if (chkEnableColorReplace.checked) {
       colorReplaceSection.expand();
@@ -1922,6 +2014,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (state.isEyedropperActive) deactivateEyedropper();
     if (state.protectionTool) deactivateProtectionBrush();
+    if (state.eraseTool) deactivateEraseBrush();
     state.isWatermarkSelectActive = true;
     state.isWatermarkOverlayHidden = false;
     state.watermarkPointer = null;
@@ -2048,6 +2141,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateWatermarkOverlay();
     updateGuidelineOverlay();
     updateProtectionOverlay();
+    updateEraseOverlay();
   });
 
   // === SUBJECT ALIGNMENT / VERTICAL & HORIZONTAL GUIDELINES ===
@@ -2536,7 +2630,7 @@ document.addEventListener('DOMContentLoaded', () => {
     protectionBrushCanvas.style.top = `${box.parentTop}px`;
     protectionBrushCanvas.style.width = `${box.width}px`;
     protectionBrushCanvas.style.height = `${box.height}px`;
-    rasterizeProtectionMask(state.protectionStrokes, {
+    rasterizeStrokeMask(state.protectionStrokes, {
       canvas: protectionBrushCanvas,
       sourceWidth: state.videoWidth,
       sourceHeight: state.videoHeight,
@@ -2586,6 +2680,7 @@ document.addEventListener('DOMContentLoaded', () => {
     protectionBrushSection.expand();
     if (state.isEyedropperActive) deactivateEyedropper();
     if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
+    if (state.eraseTool) deactivateEraseBrush();
     state.protectionTool = mode === 'erase' ? 'erase' : 'protect';
     video.pause();
     updateVideoPlayPauseBtn();
@@ -2700,6 +2795,450 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   updateProtectionBrushUI();
 
+  // === ERASE BRUSH (BÚT XÓA) ===
+  //
+  // The mirror image of the Subject Protect Brush: strokes are painted in
+  // normalized source-video coordinates and rasterized into a mask that drives
+  // alpha to zero instead of holding it up.
+  //
+  // Two deliberate differences from the protection mask:
+  //
+  //  1. It is applied AFTER runKeyer rather than inside it (see applyEraseMask).
+  //     Erasing is compositing, not matting, so it needs no keyer option and it
+  //     works with `Transparent WebP/PNG` switched off — a user removing a logo
+  //     from an otherwise untouched frame still gets the hole.
+  //
+  //  2. It is not gated on chkTransparentFormat for the same reason.
+  //
+  // Painting in source coordinates matters when Subject Alignment is on: the
+  // mask is applied to the full-resolution frame *before* bounds detection, so
+  // the erased region stays welded to the video content and the alignment sees
+  // the frame without the removed junk.
+
+  // Keeping pre-erase copies of every frame doubles the frame memory, so the
+  // cache is only built for sheets below this many total pixels. Above it the
+  // user falls back to pressing Generate, which costs time but not RAM.
+  const LIVE_ERASE_PIXEL_BUDGET = 120e6;
+
+  function activeBrushSliders() {
+    if (state.eraseTool) return { slider: sliderEraseSize, number: numEraseSize, update: updateEraseBrushUI };
+    if (state.protectionTool) return { slider: sliderProtectionSize, number: numProtectionSize, update: updateProtectionBrushUI };
+    return null;
+  }
+
+  function nudgeActiveBrushSize(direction, coarse = false) {
+    const target = activeBrushSliders();
+    if (!target) return;
+    const step = coarse ? 25 : 5;
+    const min = parseFloat(target.slider.min) || 5;
+    const max = parseFloat(target.slider.max) || 500;
+    const next = Math.max(min, Math.min(max, Math.round(Number(target.slider.value) || min) + (direction * step)));
+    target.slider.value = String(next);
+    if (document.activeElement !== target.number) target.number.value = String(next);
+    target.update();
+    saveClipStateDebounced();
+    if (state.eraseTool) updateEraseOverlay();
+    showToast(`Brush size: ${next} px`, 'info');
+  }
+
+  function updateEraseBrushUI() {
+    const strokeCount = state.eraseStrokes.length;
+    const size = Math.round(Number(sliderEraseSize.value) || 80);
+    const strength = U.clampNumber(sliderEraseStrength.value, 0, 1, 1);
+    const hardness = U.clampNumber(sliderEraseHardness.value, 0, 1, 0.80);
+
+    if (numEraseSize && document.activeElement !== numEraseSize) numEraseSize.value = String(size);
+    if (numEraseStrength && document.activeElement !== numEraseStrength) numEraseStrength.value = strength.toFixed(2);
+    if (numEraseHardness && document.activeElement !== numEraseHardness) numEraseHardness.value = hardness.toFixed(2);
+
+    lblEraseSize.textContent = `${size} px`;
+    lblEraseStrength.textContent = `${Math.round(strength * 100)}%`;
+    lblEraseHardness.textContent = `${Math.round(hardness * 100)}%`;
+    eraseBrushStatus.textContent = strokeCount > 0
+      ? `${strokeCount} erase stroke${strokeCount > 1 ? 's' : ''}`
+      : 'No erased areas';
+    btnEraseUndo.disabled = state.eraseUndoActions.length === 0;
+    btnEraseRedo.disabled = state.eraseRedoActions.length === 0;
+    btnEraseClear.disabled = strokeCount === 0;
+    btnEraseBrush.classList.toggle('active', state.eraseTool === 'erase');
+    btnEraseRestore.classList.toggle('active', state.eraseTool === 'restore');
+  }
+
+  syncSliderAndNumber(sliderEraseSize, numEraseSize, { decimals: 0, onChange: () => { updateEraseBrushUI(); updateEraseOverlay(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderEraseStrength, numEraseStrength, { decimals: 2, onChange: () => { updateEraseBrushUI(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderEraseHardness, numEraseHardness, { decimals: 2, onChange: () => { updateEraseBrushUI(); saveClipStateDebounced(); } });
+
+  // The mask preview is cached on its own canvas and blitted, because the brush
+  // ring has to follow the pointer while merely hovering. Rasterizing the mask
+  // on every hover event would mean a full-overlay getImageData per mousemove —
+  // several megabytes of readback for a circle that moved four pixels.
+  let eraseMaskRevision = 0;
+  let eraseOverlayCache = null;
+  let eraseOverlayFrame = 0;
+
+  function markEraseStrokesChanged() {
+    eraseMaskRevision += 1;
+  }
+
+  function scheduleEraseOverlay() {
+    if (eraseOverlayFrame) return;
+    eraseOverlayFrame = requestAnimationFrame(() => {
+      eraseOverlayFrame = 0;
+      updateEraseOverlay();
+    });
+  }
+
+  function updateEraseOverlay() {
+    if (!eraseBrushCanvas) return;
+    const shouldShow = state.videoLoaded
+      && !state.isEyedropperActive
+      && (Boolean(state.eraseTool) || (chkShowEraseMask.checked && state.eraseStrokes.length > 0));
+    if (!shouldShow) {
+      eraseBrushCanvas.classList.remove('visible');
+      return;
+    }
+    const box = getVideoRenderBox();
+    if (!box || box.width < 1 || box.height < 1) {
+      eraseBrushCanvas.classList.remove('visible');
+      return;
+    }
+
+    eraseBrushCanvas.style.left = `${box.parentLeft}px`;
+    eraseBrushCanvas.style.top = `${box.parentTop}px`;
+    eraseBrushCanvas.style.width = `${box.width}px`;
+    eraseBrushCanvas.style.height = `${box.height}px`;
+    const targetWidth = Math.max(1, Math.round(box.width));
+    const targetHeight = Math.max(1, Math.round(box.height));
+
+    const cacheStale = !eraseOverlayCache
+      || eraseOverlayCache.width !== targetWidth
+      || eraseOverlayCache.height !== targetHeight
+      || eraseOverlayCache.revision !== eraseMaskRevision;
+    if (cacheStale) {
+      const cacheCanvas = eraseOverlayCache?.canvas || document.createElement('canvas');
+      rasterizeStrokeMask(state.eraseStrokes, {
+        canvas: cacheCanvas,
+        sourceWidth: state.videoWidth,
+        sourceHeight: state.videoHeight,
+        cropX: 0,
+        cropY: 0,
+        cropWidth: state.videoWidth,
+        cropHeight: state.videoHeight,
+        targetWidth,
+        targetHeight,
+        color: 'rgba(248,113,113,{alpha})'
+      });
+      eraseOverlayCache = { canvas: cacheCanvas, width: targetWidth, height: targetHeight, revision: eraseMaskRevision };
+    }
+
+    if (eraseBrushCanvas.width !== targetWidth) eraseBrushCanvas.width = targetWidth;
+    if (eraseBrushCanvas.height !== targetHeight) eraseBrushCanvas.height = targetHeight;
+    const ctx = eraseBrushCanvas.getContext('2d');
+    ctx.clearRect(0, 0, targetWidth, targetHeight);
+    ctx.drawImage(eraseOverlayCache.canvas, 0, 0);
+    drawEraseBrushCursor(ctx, targetWidth, targetHeight);
+    eraseBrushCanvas.classList.add('visible');
+  }
+
+  /**
+   * Brush-size ring drawn on top of the mask preview. Without it the Size
+   * slider is guesswork — the mask only reveals the radius after the stroke is
+   * already committed.
+   */
+  function drawEraseBrushCursor(ctx, targetWidth, targetHeight) {
+    if (!state.eraseTool || !state.eraseCursor) return;
+    const sizeScale = ((targetWidth / state.videoWidth) + (targetHeight / state.videoHeight)) / 2;
+    const radius = Math.max(1, (U.clampNumber(sliderEraseSize.value, 5, 500, 80) * sizeScale) / 2);
+    const x = state.eraseCursor.x * targetWidth;
+    const y = state.eraseCursor.y * targetHeight;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = state.eraseTool === 'restore' ? 'rgba(134, 239, 172, 0.95)' : 'rgba(255, 255, 255, 0.95)';
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.8)';
+    ctx.beginPath();
+    ctx.arc(x, y, radius + 1.25, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function normalizedErasePoint(clientX, clientY, clampToVideo = false) {
+    const box = getVideoRenderBox();
+    if (!box) return null;
+    const isInside = clientX >= box.screenLeft && clientX <= box.screenLeft + box.width
+      && clientY >= box.screenTop && clientY <= box.screenTop + box.height;
+    if (!isInside && !clampToVideo) return null;
+    return {
+      x: Math.max(0, Math.min(1, (clientX - box.screenLeft) / box.width)),
+      y: Math.max(0, Math.min(1, (clientY - box.screenTop) / box.height))
+    };
+  }
+
+  function finishEraseStroke(event) {
+    const stroke = state.activeEraseStroke;
+    if (!stroke) return;
+    if (event?.pointerId != null && event.pointerId !== state.erasePointerId) return;
+    try { eraseBrushCanvas.releasePointerCapture?.(state.erasePointerId); } catch (_) { /* optional */ }
+    state.activeEraseStroke = null;
+    state.erasePointerId = null;
+    state.eraseUndoActions.push({ type: 'stroke', stroke });
+    state.eraseUndoActions = state.eraseUndoActions.slice(-100);
+    state.eraseRedoActions = [];
+    updateEraseBrushUI();
+    updateEraseOverlay();
+    if (!reapplyEraseMaskLive() && state.generatedFrames.length > 0 && !state.eraseRegenerateHintShown) {
+      state.eraseRegenerateHintShown = true;
+      showToast('Nhấn Generate để áp Bút Xóa vào sprite sheet', 'info');
+    }
+    saveClipStateDebounced();
+  }
+
+  function activateEraseBrush(mode) {
+    if (!state.videoLoaded) {
+      showToast('Vui lòng tải video trước khi dùng Bút Xóa', 'error');
+      return;
+    }
+    eraseBrushSection.expand();
+    if (state.isEyedropperActive) deactivateEyedropper();
+    if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
+    if (state.protectionTool) deactivateProtectionBrush();
+    state.eraseTool = mode === 'restore' ? 'restore' : 'erase';
+    state.eraseCursor = null;
+    video.pause();
+    updateVideoPlayPauseBtn();
+    eraseBrushBanner.classList.add('active');
+    eraseBrushCanvas.classList.add('active');
+    videoViewport.classList.add('erase-painting');
+    if (eraseBrushBannerText) {
+      eraseBrushBannerText.textContent = state.eraseTool === 'restore'
+        ? 'Bôi để khôi phục vùng đã xóa · Giữ Alt để tạm chuyển sang Erase · [ ] đổi size · Esc để thoát'
+        : 'Bôi lên vùng cần xóa · Mask áp dụng cho mọi frame · Giữ Alt để Restore · [ ] đổi size · Esc để thoát';
+    }
+    updateEraseBrushUI();
+    updateEraseOverlay();
+    lucide.createIcons({ root: eraseBrushBanner });
+    showToast(state.eraseTool === 'restore'
+      ? 'Khôi phục vùng đã bôi xóa trên Source video'
+      : 'Bôi vùng nền hoặc chi tiết thừa cần xóa. Mask áp dụng cho mọi frame.', 'info');
+  }
+
+  function deactivateEraseBrush() {
+    if (state.activeEraseStroke) finishEraseStroke();
+    state.eraseTool = null;
+    state.eraseCursor = null;
+    eraseBrushBanner?.classList.remove('active');
+    eraseBrushCanvas?.classList.remove('active');
+    videoViewport?.classList.remove('erase-painting');
+    updateEraseBrushUI();
+    updateEraseOverlay();
+  }
+
+  btnEraseBrush.addEventListener('click', () => {
+    if (state.eraseTool === 'erase') deactivateEraseBrush();
+    else activateEraseBrush('erase');
+  });
+  btnEraseRestore.addEventListener('click', () => {
+    if (state.eraseTool === 'restore') deactivateEraseBrush();
+    else activateEraseBrush('restore');
+  });
+  btnCancelEraseBrush.addEventListener('click', deactivateEraseBrush);
+
+  eraseBrushCanvas.addEventListener('pointerdown', (event) => {
+    if (!state.eraseTool || !state.videoLoaded || event.button !== 0) return;
+    const point = normalizedErasePoint(event.clientX, event.clientY, false);
+    if (!point) return;
+    event.preventDefault();
+    // Alt inverts the tool for the duration of the stroke, the way every other
+    // paint app does it, so touching up an over-erased edge needs no round trip
+    // through the toolbar.
+    const painting = event.altKey ? (state.eraseTool === 'restore') : (state.eraseTool === 'erase');
+    const stroke = {
+      mode: painting ? 'add' : 'subtract',
+      points: [point],
+      size: Math.round(U.clampNumber(sliderEraseSize.value, 5, 500, 80)),
+      // Restore has to fully undo what Erase laid down, otherwise a 60%-strength
+      // rub leaves a permanent ghost that no amount of scrubbing removes.
+      strength: painting ? U.clampNumber(sliderEraseStrength.value, 0, 1, 1) : 1,
+      hardness: U.clampNumber(sliderEraseHardness.value, 0, 1, 0.80)
+    };
+    state.activeEraseStroke = stroke;
+    state.erasePointerId = event.pointerId;
+    state.eraseCursor = point;
+    state.eraseStrokes.push(stroke);
+    markEraseStrokesChanged();
+    eraseBrushCanvas.setPointerCapture?.(event.pointerId);
+    updateEraseOverlay();
+  });
+
+  eraseBrushCanvas.addEventListener('pointermove', (event) => {
+    if (!state.eraseTool) return;
+    const stroke = state.activeEraseStroke;
+    if (!stroke) {
+      const hover = normalizedErasePoint(event.clientX, event.clientY, false);
+      if (!hover) {
+        if (state.eraseCursor) {
+          state.eraseCursor = null;
+          updateEraseOverlay();
+        }
+        return;
+      }
+      state.eraseCursor = hover;
+      scheduleEraseOverlay();
+      return;
+    }
+    if (event.pointerId !== state.erasePointerId) return;
+    const point = normalizedErasePoint(event.clientX, event.clientY, true);
+    if (!point) return;
+    state.eraseCursor = point;
+    const previous = stroke.points[stroke.points.length - 1];
+    const nativeDistance = Math.hypot(
+      (point.x - previous.x) * state.videoWidth,
+      (point.y - previous.y) * state.videoHeight
+    );
+    if (nativeDistance < Math.max(1, stroke.size * 0.035)) return;
+    stroke.points.push(point);
+    markEraseStrokesChanged();
+    scheduleEraseOverlay();
+  });
+
+  eraseBrushCanvas.addEventListener('pointerleave', () => {
+    if (state.activeEraseStroke || !state.eraseCursor) return;
+    state.eraseCursor = null;
+    updateEraseOverlay();
+  });
+
+  eraseBrushCanvas.addEventListener('pointerup', finishEraseStroke);
+  eraseBrushCanvas.addEventListener('pointercancel', finishEraseStroke);
+
+  btnEraseUndo.addEventListener('click', () => {
+    const action = state.eraseUndoActions.pop();
+    if (!action) return;
+    if (action.type === 'stroke') state.eraseStrokes.pop();
+    else if (action.type === 'clear') state.eraseStrokes = action.strokes.slice();
+    markEraseStrokesChanged();
+    state.eraseRedoActions.push(action);
+    updateEraseBrushUI();
+    updateEraseOverlay();
+    reapplyEraseMaskLive();
+    saveClipStateDebounced();
+  });
+
+  btnEraseRedo.addEventListener('click', () => {
+    const action = state.eraseRedoActions.pop();
+    if (!action) return;
+    if (action.type === 'stroke') state.eraseStrokes.push(action.stroke);
+    else if (action.type === 'clear') state.eraseStrokes = [];
+    markEraseStrokesChanged();
+    state.eraseUndoActions.push(action);
+    updateEraseBrushUI();
+    updateEraseOverlay();
+    reapplyEraseMaskLive();
+    saveClipStateDebounced();
+  });
+
+  btnEraseClear.addEventListener('click', () => {
+    if (state.eraseStrokes.length === 0) return;
+    state.eraseUndoActions.push({ type: 'clear', strokes: state.eraseStrokes.slice() });
+    state.eraseUndoActions = state.eraseUndoActions.slice(-100);
+    state.eraseRedoActions = [];
+    state.eraseStrokes = [];
+    markEraseStrokesChanged();
+    updateEraseBrushUI();
+    updateEraseOverlay();
+    reapplyEraseMaskLive();
+    saveClipStateDebounced();
+    showToast('Đã xóa toàn bộ nét Bút Xóa. Có thể Undo để khôi phục.', 'info');
+  });
+
+  chkShowEraseMask.addEventListener('change', () => {
+    updateEraseOverlay();
+    saveClipStateDebounced();
+  });
+  updateEraseBrushUI();
+
+  function applyEraseMaskToCanvas(canvas, mask) {
+    if (!canvas || !mask) return;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if (!applyEraseMask(imgData, mask)) return;
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  function cloneFrameCanvas(source) {
+    const copy = document.createElement('canvas');
+    copy.width = source.width;
+    copy.height = source.height;
+    copy.getContext('2d').drawImage(source, 0, 0);
+    return copy;
+  }
+
+  function buildEraseMaskFor({ cropX, cropY, cropWidth, cropHeight, targetWidth, targetHeight }) {
+    if (state.eraseStrokes.length === 0) return null;
+    return rasterizeStrokeMask(state.eraseStrokes, {
+      sourceWidth: state.videoWidth,
+      sourceHeight: state.videoHeight,
+      cropX,
+      cropY,
+      cropWidth,
+      cropHeight,
+      targetWidth,
+      targetHeight
+    }).mask;
+  }
+
+  function discardLiveEraseCache() {
+    state.rawFrames = [];
+    state.sheetLayout = null;
+    state.eraseLiveAvailable = false;
+  }
+
+  /**
+   * Re-composites the already-generated frames against the current erase mask,
+   * so a stroke shows up in the preview without seeking the video again.
+   *
+   * Only possible when Subject Alignment is off: with a guideline active the
+   * erase mask is applied to the full-resolution frame *before* subject bounds
+   * are measured, so changing it changes where every frame is placed, and only
+   * a full Generate can answer that correctly.
+   *
+   * @returns {boolean} whether the preview was refreshed
+   */
+  function reapplyEraseMaskLive() {
+    if (!state.eraseLiveAvailable || state.rawFrames.length === 0 || !state.sheetLayout) return false;
+    if (state.rawFrames.length !== state.generatedFrames.length) return false;
+    const layout = state.sheetLayout;
+    const mask = buildEraseMaskFor({
+      cropX: layout.cropX,
+      cropY: layout.cropY,
+      cropWidth: layout.cropWidth,
+      cropHeight: layout.cropHeight,
+      targetWidth: layout.cellW,
+      targetHeight: layout.cellH
+    });
+
+    const sheetCtx = state.fullSheetCanvas?.getContext('2d');
+    if (sheetCtx) sheetCtx.clearRect(0, 0, state.fullSheetCanvas.width, state.fullSheetCanvas.height);
+
+    for (let index = 0; index < state.rawFrames.length; index += 1) {
+      const frame = state.generatedFrames[index];
+      const ctx = frame.getContext('2d', { willReadFrequently: true });
+      ctx.clearRect(0, 0, frame.width, frame.height);
+      ctx.drawImage(state.rawFrames[index], 0, 0);
+      if (mask) applyEraseMaskToCanvas(frame, mask);
+      if (sheetCtx) {
+        const colIndex = index % layout.cellsAcross;
+        const rowIndex = Math.floor(index / layout.cellsAcross);
+        sheetCtx.drawImage(frame, colIndex * layout.cellW, rowIndex * layout.cellH);
+      }
+    }
+    updatePreviewViewport();
+    return true;
+  }
+
   // === SUBJECT COLOR REPLACEMENT ===
   function updateColorReplaceUI() {
     const source = U.normalizeColor(inputColorReplaceSource.value)?.hex || '#c82828';
@@ -2795,6 +3334,8 @@ document.addEventListener('DOMContentLoaded', () => {
       deactivateWatermarkSelect();
     } else if (e.key === 'Escape' && state.protectionTool) {
       deactivateProtectionBrush();
+    } else if (e.key === 'Escape' && state.eraseTool) {
+      deactivateEraseBrush();
     }
   });
 
@@ -2838,6 +3379,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function activateEyedropper(purpose = 'key') {
     if (state.isEyedropperActive) deactivateEyedropper();
     if (state.protectionTool) deactivateProtectionBrush();
+    if (state.eraseTool) deactivateEraseBrush();
     if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
     state.eyedropperPurpose = purpose === 'recolor' ? 'recolor' : 'key';
     state.isEyedropperActive = true;
@@ -2862,6 +3404,7 @@ document.addEventListener('DOMContentLoaded', () => {
     eyedropperOverlay.classList.add('active');
     videoViewport.classList.add('eyedropper-zooming');
     updateProtectionOverlay();
+    updateEraseOverlay();
 
     if (previewEyedropperBanner) previewEyedropperBanner.classList.add('active');
     if (previewEyedropperOverlay) previewEyedropperOverlay.classList.add('active');
@@ -2911,6 +3454,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     resetEyedropperZoom();
     updateProtectionOverlay();
+    updateEraseOverlay();
     lucide.createIcons({ root: btnPickColor });
     lucide.createIcons({ root: btnPickColorReplaceSource });
   }
@@ -3686,7 +4230,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const isGuidelineActive = state.guidelineEnabled || state.guidelineYEnabled;
 
     const protectionMaskStandard = chkTransparentFormat.checked && state.protectionStrokes.length > 0
-      ? rasterizeProtectionMask(state.protectionStrokes, {
+      ? rasterizeStrokeMask(state.protectionStrokes, {
         sourceWidth: state.videoWidth,
         sourceHeight: state.videoHeight,
         cropX: cLeft,
@@ -3699,7 +4243,7 @@ document.addEventListener('DOMContentLoaded', () => {
       : null;
 
     const protectionMaskFull = chkTransparentFormat.checked && state.protectionStrokes.length > 0
-      ? rasterizeProtectionMask(state.protectionStrokes, {
+      ? rasterizeStrokeMask(state.protectionStrokes, {
         sourceWidth: state.videoWidth,
         sourceHeight: state.videoHeight,
         cropX: 0,
@@ -3711,6 +4255,35 @@ document.addEventListener('DOMContentLoaded', () => {
       }).mask
       : null;
 
+    // The erase mask is NOT gated on chkTransparentFormat: erasing is an
+    // explicit instruction to remove pixels, not a keying refinement, so it must
+    // work on an otherwise-opaque export too.
+    //
+    // With alignment on, the mask is applied at full video resolution before
+    // detectSubjectBounds runs — erasing a stray blob should also stop that blob
+    // from dragging the alignment. With alignment off there is no bounds pass,
+    // so the mask is applied once per frame after the loop (see below), which is
+    // what makes live re-apply possible.
+    const eraseMaskStandard = buildEraseMaskFor({
+      cropX: cLeft,
+      cropY: cTop,
+      cropWidth: cropW,
+      cropHeight: cropH,
+      targetWidth: cellW,
+      targetHeight: cellH
+    });
+
+    const eraseMaskFull = isGuidelineActive
+      ? buildEraseMaskFor({
+        cropX: 0,
+        cropY: 0,
+        cropWidth: fullW,
+        cropHeight: fullH,
+        targetWidth: fullW,
+        targetHeight: fullH
+      })
+      : null;
+
     const colorReplaceOptions = {
       enabled: chkEnableColorReplace.checked,
       sourceColor: U.normalizeColor(inputColorReplaceSource.value),
@@ -3720,6 +4293,10 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     state.generatedFrames = [];
+    // Drop the previous run's pre-erase copies immediately: if this generation
+    // throws halfway, a stale cache must not repaint a preview it no longer
+    // matches.
+    discardLiveEraseCache();
     const startTime = state.trimStart;
     const endTime = state.trimEnd;
     const timestamps = computeLoopTimestamps(startTime, endTime, totalFrames, chkClosedLoop.checked);
@@ -3744,6 +4321,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fullKeyResult = runKeyer(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }));
         fullImgData = fullKeyResult.imageData;
         applyColorReplacement(fullImgData, colorReplaceOptions);
+        applyEraseMask(fullImgData, eraseMaskFull);
         clearWatermarkFromImageData(
           fullImgData,
           { x: 0, y: 0, width: fullW, height: fullH },
@@ -3833,6 +4411,38 @@ document.addEventListener('DOMContentLoaded', () => {
         const destX = colIndex * cellW;
         const destY = rowIndex * cellH;
         sheetCtx.drawImage(state.generatedFrames[i], destX, destY);
+      }
+    }
+
+    // Erase, for the non-aligned path, runs here rather than inside the frame
+    // loop. The mask only scales alpha by a per-pixel constant, so applying it
+    // after the crossfade is equivalent to applying it before — and doing it
+    // here lets us keep pre-erase copies, which is what makes a later stroke
+    // repaint the preview instantly instead of re-seeking the whole clip.
+    discardLiveEraseCache();
+    state.eraseRegenerateHintShown = false;
+    if (!isGuidelineActive) {
+      state.sheetLayout = {
+        cellW,
+        cellH,
+        cellsAcross,
+        cropX: cLeft,
+        cropY: cTop,
+        cropWidth: cropW,
+        cropHeight: cropH
+      };
+      if ((totalFrames * cellW * cellH) <= LIVE_ERASE_PIXEL_BUDGET) {
+        state.rawFrames = state.generatedFrames.map(cloneFrameCanvas);
+        state.eraseLiveAvailable = true;
+      }
+      if (eraseMaskStandard) {
+        for (const frame of state.generatedFrames) applyEraseMaskToCanvas(frame, eraseMaskStandard);
+        sheetCtx.clearRect(0, 0, sheetW, sheetH);
+        for (let i = 0; i < totalFrames; i++) {
+          const colIndex = i % cellsAcross;
+          const rowIndex = Math.floor(i / cellsAcross);
+          sheetCtx.drawImage(state.generatedFrames[i], colIndex * cellW, rowIndex * cellH);
+        }
       }
     }
 

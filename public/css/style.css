@@ -1121,6 +1121,10 @@ body {
   cursor: crosshair;
 }
 
+.video-viewport.erase-painting {
+  cursor: crosshair;
+}
+
 .sprite-viewport.eyedropper-zooming {
   cursor: crosshair;
 }
@@ -1507,6 +1511,53 @@ body {
 }
 
 .protection-brush-canvas.active {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.erase-brush-banner {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  min-height: 34px;
+  padding: 6px 10px;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(248, 113, 113, 0.58);
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.94);
+  color: #fee2e2;
+  font-size: 0.78rem;
+  z-index: 66;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.erase-brush-banner.active {
+  display: flex;
+}
+
+.erase-brush-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.erase-brush-canvas {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 56;
+  touch-action: none;
+}
+
+.erase-brush-canvas.visible {
+  display: block;
+}
+
+.erase-brush-canvas.active {
   pointer-events: auto;
   cursor: crosshair;
 }
@@ -2510,6 +2561,75 @@ body {
   line-height: 1.45;
 }
 
+.erase-brush-group {
+  grid-column: 1 / -1;
+}
+
+.erase-brush-toolbar,
+.erase-brush-controls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.erase-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.erase-tool-btn.active {
+  color: #fee2e2;
+  border-color: #ef4444;
+  background: rgba(185, 28, 28, 0.35);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.2);
+}
+
+.erase-mask-toggle {
+  height: 28px;
+  margin-left: auto;
+  padding: 0 5px;
+}
+
+.erase-brush-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(145px, 1fr));
+}
+
+.erase-brush-controls > label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.erase-brush-controls > label > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.erase-brush-controls strong {
+  color: #fca5a5;
+  font-variant-numeric: tabular-nums;
+}
+
+.erase-brush-help {
+  margin: 0;
+  color: #7c8aa0;
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.erase-brush-help em {
+  color: #94a3b8;
+  font-style: normal;
+  font-weight: 600;
+}
+
 .color-replace-toolbar,
 .color-replace-controls {
   display: flex;
@@ -2586,16 +2706,19 @@ body {
 }
 
 @media (max-width: 980px) {
-  .protection-brush-controls {
+  .protection-brush-controls,
+  .erase-brush-controls {
     grid-template-columns: repeat(2, minmax(145px, 1fr));
   }
 }
 
 @media (max-width: 560px) {
-  .protection-brush-controls {
+  .protection-brush-controls,
+  .erase-brush-controls {
     grid-template-columns: 1fr;
   }
-  .protection-mask-toggle {
+  .protection-mask-toggle,
+  .erase-mask-toggle {
     margin-left: 0;
   }
   .color-replace-controls {

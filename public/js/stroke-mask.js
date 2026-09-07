@@ -1,16 +1,39 @@
+/**
+ * Freehand stroke rasterizer shared by every painted mask in the app.
+ *
+ * A "mask" here is one byte per pixel, 0..255, produced by stamping a soft
+ * radial brush along each stroke's polyline. What the byte *means* is the
+ * caller's business:
+ *   - Subject Protect Brush reads it as "keep the source alpha here".
+ *   - Erase Brush reads it as "drive the alpha to zero here".
+ *
+ * The two modes are therefore named for what they do to the mask, not for what
+ * the mask does to the image:
+ *   - `add`      paints into the mask (`source-over`)
+ *   - `subtract` rubs the mask back out (`destination-out`)
+ *
+ * Legacy protection strokes persisted in localStorage used `protect`/`erase`
+ * for exactly this pair, so those two names are still accepted on read and
+ * normalized to `add`/`subtract`. Note that `erase` means SUBTRACT — the Erase
+ * Brush's painting mode is `add`, because it adds to the erase mask.
+ */
+
 const clamp01 = (value) => Math.min(1, Math.max(0, Number(value) || 0));
+
+// `erase` is the legacy spelling of `subtract` (Subject Protect Brush's rubber).
+const SUBTRACTIVE_MODES = new Set(['subtract', 'erase']);
 
 function normalizePoint(point) {
   if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;
   return { x: clamp01(point.x), y: clamp01(point.y) };
 }
 
-function normalizeProtectionStroke(stroke) {
+function normalizeStroke(stroke) {
   if (!stroke || !Array.isArray(stroke.points)) return null;
   const points = stroke.points.map(normalizePoint).filter(Boolean).slice(-5000);
   if (points.length === 0) return null;
   return {
-    mode: stroke.mode === 'erase' ? 'erase' : 'protect',
+    mode: SUBTRACTIVE_MODES.has(stroke.mode) ? 'subtract' : 'add',
     points,
     size: Math.max(1, Math.min(2000, Number(stroke.size) || 80)),
     strength: clamp01(stroke.strength ?? 0.8),
@@ -18,9 +41,9 @@ function normalizeProtectionStroke(stroke) {
   };
 }
 
-function normalizeProtectionStrokes(strokes) {
+function normalizeStrokes(strokes) {
   if (!Array.isArray(strokes)) return [];
-  return strokes.map(normalizeProtectionStroke).filter(Boolean).slice(-500);
+  return strokes.map(normalizeStroke).filter(Boolean).slice(-500);
 }
 
 function createBrushStamp(radius, hardness, strength, color, canvasFactory) {
@@ -39,7 +62,14 @@ function createBrushStamp(radius, hardness, strength, color, canvasFactory) {
   return canvas;
 }
 
-function rasterizeProtectionMask(strokes, options = {}) {
+/**
+ * Rasterizes `strokes` (normalized 0..1 source coordinates) into `targetWidth`
+ * x `targetHeight`, mapping through the crop window so a mask painted on the
+ * full video lands correctly inside a cropped sprite cell.
+ *
+ * @returns {{ canvas: HTMLCanvasElement, mask: Uint8ClampedArray }}
+ */
+function rasterizeStrokeMask(strokes, options = {}) {
   const targetWidth = Math.max(1, Math.round(Number(options.targetWidth) || 1));
   const targetHeight = Math.max(1, Math.round(Number(options.targetHeight) || 1));
   const sourceWidth = Math.max(1, Number(options.sourceWidth) || targetWidth);
@@ -55,7 +85,7 @@ function rasterizeProtectionMask(strokes, options = {}) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   ctx.clearRect(0, 0, targetWidth, targetHeight);
 
-  const normalized = normalizeProtectionStrokes(strokes);
+  const normalized = normalizeStrokes(strokes);
   const scaleX = targetWidth / cropWidth;
   const scaleY = targetHeight / cropHeight;
   const sizeScale = (scaleX + scaleY) / 2;
@@ -73,7 +103,7 @@ function rasterizeProtectionMask(strokes, options = {}) {
     const halfW = stamp.width / 2;
     const halfH = stamp.height / 2;
     const spacing = Math.max(0.75, radius * 0.22);
-    ctx.globalCompositeOperation = stroke.mode === 'erase' ? 'destination-out' : 'source-over';
+    ctx.globalCompositeOperation = stroke.mode === 'subtract' ? 'destination-out' : 'source-over';
 
     let previous = mapPoint(stroke.points[0]);
     ctx.drawImage(stamp, previous.x - halfW, previous.y - halfH);
@@ -100,4 +130,4 @@ function rasterizeProtectionMask(strokes, options = {}) {
   return { canvas, mask };
 }
 
-export { normalizeProtectionStroke, normalizeProtectionStrokes, rasterizeProtectionMask };
+export { normalizeStroke, normalizeStrokes, rasterizeStrokeMask };

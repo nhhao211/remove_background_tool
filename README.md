@@ -13,6 +13,7 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 10. **Clean Sprite Sheet**: Upload PNG/WebP/JPEG tĩnh ở tab riêng, tự nhận diện nền từ biên ảnh hoặc từng cell, bảo vệ vùng màu bị bao kín trong chủ thể, làm sạch viền và export lại PNG/WebP trong suốt.
 11. **Subject Protect Brush**: Vẽ mask mềm trực tiếp trên Source Video để bảo vệ màu và alpha của chủ thể ở những vùng gần màu nền; hỗ trợ bút/tẩy, size, strength, hardness, undo/redo và preset cho chi tiết đặc hoặc bán trong suốt.
 12. **Subject Color Replace**: Dùng eyedropper chọn màu chủ thể từ Source Video hoặc Sprite Preview, chọn màu đích, rồi điều chỉnh tolerance/strength để đổi dải màu tương ứng mà vẫn giữ highlight và bóng.
+13. **Bút Xóa (Erase Brush)**: Bôi trực tiếp lên Source Video để xóa hẳn vùng nền còn sót hay chi tiết thừa mà chroma key không bắt được (logo, micro, bóng, vệt sáng); có Erase/Restore, size/strength/hardness, vòng tròn cỡ bút, undo/redo/clear và mask áp dụng cho mọi frame.
 
 ---
 
@@ -87,10 +88,19 @@ Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http:
    - Điều chỉnh **Blend (Edge Feathering)** để làm mịn rìa ảnh nhân vật, chống răng cưa.
    - Điều chỉnh **Spill Suppression** để khử viền màu ám lên nhân vật.
    - Dùng **Subject Protect Brush → Protect** rồi vẽ lên những vùng chủ thể bị thủng hoặc mất màu. Chỉnh `Size`, `Strength`, `Hardness`; chọn `Translucent` cho hoa mỏng/tóc/kính/khói hoặc `Solid` cho vùng đặc. Mask tĩnh được áp dụng cho mọi frame khi nhấn **Generate**.
-   - Dùng **Erase**, **Undo**, **Redo** hoặc **Clear** để sửa mask. `Show mask` chỉ bật/tắt lớp màu tím hướng dẫn, không thay đổi kết quả xuất.
+   - Dùng **Unprotect**, **Undo**, **Redo** hoặc **Clear** để sửa mask. `Show mask` chỉ bật/tắt lớp màu tím hướng dẫn, không thay đổi kết quả xuất.
    - Bật **Subject Color Replace**, nhấn **Pick source** và chọn màu trên Source/Preview, sau đó chọn màu ở ô `To`. `Tolerance` quyết định độ rộng dải màu được đổi, `Strength` quyết định mức hòa trộn. Nhấn **Generate** lại để cập nhật toàn bộ frame.
 
-4. **Tùy chỉnh Sprite Sheet:**
+4. **Xóa chi tiết thừa bằng Bút Xóa (Erase Brush):**
+   - Mở panel **Bút Xóa**, nhấn **Erase** rồi bôi lên vùng nền còn sót hoặc chi tiết không muốn giữ (logo, dây micro, vệt sáng, bóng đổ).
+   - `Size` đổi cỡ bút, `Strength` quyết định xóa hẳn hay chỉ làm mờ dần, `Hardness` quyết định biên bút cứng hay mềm.
+   - Giữ **Alt** trong lúc bôi để tạm đổi sang chiều ngược lại; nhấn **Restore** để bôi khôi phục lại vùng đã lỡ xóa.
+   - Phím `[` và `]` giảm/tăng cỡ bút (thêm **Shift** để nhảy bước lớn), `Esc` để thoát công cụ.
+   - **Undo / Redo / Clear** để sửa; `Show mask` chỉ bật/tắt lớp phủ đỏ hướng dẫn, không ảnh hưởng file xuất.
+   - Mask được vẽ theo tọa độ của Source Video nên bám đúng nội dung video và áp dụng cho **mọi frame**. Nét vẽ được lưu theo từng video cùng các thiết lập khác.
+   - Nếu sprite sheet đã generate, nét vẽ mới được áp ngay vào preview; với video quá lớn app sẽ nhắc nhấn **Generate** lại.
+
+5. **Tùy chỉnh Sprite Sheet:**
    - **Frames**: Số lượng frame cần trích xuất (VD: 24).
    - **Cols & Rows**: Số cột và số hàng của sprite sheet (VD: 6 cột x 4 hàng = 24 frames).
    - **Cell (native)**: Kích thước pixel mỗi ô (VD: 512px).
@@ -99,12 +109,12 @@ Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http:
    - **Auto FPS**: Tự động tính toán tốc độ khung hình phù hợp với độ dài video.
    - **Video Speed** và **Reset** điều khiển tốc độ preview; state được khôi phục khi mở lại cùng video.
 
-5. **Tạo và Preview:**
+6. **Tạo và Preview:**
    - Nhấn nút **⚙ Generate** màu xanh dương.
    - Xem chuyển động nhân vật trong khung **Sprite sheet preview** (nút `▶ Play / ⏸ Pause`).
    - Nhấn nút `▦ Sheet` để xem toàn bộ lưới sprite sheet.
 
-6. **Tải về:**
+7. **Tải về:**
    - Nhấn **📥 Download WebP/PNG + audio** để tải gói `.zip` gồm cả Sprite Sheet và file `.mp3`.
    - Hoặc mở menu thả xuống để tải riêng Sprite Sheet hoặc file Audio MP3.
 

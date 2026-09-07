@@ -151,6 +151,16 @@
           </div>
           <canvas id="protectionBrushCanvas" class="protection-brush-canvas" aria-label="Subject protection mask drawing surface"></canvas>
 
+          <!-- Erase brush -->
+          <div id="eraseBrushBanner" class="erase-brush-banner">
+            <div class="erase-brush-banner-left">
+              <i data-lucide="eraser" style="width: 16px; height: 16px; color: #f87171;"></i>
+              <span id="eraseBrushBannerText">Bôi lên vùng cần xóa · Mask áp dụng cho mọi frame · Giữ Alt để Restore · [ ] đổi size · Esc để thoát</span>
+            </div>
+            <button id="btnCancelEraseBrush" class="time-btn" type="button" style="padding: 2px 8px; color: #f87171;">✕ Thoát</button>
+          </div>
+          <canvas id="eraseBrushCanvas" class="erase-brush-canvas" aria-label="Erase mask drawing surface"></canvas>
+
           <!-- Eyedropper Magnifier Loupe -->
           <div id="eyedropperLoupe" class="eyedropper-loupe">
             <canvas id="eyedropperCanvas" class="eyedropper-canvas" width="60" height="60"></canvas>
@@ -760,9 +770,9 @@
                   <i data-lucide="paintbrush" style="width: 13px; height: 13px;"></i>
                   <span>Protect</span>
                 </button>
-                <button id="btnProtectionEraser" class="time-btn protection-tool-btn" type="button" title="Tẩy protection mask">
+                <button id="btnProtectionEraser" class="time-btn protection-tool-btn" type="button" title="Tẩy bớt protection mask đã vẽ (không xóa hình)">
                   <i data-lucide="eraser" style="width: 13px; height: 13px;"></i>
-                  <span>Erase</span>
+                  <span>Unprotect</span>
                 </button>
                 <button id="btnProtectionUndo" class="time-btn icon-only-tool" type="button" title="Undo protection stroke" disabled>
                   <i data-lucide="undo-2" style="width: 13px; height: 13px;"></i>
@@ -813,6 +823,73 @@
                 </label>
               </div>
               <p class="protection-brush-help">Translucent giữ lại 80% cường độ nét để nền vẫn xuyên nhẹ qua hoa mỏng, tóc, kính hoặc khói. Pixel trùng màu nền vẫn được giữ trong suốt để tránh kéo mảng background vào sprite. Generate lại sau khi vẽ.</p>
+            </div>
+          </div>
+
+          <div class="form-group erase-brush-group collapsible-section" id="groupEraseBrush">
+            <div class="section-collapse-header" id="headerEraseBrush" role="button" tabindex="0" aria-expanded="true" aria-controls="bodyEraseBrush" title="Click to collapse / expand Erase Brush">
+              <div class="section-collapse-title">
+                <i data-lucide="eraser" style="width: 14px; height: 14px; color: #f87171;"></i>
+                <span class="section-collapse-name">Erase Brush · Bút Xóa</span>
+                <span id="eraseBrushStatus" class="hint">No erased areas</span>
+              </div>
+              <div class="section-collapse-action">
+                <span id="lblCollapseEraseBrush" class="section-collapse-state-label">Collapse</span>
+                <i data-lucide="chevron-up" id="iconCollapseEraseBrush" class="section-collapse-icon" style="width: 13px; height: 13px;"></i>
+              </div>
+            </div>
+            <div id="bodyEraseBrush" class="section-collapse-body">
+              <div class="erase-brush-toolbar">
+                <button id="btnEraseBrush" class="time-btn erase-tool-btn" type="button" title="Bôi lên vùng nền hoặc chi tiết thừa cần xóa hẳn">
+                  <i data-lucide="eraser" style="width: 13px; height: 13px;"></i>
+                  <span>Erase</span>
+                </button>
+                <button id="btnEraseRestore" class="time-btn erase-tool-btn" type="button" title="Khôi phục vùng đã lỡ bôi xóa">
+                  <i data-lucide="paintbrush" style="width: 13px; height: 13px;"></i>
+                  <span>Restore</span>
+                </button>
+                <button id="btnEraseUndo" class="time-btn icon-only-tool" type="button" title="Undo erase stroke" disabled>
+                  <i data-lucide="undo-2" style="width: 13px; height: 13px;"></i>
+                </button>
+                <button id="btnEraseRedo" class="time-btn icon-only-tool" type="button" title="Redo erase stroke" disabled>
+                  <i data-lucide="redo-2" style="width: 13px; height: 13px;"></i>
+                </button>
+                <button id="btnEraseClear" class="time-btn erase-tool-btn" type="button" title="Clear all erase strokes" disabled>
+                  <i data-lucide="trash-2" style="width: 13px; height: 13px;"></i>
+                  <span>Clear</span>
+                </button>
+                <label class="checkbox-row erase-mask-toggle">
+                  <input type="checkbox" id="chkShowEraseMask" checked>
+                  <span>Show mask</span>
+                </label>
+              </div>
+              <div class="erase-brush-controls">
+                <label>
+                  <span>Size (px)</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderEraseSize" min="5" max="500" step="1" value="80">
+                    <input type="number" id="numEraseSize" class="form-input slider-number-input" min="5" max="500" step="1" value="80" aria-label="Erase brush size in pixels">
+                    <strong id="lblEraseSize" style="display: none;">80 px</strong>
+                  </div>
+                </label>
+                <label>
+                  <span>Strength</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderEraseStrength" min="0" max="1" step="0.01" value="1">
+                    <input type="number" id="numEraseStrength" class="form-input slider-number-input" min="0" max="1" step="0.01" value="1.00" aria-label="Erase brush strength">
+                    <strong id="lblEraseStrength" style="display: none;">100%</strong>
+                  </div>
+                </label>
+                <label>
+                  <span>Hardness</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderEraseHardness" min="0" max="1" step="0.01" value="0.80">
+                    <input type="number" id="numEraseHardness" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.80" aria-label="Erase brush hardness">
+                    <strong id="lblEraseHardness" style="display: none;">80%</strong>
+                  </div>
+                </label>
+              </div>
+              <p class="erase-brush-help">Bút Xóa đưa alpha vùng được bôi về trong suốt, chạy sau chroma key nên xóa được cả nền còn sót lẫn chi tiết thừa nằm trên chủ thể — và hoạt động cả khi tắt <em>Transparent</em>. Mask vẽ trên Source video nên bám theo nội dung gốc, không bị lệch khi bật Subject Alignment. Nếu đã Generate, nét vẽ được áp ngay vào preview mà không cần Generate lại (trừ khi đang bật Subject Alignment).</p>
             </div>
           </div>
 

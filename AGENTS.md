@@ -16,6 +16,9 @@
   - `server.js`: static server, upload, audio extraction, ZIP export và cleanup.
   - `public/index.html`: layout, controls, input và các vùng preview.
   - `public/js/app.js`: state, event handlers, trim editor, eyedropper, chroma key, sprite generation, preview và download.
+  - `public/js/stroke-mask.js`: rasterize nét bút thành mask 1 byte/pixel; dùng chung cho Subject Protect Brush và Bút Xóa. Mode `add`/`subtract` (tên cũ `protect`/`erase` vẫn đọc được từ localStorage).
+  - `public/js/erase-mask.js`: nhân alpha của `ImageData` theo mask của Bút Xóa; tách riêng để test được ngoài browser.
+  - `public/js/keyer/`: module matting dùng chung, có baseline byte-identical trong `test/keyer/`. Không sửa nếu chưa cần; `assertOptions()` chặn option lạ.
   - `public/css/style.css`: giao diện và trạng thái tương tác.
   - `public/samples/sample_blue_flower.mp4`: video demo được tự động load khi mở app.
 
@@ -32,7 +35,7 @@ npm run dev
 - Mặc định mở `http://localhost:3000`.
 - Nếu port đang bận, server tự thử port kế tiếp.
 - `npm run dev` dùng `node --watch server.js`.
-- Repo hiện không khai báo test, lint hoặc build script. Khi thay đổi code, tối thiểu kiểm tra cú pháp bằng `node --check server.js` và `node --check public/js/app.js`, sau đó chạy server và gọi `GET /api/health`.
+- `npm test` chạy `node --test 'test/**/*.test.{mjs,js}'`. Repo không có lint hoặc build script. Khi thay đổi code, tối thiểu kiểm tra cú pháp bằng `node --check server.js` và `node --check public/js/app.js`, chạy `npm test`, sau đó chạy server và gọi `GET /api/health`.
 - Không commit `uploads/`, `temp/` hoặc các file phát sinh khi chạy local.
 
 ## Danh mục đầy đủ chức năng hiện có
@@ -111,6 +114,20 @@ npm run dev
 - `Spill Suppression` khử halo màu key ở cạnh foreground; nhận diện channel chính blue/green/red từ màu key đầu tiên.
 - Thuật toán tính khoảng cách màu weighted Euclidean/redmean trên từng pixel và lấy khoảng cách nhỏ nhất tới toàn bộ key colors.
 
+### 6b. Bút Xóa (Erase Brush)
+
+- Bôi trực tiếp trên Source Video để xóa hẳn vùng nền còn sót hoặc chi tiết thừa mà chroma key không xử lý được.
+- Hai tool: `Erase` (bôi để xóa) và `Restore` (bôi để khôi phục); giữ `Alt` đảo chiều tạm thời trong một nét.
+- `Size` 5–500 px, `Strength` 0–1, `Hardness` 0–1; phím `[` / `]` đổi size (`Shift` để nhảy bước lớn), `Esc` thoát.
+- Có vòng tròn hiển thị cỡ bút bám theo con trỏ; `Show mask` bật/tắt lớp phủ đỏ, không ảnh hưởng kết quả xuất.
+- `Undo` / `Redo` / `Clear` với stack tối đa 100 action; `Clear` cũng undo được.
+- Nét vẽ lưu ở tọa độ chuẩn hóa 0..1 của source video nên bám nội dung video kể cả khi đổi crop/cell size; lưu theo từng clip trong localStorage.
+- Mask là tĩnh và áp dụng cho **mọi** frame.
+- Erase chạy **sau** keyer như một bước compositing (nhân alpha), không phải một option của keyer — nên vẫn hoạt động khi tắt `Transparent WebP/PNG`.
+- Khi bật Subject Alignment, mask được áp ở full-resolution **trước** `detectSubjectBounds` để chi tiết bị xóa không kéo lệch canh chủ thể.
+- Sau khi đã Generate, app cache bản frame trước-khi-xóa (`state.rawFrames`) và áp lại mask ngay vào preview mà không cần seek lại video; vượt ngưỡng `LIVE_ERASE_PIXEL_BUDGET` (120e6 pixel) thì bỏ cache và hiện toast nhắc nhấn `Generate`.
+- Overlay mask được cache theo `eraseMaskRevision`; mọi thay đổi `state.eraseStrokes` phải gọi `markEraseStrokesChanged()`, nếu không preview sẽ đứng ở mask cũ.
+
 ### 7. Generate sprite sheet
 
 - Nút `Generate` seek video tới các thời điểm phân bố đều trong vùng trim.
@@ -181,5 +198,6 @@ Trả JSON `{ status: "ok", uptime }`.
 - Giữ các giới hạn trim, rows/cols, crop, speed, FPS và quy tắc sanitize tên file nhất quán với UI hiện tại.
 - Nếu sửa pipeline audio hoặc ZIP, kiểm tra cả trường hợp input là file local và trường hợp video demo URL.
 - Nếu sửa Canvas/chroma key, kiểm tra cả hai format PNG/WebP, trạng thái transparent bật/tắt, nhiều key colors, alpha edge và preview mode `Anim`/`Sheet`.
+- Bút Xóa phải giữ nguyên vị trí trong pipeline: keyer → color replace → erase → (bounds detection nếu có alignment) → crossfade. Không đẩy erase vào `public/js/keyer/` vì sẽ phải sửa whitelist option và regenerate baseline.
 - Không coi `Split`, `Duplicate`, `Delete` là hệ thống timeline nhiều clip: hiện chúng chỉ thao tác trên `trimStart`/`trimEnd` và state backup.
 - Sau thay đổi lớn, chạy kiểm tra cú pháp, khởi động server, kiểm tra `/api/health`, rồi thử flow demo: load video → trim → generate → preview → download.
