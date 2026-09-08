@@ -4,9 +4,19 @@
  *
  * Provides intelligent cycle detection, closed-loop modular sampling,
  * and temporal crossfade blending to eliminate animation stutter/jump at loop seams.
+ *
+ * This file owns everything that needs the DOM (seeking, canvas capture,
+ * keying, thumbnails). The ranking maths lives in `loop-analysis.js` so it can
+ * be tested under `node --test`.
  */
 
 import { runKeyer } from './keyer/index.js';
+import {
+  buildFrameDescriptor,
+  descriptorDistance,
+  findLoopCandidates,
+  hasUsableMatte
+} from './loop-analysis.js';
 
 /**
  * Calculates sampling timestamps for animation generation.
@@ -50,7 +60,12 @@ export function computeLoopTimestamps(startTime, endTime, frameCount, isClosedLo
 
 /**
  * Computes visual distance and similarity score between two frame ImageDatas.
- * Analyzes silhouette IoU distance, Redmean RGB foreground difference, and centroid drift.
+ *
+ * Shape difference is normalised by the subject's own area (a Dice-style
+ * ratio), not by the frame area — otherwise a small subject on a large canvas
+ * reads as ~99% similar against every other frame and the score carries no
+ * information. Colour is compared only where both frames have foreground, and
+ * centroid drift is measured relative to the subject's size.
  *
  * @param {ImageData} imgDataA - First frame image data
  * @param {ImageData} imgDataB - Second frame image data
@@ -60,110 +75,44 @@ export function computeLoopTimestamps(startTime, endTime, frameCount, isClosedLo
  */
 export function computeFrameDistance(imgDataA, imgDataB, width, height) {
   if (!imgDataA || !imgDataB) return { distance: 1, similarity: 0 };
-  const dataA = imgDataA.data;
-  const dataB = imgDataB.data;
-  const totalPixels = width * height;
-  if (!totalPixels || dataA.length !== dataB.length) return { distance: 1, similarity: 0 };
-
-  let alphaDiffSum = 0;
-  let colorDiffSum = 0;
-  let overlapPixels = 0;
-  let sumXA = 0;
-  let sumYA = 0;
-  let countA = 0;
-  let sumXB = 0;
-  let sumYB = 0;
-  let countB = 0;
-
-  for (let i = 0; i < totalPixels; i++) {
-    const idx = i * 4;
-    const aA = dataA[idx + 3];
-    const aB = dataB[idx + 3];
-
-    alphaDiffSum += Math.abs(aA - aB);
-
-    const x = i % width;
-    const y = Math.floor(i / width);
-
-    if (aA >= 25) {
-      sumXA += x;
-      sumYA += y;
-      countA++;
-    }
-    if (aB >= 25) {
-      sumXB += x;
-      sumYB += y;
-      countB++;
-    }
-
-    if (aA >= 25 && aB >= 25) {
-      const rA = dataA[idx];
-      const gA = dataA[idx + 1];
-      const bA = dataA[idx + 2];
-      const rB = dataB[idx];
-      const gB = dataB[idx + 1];
-      const bB = dataB[idx + 2];
-
-      const rMean = (rA + rB) / 2;
-      const dr = rA - rB;
-      const dg = gA - gB;
-      const db = bA - bB;
-
-      // Weighted Redmean color metric (0 - ~765)
-      const dColor = Math.sqrt(
-        (2 + (rMean / 256)) * dr * dr +
-        4 * dg * dg +
-        (2 + ((255 - rMean) / 256)) * db * db
-      );
-      colorDiffSum += dColor / 765;
-      overlapPixels++;
-    }
+  const w = Math.max(1, Math.round(Number(width) || imgDataA.width || 0));
+  const h = Math.max(1, Math.round(Number(height) || imgDataA.height || 0));
+  if (!w || !h || imgDataA.data.length !== imgDataB.data.length) {
+    return { distance: 1, similarity: 0 };
   }
 
-  // 1. Normalized Alpha Silhouette Difference: 0 (identical shape) to 1 (completely disjoint)
-  const normAlphaDist = alphaDiffSum / (totalPixels * 255);
+  const a = buildFrameDescriptor(imgDataA, w, h);
+  const b = buildFrameDescriptor(imgDataB, w, h);
+  const matte = hasUsableMatte([a, b]);
+  const distance = descriptorDistance(a, b, { matte, coarse: false });
 
-  // 2. Normalized Color Difference on overlapping foreground pixels: 0 to 1
-  const normColorDist = overlapPixels > 0 ? (colorDiffSum / overlapPixels) : 1;
+  return {
+    distance,
+    similarity: Math.max(0, Math.min(100, Math.round((1 - distance) * 1000) / 10))
+  };
+}
 
-  // 3. Centroid Shift Penalty (measures whether subject moved horizontally/vertically)
-  const cxA = countA > 0 ? (sumXA / countA) : (width / 2);
-  const cyA = countA > 0 ? (sumYA / countA) : (height / 2);
-  const cxB = countB > 0 ? (sumXB / countB) : (width / 2);
-  const cyB = countB > 0 ? (sumYB / countB) : (height / 2);
-  const maxDiagonal = Math.hypot(width, height) || 1;
-  const centroidDrift = Math.hypot(cxA - cxB, cyA - cyB) / maxDiagonal;
-
-  // Combined distance: weighted composition
-  const totalDistance = Math.min(1, Math.max(0,
-    (normAlphaDist * 0.45) + (normColorDist * 0.40) + (centroidDrift * 0.15)
-  ));
-
-  const similarity = Math.max(0, Math.min(100, Math.round((1 - totalDistance) * 1000) / 10));
-
-  return { distance: totalDistance, similarity };
+function defaultSeek(duration) {
+  return (vid, time) => new Promise((resolve) => {
+    let resolved = false;
+    const onSeeked = () => {
+      if (resolved) return;
+      resolved = true;
+      vid.removeEventListener('seeked', onSeeked);
+      resolve();
+    };
+    vid.addEventListener('seeked', onSeeked);
+    vid.currentTime = Math.max(0, Math.min(time, duration));
+    setTimeout(onSeeked, 800);
+  });
 }
 
 /**
  * Scans video range to detect candidate seamless loop cycles.
  *
- * @param {HTMLVideoElement} video - HTML5 video element
- * @param {Object} [options={}] - Scan parameters
- * @param {number} [options.duration] - Total video duration in seconds
- * @param {number} [options.searchStart=0] - Start timestamp for search range
- * @param {number} [options.searchEnd] - End timestamp for search range
- * @param {number} [options.minCycleDuration=0.35] - Minimum valid loop cycle length in seconds
- * @param {number} [options.maxCycleDuration=4.5] - Maximum valid loop cycle length in seconds
- * @param {number} [options.sampleRate=20] - Sampling frequency in frames per second
- * @param {Object} [options.chromaOptions] - Chroma key configuration for background removal
- * @param {Object} [options.cropOptions] - Video crop margins { top, bottom, left, right }
- * @param {Function} [options.onProgress] - Progress callback (percentage: number, statusText: string)
- * @param {Function} [options.seekVideoAsync] - Helper function to seek video asynchronously
- * @returns {Promise<Array<Object>>} List of top candidate loop cycles
- */
-/**
- * Scans video range to detect candidate seamless loop cycles.
- * Supports speed acceleration for multi-action footage and frame budget targeting (~24 frames).
+ * Pipeline: adaptive sampling -> per-frame descriptors -> coarse lag profile
+ * (periodicity) -> fine windowed seam cost -> contrast-normalised scoring ->
+ * sub-sample refinement of the winners.
  *
  * @param {HTMLVideoElement} video - HTML5 video element
  * @param {Object} [options={}] - Scan parameters
@@ -175,7 +124,11 @@ export function computeFrameDistance(imgDataA, imgDataB, width, height) {
  * @param {number} [options.targetFps=12] - Target preview FPS (e.g. 12, 16, 24)
  * @param {number} [options.minCycleDuration] - Minimum valid loop cycle length in seconds (source time)
  * @param {number} [options.maxCycleDuration] - Maximum valid loop cycle length in seconds (source time)
- * @param {number} [options.sampleRate=20] - Sampling frequency in frames per second
+ * @param {number} [options.sampleRate] - Sampling frequency in frames per second (auto when omitted)
+ * @param {number} [options.maxSamples=320] - Hard cap on captured frames (seek budget)
+ * @param {boolean} [options.refine=true] - Run the sub-sample seam refinement pass
+ * @param {number} [options.refineCandidates=3] - How many top candidates to refine
+ * @param {number} [options.maxCandidates=6] - How many candidates to return
  * @param {Object} [options.chromaOptions] - Chroma key configuration for background removal
  * @param {Object} [options.cropOptions] - Video crop margins { top, bottom, left, right }
  * @param {Function} [options.onProgress] - Progress callback (percentage: number, statusText: string)
@@ -194,8 +147,9 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
   const targetFrames = Math.max(1, Math.min(500, Math.round(Number(options.targetFrames) || 24)));
   const targetFps = Math.max(1, Math.min(60, Math.round(Number(options.targetFps) || 12)));
 
-  // Ideal source duration to produce exactly targetFrames at targetFps after speed acceleration
-  const idealSourceDuration = (targetFrames * speed) / targetFps;
+  // Source seconds consumed by one output frame once the speed multiplier applies.
+  const outputStep = speed / targetFps;
+  const idealSourceDuration = targetFrames * outputStep;
 
   const defaultMinCycle = Math.max(0.25, Math.min(searchSpan * 0.9, idealSourceDuration * 0.4));
   const defaultMaxCycle = Math.min(searchSpan, Math.max(defaultMinCycle + 0.2, idealSourceDuration * 1.8));
@@ -203,45 +157,23 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
   const minCycle = Math.max(0.2, Number(options.minCycleDuration) || defaultMinCycle);
   const maxCycle = Math.min(searchSpan, Math.max(minCycle + 0.1, Number(options.maxCycleDuration) || defaultMaxCycle));
 
-  const sampleRate = Math.max(10, Math.min(30, Math.round(Number(options.sampleRate) || 20)));
-  const stepTime = 1 / sampleRate;
+  // Sampling twice per output frame keeps candidate durations close to whole
+  // output frames while halving the seeks a flat 20 fps grid would need.
+  const maxSamples = Math.max(24, Math.min(600, Math.round(Number(options.maxSamples) || 320)));
+  const autoStep = Math.max(1 / 30, Math.min(1 / 8, outputStep / 2));
+  let stepTime = Number(options.sampleRate) > 0 ? (1 / Number(options.sampleRate)) : autoStep;
+  stepTime = Math.max(stepTime, searchSpan / maxSamples);
 
   const chromaOptions = options.chromaOptions || { enabled: false, keyColors: [] };
+  const keyingOn = !!(chromaOptions.enabled && chromaOptions.keyColors && chromaOptions.keyColors.length > 0);
   const crop = options.cropOptions || { top: 0, bottom: 0, left: 0, right: 0 };
 
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
-  const seekAsync = typeof options.seekVideoAsync === 'function' ? options.seekVideoAsync : (vid, time) => {
-    return new Promise((resolve) => {
-      let resolved = false;
-      const onSeeked = () => {
-        if (!resolved) {
-          resolved = true;
-          vid.removeEventListener('seeked', onSeeked);
-          resolve();
-        }
-      };
-      vid.addEventListener('seeked', onSeeked);
-      vid.currentTime = Math.min(time, duration);
-      setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          vid.removeEventListener('seeked', onSeeked);
-          resolve();
-        }
-      }, 800);
-    });
-  };
-
-  // Thumbnail dimensions for rapid client-side frame matching
-  const thumbW = 72;
-  const thumbH = 72;
-  const thumbCanvas = document.createElement('canvas');
-  thumbCanvas.width = thumbW;
-  thumbCanvas.height = thumbH;
-  const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
+  const seekAsync = typeof options.seekVideoAsync === 'function'
+    ? options.seekVideoAsync
+    : defaultSeek(duration);
 
   const originalTime = video.currentTime;
-  const wasPaused = video.paused;
   video.pause();
 
   const sourceW = video.videoWidth || 1280;
@@ -251,179 +183,242 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
   const cropW = Math.max(10, sourceW - cropX - (crop.right || 0));
   const cropH = Math.max(10, sourceH - cropY - (crop.bottom || 0));
 
-  const sampleTimestamps = [];
-  for (let t = searchStart; t <= searchEnd + 0.001; t += stepTime) {
-    sampleTimestamps.push(Math.min(searchEnd, Number(t.toFixed(4))));
-  }
-  const totalSamples = sampleTimestamps.length;
-  if (totalSamples < 5) return [];
+  // Aspect-preserving analysis thumbnail: squashing to a square distorts the
+  // silhouette and the centroid drift measurement along with it.
+  const longSide = 96;
+  const ratio = cropH / cropW;
+  const thumbW = ratio >= 1 ? Math.max(40, Math.round(longSide / ratio)) : longSide;
+  const thumbH = ratio >= 1 ? longSide : Math.max(40, Math.round(longSide * ratio));
 
-  onProgress(5, `Đang trích xuất ${totalSamples} frames (${searchSpan.toFixed(2)}s video @ ${speed}x)...`);
+  const thumbCanvas = document.createElement('canvas');
+  thumbCanvas.width = thumbW;
+  thumbCanvas.height = thumbH;
+  const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
 
-  // Step 1: Capture and process all sample frames
-  const sampleFrames = [];
+  let seekCount = 0;
 
-  for (let i = 0; i < totalSamples; i++) {
-    const t = sampleTimestamps[i];
-    await seekAsync(video, t);
+  /**
+   * Seeks, grabs the frame, keys it and reduces it to a descriptor.
+   * The timestamp reported back is the decoder's actual position, not the
+   * requested one — those differ by up to half a source frame and that error
+   * used to land straight in the returned trim points.
+   */
+  async function captureSample(requestedTime) {
+    await seekAsync(video, Math.max(0, Math.min(duration, requestedTime)));
+    seekCount++;
+    const actualTime = Number.isFinite(video.currentTime) ? video.currentTime : requestedTime;
 
     thumbCtx.clearRect(0, 0, thumbW, thumbH);
-    thumbCtx.drawImage(
-      video,
-      cropX, cropY, cropW, cropH,
-      0, 0, thumbW, thumbH
-    );
+    thumbCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, thumbW, thumbH);
 
     let imgData = thumbCtx.getImageData(0, 0, thumbW, thumbH);
-    if (chromaOptions.enabled && chromaOptions.keyColors && chromaOptions.keyColors.length > 0) {
-      const keyResult = runKeyer(imgData, chromaOptions);
-      imgData = keyResult.imageData;
-      thumbCtx.putImageData(imgData, 0, 0);
+    if (keyingOn) {
+      imgData = runKeyer(imgData, chromaOptions).imageData;
     }
 
-    sampleFrames.push({
-      index: i,
-      time: t,
+    return {
+      time: actualTime,
       imgData,
-      thumbDataUrl: thumbCanvas.toDataURL('image/jpeg', 0.8)
-    });
+      descriptor: buildFrameDescriptor(imgData, thumbW, thumbH)
+    };
+  }
 
-    const progressPct = 5 + Math.round(((i + 1) / totalSamples) * 60);
-    if (i % 5 === 0 || i === totalSamples - 1) {
-      onProgress(progressPct, `Trích xuất frame ${i + 1}/${totalSamples}...`);
+  function thumbUrl(imgData) {
+    thumbCtx.putImageData(imgData, 0, 0);
+    return thumbCanvas.toDataURL('image/jpeg', 0.8);
+  }
+
+  // --- Pass 1: capture the coarse grid. ---
+  const plannedCount = Math.max(1, Math.floor((searchEnd - searchStart) / stepTime) + 1);
+  onProgress(4, `Đang trích xuất ~${plannedCount} frames (${searchSpan.toFixed(2)}s video @ ${speed}x)...`);
+
+  const samples = [];
+  const times = [];
+  const descriptors = [];
+  let lastTime = -Infinity;
+
+  for (let n = 0; n < plannedCount; n++) {
+    const t = Math.min(searchEnd, searchStart + (n * stepTime));
+    const sample = await captureSample(t);
+
+    // A grid finer than the source frame rate returns the same decoded frame
+    // twice; keeping it would fake a zero-cost seam.
+    if (sample.time > lastTime + 1e-4) {
+      lastTime = sample.time;
+      samples.push(sample);
+      times.push(sample.time);
+      descriptors.push(sample.descriptor);
+    }
+
+    if (n % 5 === 0 || n === plannedCount - 1) {
+      onProgress(4 + Math.round(((n + 1) / plannedCount) * 56), `Trích xuất frame ${n + 1}/${plannedCount}...`);
     }
   }
 
-  // Step 2: Compute upper-triangle frame distance matrix and evaluate periodic cycles
-  onProgress(70, `Đang phân tích độ khớp chu kỳ & mục tiêu ~${targetFrames} frames...`);
+  // When the sampling grid outran the source frame rate, duplicate decodes were
+  // dropped above; the smallest surviving gap is then the native frame duration,
+  // which is the finest step refinement can usefully ask for.
+  let minGap = Infinity;
+  for (let i = 1; i < times.length; i++) {
+    const gap = times[i] - times[i - 1];
+    if (gap > 1e-4 && gap < minGap) minGap = gap;
+  }
+  const droppedDuplicates = plannedCount - times.length;
+  const nativeStep = droppedDuplicates > 0 && Number.isFinite(minGap) ? minGap : 0;
 
-  const distanceCache = new Map();
-  function getPairDistance(idxA, idxB) {
-    if (idxA === idxB) return { distance: 0, similarity: 100 };
-    const minI = Math.min(idxA, idxB);
-    const maxI = Math.max(idxA, idxB);
-    const key = `${minI}_${maxI}`;
-    if (distanceCache.has(key)) return distanceCache.get(key);
-
-    const result = computeFrameDistance(sampleFrames[minI].imgData, sampleFrames[maxI].imgData, thumbW, thumbH);
-    distanceCache.set(key, result);
-    return result;
+  if (descriptors.length < 6) {
+    await seekAsync(video, originalTime);
+    onProgress(100, 'Phạm vi quét quá ngắn để phân tích chu kỳ.');
+    return [];
   }
 
-  const rawCandidates = [];
+  // --- Pass 2: periodicity + seam ranking. ---
+  onProgress(64, `Đang dò chu kỳ trên ${descriptors.length} frames & mục tiêu ~${targetFrames} frames...`);
 
-  for (let i = 0; i < totalSamples; i++) {
-    const timeA = sampleFrames[i].time;
+  const matte = hasUsableMatte(descriptors);
+  const analysis = findLoopCandidates(descriptors, times, {
+    minCycle,
+    maxCycle,
+    playbackSpeed: speed,
+    targetFrames,
+    targetFps,
+    matte,
+    maxCandidates: Math.max(1, Math.min(12, Math.round(Number(options.maxCandidates) || 6))),
+    minSeparation: Math.max(stepTime * 1.5, 0.12)
+  });
 
-    for (let j = i + 1; j < totalSamples; j++) {
-      const timeB = sampleFrames[j].time;
-      const cycleDuration = timeB - timeA;
+  let candidates = analysis.candidates;
+  if (!candidates.length) {
+    await seekAsync(video, originalTime);
+    onProgress(100, 'Không tìm thấy chu kỳ lặp rõ rệt.');
+    return [];
+  }
 
-      if (cycleDuration < minCycle) continue;
-      if (cycleDuration > maxCycle) break;
+  // --- Pass 3: sub-sample refinement of the winners. ---
+  // The coarse grid quantises every seam to `stepTime`; at 12 fps sampling that
+  // is ~1.5 source frames of slop, which is exactly the residual jump users see.
+  const refineEnabled = options.refine !== false;
+  const refineCount = Math.max(0, Math.min(candidates.length, Math.round(Number(options.refineCandidates ?? 3) || 0)));
 
-      const mainPair = getPairDistance(i, j);
+  if (refineEnabled && refineCount > 0) {
+    const fineStep = Math.max(stepTime / 4, nativeStep);
+    const STRIP = 3; // strip covers offsets -3..3 so a +-2 shift keeps a +-1 window
+    const SHIFT = 2;
 
-      // Check continuity on neighboring frames to ensure directional velocity matches
-      let continuityDistance = mainPair.distance;
-      let countNeighbors = 1;
+    for (let c = 0; c < refineCount; c++) {
+      const cand = candidates[c];
+      onProgress(
+        68 + Math.round((c / refineCount) * 22),
+        `Tinh chỉnh viền nối ứng viên #${c + 1}/${refineCount}...`
+      );
 
-      if (i + 1 < totalSamples && j + 1 < totalSamples) {
-        continuityDistance += getPairDistance(i + 1, j + 1).distance * 0.5;
-        countNeighbors += 0.5;
+      const startStrip = [];
+      const endStrip = [];
+      let usable = true;
+
+      for (let k = -STRIP; k <= STRIP && usable; k++) {
+        const ts = cand.startTime + (k * fineStep);
+        const te = cand.endTime + (k * fineStep);
+        if (ts < 0 || te > duration) {
+          usable = false;
+          break;
+        }
+        startStrip.push(await captureSample(ts));
+        endStrip.push(await captureSample(te));
       }
-      if (i - 1 >= 0 && j - 1 >= 0) {
-        continuityDistance += getPairDistance(i - 1, j - 1).distance * 0.5;
-        countNeighbors += 0.5;
+      if (!usable) continue;
+
+      // Cost of a fixed fine-grained window, so the refined offsets and the
+      // unrefined one are measured with the exact same yardstick. Comparing a
+      // fine window against the coarse ranking cost would report a gain on
+      // every candidate purely because the window shrank.
+      const localCost = (si, ei) => {
+        let acc = 0;
+        let wsum = 0;
+        for (let k = -1; k <= 1; k++) {
+          const w = k === 0 ? 2 : 1;
+          acc += w * descriptorDistance(
+            startStrip[si + k].descriptor,
+            endStrip[ei + k].descriptor,
+            { matte, coarse: false }
+          );
+          wsum += w;
+        }
+        return acc / wsum;
+      };
+
+      const anchorCost = localCost(STRIP, STRIP);
+      let best = null;
+      for (let ds = -SHIFT; ds <= SHIFT; ds++) {
+        for (let de = -SHIFT; de <= SHIFT; de++) {
+          const si = ds + STRIP;
+          const ei = de + STRIP;
+          const newDuration = endStrip[ei].time - startStrip[si].time;
+          if (newDuration < minCycle || newDuration > maxCycle) continue;
+          const cost = localCost(si, ei);
+          if (!best || cost < best.cost) {
+            best = { cost, si, ei, newDuration };
+          }
+        }
       }
 
-      const avgDistance = continuityDistance / countNeighbors;
-      const visualScore = Math.max(0, Math.min(100, Math.round((1 - avgDistance) * 1000) / 10));
+      if (best && best.cost < anchorCost) {
+        const s = startStrip[best.si];
+        const e = endStrip[best.ei];
+        const effective = best.newDuration / speed;
+        const frames = Math.max(1, Math.round(effective * targetFps));
+        const gain = anchorCost > 1e-9 ? Math.max(0, 1 - (best.cost / anchorCost)) : 0;
 
-      // Calculate candidate frames at chosen Speed and FPS
-      const effectiveDuration = cycleDuration / speed;
-      const candFrames = Math.max(1, Math.round(effectiveDuration * targetFps));
-      const frameError = Math.abs(candFrames - targetFrames);
-
-      // Frame Fit Score (100% when candFrames === targetFrames, decreases by 8% per frame difference)
-      const frameFitScore = Math.max(0, Math.min(100, 100 - (frameError * 8.5)));
-
-      // Measure internal action motion activity (ensures subject actually moves dynamically)
-      const midIdx = Math.floor((i + j) / 2);
-      const motionDist = getPairDistance(i, midIdx).distance;
-      const motionActivityScore = Math.min(100, Math.round(motionDist * 180));
-
-      // Combined Multi-Action Loop Score
-      // 55% Visual match at seam + 35% Frame fit (~24f) + 10% Dynamic action bonus
-      const combinedScore = Math.max(0, Math.min(100, Math.round(
-        ((visualScore * 0.55) + (frameFitScore * 0.35) + (motionActivityScore * 0.10)) * 10
-      ) / 10));
-
-      rawCandidates.push({
-        startIndex: i,
-        endIndex: j,
-        startTime: timeA,
-        endTime: timeB,
-        duration: Number(cycleDuration.toFixed(3)),
-        speed,
-        effectiveDuration: Number(effectiveDuration.toFixed(3)),
-        calculatedFrames: candFrames,
-        calculatedFps: targetFps,
-        score: combinedScore,
-        visualScore,
-        frameFitScore,
-        motionActivityScore,
-        distance: avgDistance,
-        startThumb: sampleFrames[i].thumbDataUrl,
-        endThumb: sampleFrames[j].thumbDataUrl
-      });
+        cand.startTime = s.time;
+        cand.endTime = e.time;
+        cand.duration = best.newDuration;
+        cand.effectiveDuration = effective;
+        cand.calculatedFrames = frames;
+        // Keep the reported cost on the ranking scale; only the ratio transfers.
+        cand.seamCost = cand.seamCost * (1 - gain);
+        cand.distance = cand.seamCost;
+        cand.refined = true;
+        // Reward the improvement without letting refinement outrank a genuinely
+        // better cycle: the seam term can gain at most its own remaining headroom.
+        cand.visualScore = Math.min(100, Math.round((cand.visualScore + ((100 - cand.visualScore) * gain)) * 10) / 10);
+        cand.score = Math.min(100, Math.round((cand.score + ((100 - cand.score) * gain * 0.5)) * 10) / 10);
+        cand.startSample = s;
+        cand.endSample = e;
+      }
     }
+
+    candidates.sort((a, b) => b.score - a.score);
   }
 
-  onProgress(90, 'Xếp hạng các chu kỳ tối ưu...');
+  // --- Pass 4: thumbnails, for the survivors only. ---
+  onProgress(94, 'Đang dựng thumbnail cho các chu kỳ tối ưu...');
 
-  // Step 3: Filter local peaks and non-maximum suppression (avoid clusters of overlapping frames)
-  rawCandidates.sort((a, b) => b.score - a.score);
+  const finalCandidates = candidates.map((cand) => ({
+    id: `loop_${cand.startTime.toFixed(3)}_${cand.endTime.toFixed(3)}`,
+    startTime: cand.startTime,
+    endTime: cand.endTime,
+    duration: Number(cand.duration.toFixed(3)),
+    speed: cand.speed,
+    effectiveDuration: Number(cand.effectiveDuration.toFixed(3)),
+    calculatedFrames: cand.calculatedFrames,
+    calculatedFps: cand.calculatedFps,
+    score: cand.score,
+    visualScore: cand.visualScore,
+    periodScore: cand.periodScore,
+    frameFitScore: cand.frameFitScore,
+    motionActivityScore: cand.motionActivityScore,
+    refined: !!cand.refined,
+    seamCost: Number(cand.seamCost.toFixed(4)),
+    startThumb: thumbUrl((cand.startSample || samples[cand.startIndex]).imgData),
+    endThumb: thumbUrl((cand.endSample || samples[cand.endIndex]).imgData)
+  }));
 
-  const finalCandidates = [];
-  const minTimeSeparation = 0.18; // Seconds of separation between distinct candidate loop suggestions
-
-  for (const cand of rawCandidates) {
-    if (finalCandidates.length >= 6) break;
-
-    const isDuplicate = finalCandidates.some((existing) => {
-      const diffStart = Math.abs(existing.startTime - cand.startTime);
-      const diffEnd = Math.abs(existing.endTime - cand.endTime);
-      return diffStart < minTimeSeparation && diffEnd < minTimeSeparation;
-    });
-
-    if (!isDuplicate) {
-      finalCandidates.push({
-        id: `loop_${cand.startTime.toFixed(2)}_${cand.endTime.toFixed(2)}`,
-        startTime: cand.startTime,
-        endTime: cand.endTime,
-        duration: cand.duration,
-        speed: cand.speed,
-        effectiveDuration: cand.effectiveDuration,
-        calculatedFrames: cand.calculatedFrames,
-        calculatedFps: cand.calculatedFps,
-        score: cand.score,
-        visualScore: cand.visualScore,
-        frameFitScore: cand.frameFitScore,
-        motionActivityScore: cand.motionActivityScore,
-        startThumb: cand.startThumb,
-        endThumb: cand.endThumb
-      });
-    }
-  }
-
-  // Restore original video state
   await seekAsync(video, originalTime);
-  if (!wasPaused) {
-    // Keep paused as safe default after analysis
-  }
 
-  onProgress(100, `Tìm thấy ${finalCandidates.length} chu kỳ lặp (~${targetFrames} frames @ ${speed}x)!`);
+  onProgress(
+    100,
+    `Tìm thấy ${finalCandidates.length} chu kỳ lặp (~${targetFrames} frames @ ${speed}x, ${seekCount} lần seek).`
+  );
   return finalCandidates;
 }
 
