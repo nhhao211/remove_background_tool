@@ -293,6 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const selectLoopSpeed = document.getElementById('selectLoopSpeed');
   const inputLoopTargetFrames = document.getElementById('inputLoopTargetFrames');
   const selectLoopTargetFps = document.getElementById('selectLoopTargetFps');
+  const selectLoopFrameMode = document.getElementById('selectLoopFrameMode');
   const lblLoopIdealDurationText = document.getElementById('lblLoopIdealDurationText');
   const btnStartLoopScan = document.getElementById('btnStartLoopScan');
   const lblStartLoopScan = document.getElementById('lblStartLoopScan');
@@ -1089,9 +1090,9 @@ document.addEventListener('DOMContentLoaded', () => {
     sliderChromaSmooth.value = String(Math.round(U.clampNumber(saved?.chromaSmoothRadius, 1, 2, 1)));
     updateChromaSliderLabels();
 
-    trimStartInput.value = state.trimStart.toFixed(2);
+    trimStartInput.value = formatTrimValue(state.trimStart);
     trimStartInput.max = state.duration.toFixed(2);
-    trimEndInput.value = state.trimEnd.toFixed(2);
+    trimEndInput.value = formatTrimValue(state.trimEnd);
     trimEndInput.max = state.duration.toFixed(2);
 
     sourceVideoInfo.textContent = `${state.videoWidth}x${state.videoHeight} • ${getAspectRatioLabel(state.videoWidth, state.videoHeight)} • ${state.duration.toFixed(2)}s`;
@@ -1457,19 +1458,30 @@ document.addEventListener('DOMContentLoaded', () => {
     return pct * state.duration;
   }
 
-  function applyTrimStart(val, seek = true) {
-    const snapped = U.snapTime(val, state.duration, { step: 0.1, playhead: video.currentTime, threshold: Math.max(0.04, state.duration / 150) });
+  // A trim value carries at most millisecond meaning; printing 2 decimals threw
+  // away a third of a frame every time the input was read back.
+  function formatTrimValue(value) {
+    const fixed = Number(value).toFixed(3);
+    return String(parseFloat(fixed));
+  }
+
+  function applyTrimStart(val, seek = true, { snap = true } = {}) {
+    const snapped = snap
+      ? U.snapTime(val, state.duration, { step: 0.1, playhead: video.currentTime, threshold: Math.max(0.04, state.duration / 150) })
+      : Math.max(0, Math.min(state.duration, Number(val) || 0));
     state.trimStart = U.clampTrimStart(snapped, state.trimEnd, state.duration, U.MIN_TRIM_DURATION);
-    trimStartInput.value = state.trimStart.toFixed(2);
+    trimStartInput.value = formatTrimValue(state.trimStart);
     if (seek) requestVideoSeek(state.trimStart);
     updateTrimUI();
     if (!state.timelineDrag) autoComputeFPS();
   }
 
-  function applyTrimEnd(val, seek = true) {
-    const snapped = U.snapTime(val, state.duration, { step: 0.1, playhead: video.currentTime, threshold: Math.max(0.04, state.duration / 150) });
+  function applyTrimEnd(val, seek = true, { snap = true } = {}) {
+    const snapped = snap
+      ? U.snapTime(val, state.duration, { step: 0.1, playhead: video.currentTime, threshold: Math.max(0.04, state.duration / 150) })
+      : Math.max(0, Math.min(state.duration, Number(val) || 0));
     state.trimEnd = U.clampTrimEnd(state.trimStart, snapped, state.duration, U.MIN_TRIM_DURATION);
-    trimEndInput.value = state.trimEnd.toFixed(2);
+    trimEndInput.value = formatTrimValue(state.trimEnd);
     if (seek) requestVideoSeek(state.trimEnd);
     updateTrimUI();
     if (!state.timelineDrag) autoComputeFPS();
@@ -4830,12 +4842,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const targetFrames = parseInt(inputLoopTargetFrames?.value, 10) || 24;
     const targetFps = parseInt(selectLoopTargetFps?.value, 10) || 12;
     const idealDuration = (targetFrames * speed) / targetFps;
-    lblLoopIdealDurationText.textContent = `Mục tiêu: ${targetFrames} frames @ ${speed}x (${targetFps} FPS) ➔ Chu kỳ video gốc lý tưởng ~${idealDuration.toFixed(2)}s`;
+    const mode = selectLoopFrameMode?.value || 'exact';
+    const modeNote = mode === 'exact'
+      ? `chu kỳ bị khoá ở đúng ${idealDuration.toFixed(3)}s`
+      : (mode === 'speed'
+        ? 'giữ nguyên chu kỳ tốt nhất, tự chỉnh lại tốc độ'
+        : 'ưu tiên viền nối mượt, số frame có thể lệch');
+    lblLoopIdealDurationText.textContent =
+      `Mục tiêu: ${targetFrames} frames @ ${speed}x (${targetFps} FPS) ➔ Chu kỳ video gốc lý tưởng ~${idealDuration.toFixed(2)}s · ${modeNote}`;
   }
 
   selectLoopSpeed?.addEventListener('change', updateLoopTargetHint);
   inputLoopTargetFrames?.addEventListener('input', updateLoopTargetHint);
   selectLoopTargetFps?.addEventListener('change', updateLoopTargetHint);
+  selectLoopFrameMode?.addEventListener('change', updateLoopTargetHint);
 
   function openLoopModal() {
     if (!state.videoLoaded) {
@@ -5163,6 +5183,7 @@ document.addEventListener('DOMContentLoaded', () => {
         playbackSpeed: speed,
         targetFrames,
         targetFps,
+        frameMode: selectLoopFrameMode?.value || 'exact',
         maxSamples: 320,
         refine: true,
         refineCandidates: 3,
@@ -5222,6 +5243,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const candFrames = cand.calculatedFrames || 24;
       const candSpeed = cand.speed || 1;
       const candFps = cand.calculatedFps || 12;
+      const wantFrames = parseInt(inputLoopTargetFrames?.value, 10) || 24;
+      const speedChanged = cand.requestedSpeed && Math.abs(cand.requestedSpeed - candSpeed) > 0.005;
+      const frameNote = cand.exactFrames
+        ? (speedChanged ? ` <span style="color:#38bdf8;">· đúng mục tiêu, tốc độ ${cand.requestedSpeed}x ➔ ${candSpeed}x</span>` : ' <span style="color:#10b981;">· đúng mục tiêu</span>')
+        : ` <span style="color:#f59e0b;">· lệch ${candFrames - wantFrames > 0 ? '+' : ''}${candFrames - wantFrames}f so với ${wantFrames}f</span>`;
 
       card.innerHTML = `
         <div class="loop-card-top">
@@ -5229,8 +5255,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="loop-score-badge ${cand.score >= 88 ? 'high' : 'medium'}">${cand.score}% khớp</span>
         </div>
         <div class="loop-card-details">
-          <span>${formatTime(cand.startTime)} → ${formatTime(cand.endTime)} (${cand.duration.toFixed(2)}s video)</span>
-          <span>⚡ ${candSpeed}x Speed ➔ <strong>${candFrames} frames</strong> @ ${candFps} FPS (${cand.effectiveDuration.toFixed(2)}s)</span>
+          <span>${formatTime(cand.startTime)} → ${formatTime(cand.endTime)} (${cand.duration.toFixed(3)}s video)</span>
+          <span>⚡ ${candSpeed}x Speed ➔ <strong>${candFrames} frames</strong> @ ${candFps} FPS (${cand.effectiveDuration.toFixed(2)}s)${frameNote}</span>
         </div>
         <div class="loop-card-thumbs">
           <img class="loop-card-thumb-img" src="${cand.startThumb}" alt="Start" title="Frame 0 (Start)">
@@ -5269,8 +5295,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function applyCandidateToTimeline(cand) {
     if (!cand) return;
-    applyTrimStart(cand.startTime, false);
-    applyTrimEnd(cand.endTime, true);
+    // Snapping here would undo the sub-frame refinement and, with it, the
+    // guaranteed frame count: a 0.1s grid is ~3 source frames of slop.
+    applyTrimStart(cand.startTime, false, { snap: false });
+    applyTrimEnd(cand.endTime, true, { snap: false });
 
     if (cand.speed) {
       setPlaybackSpeed(cand.speed, { toast: false, syncInputs: true, persist: true });

@@ -164,6 +164,8 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
   let stepTime = Number(options.sampleRate) > 0 ? (1 / Number(options.sampleRate)) : autoStep;
   stepTime = Math.max(stepTime, searchSpan / maxSamples);
 
+  const frameMode = ['exact', 'speed', 'nearest'].includes(options.frameMode) ? options.frameMode : 'exact';
+
   const chromaOptions = options.chromaOptions || { enabled: false, keyColors: [] };
   const keyingOn = !!(chromaOptions.enabled && chromaOptions.keyColors && chromaOptions.keyColors.length > 0);
   const crop = options.cropOptions || { top: 0, bottom: 0, left: 0, right: 0 };
@@ -283,6 +285,8 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
     targetFrames,
     targetFps,
     matte,
+    frameMode,
+    frameTolerance: Math.max(0, Math.round(Number(options.frameTolerance) || 0)),
     maxCandidates: Math.max(1, Math.min(12, Math.round(Number(options.maxCandidates) || 6))),
     minSeparation: Math.max(stepTime * 1.5, 0.12)
   });
@@ -302,8 +306,9 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
 
   if (refineEnabled && refineCount > 0) {
     const fineStep = Math.max(stepTime / 4, nativeStep);
-    const STRIP = 3; // strip covers offsets -3..3 so a +-2 shift keeps a +-1 window
-    const SHIFT = 2;
+    const STRIP = 4; // strip covers offsets -4..4, so a +-3 shift keeps a +-1 window
+    const SHIFT = 3;
+    const lockDuration = analysis.diagnostics.frameMode === 'exact';
 
     for (let c = 0; c < refineCount; c++) {
       const cand = candidates[c];
@@ -312,13 +317,20 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
         `Tinh chỉnh viền nối ứng viên #${c + 1}/${refineCount}...`
       );
 
+      // In exact mode the cycle length is not up for negotiation: it is
+      // frames * outputStep by definition. Locking it turns refinement into a
+      // pure phase search, which both guarantees the frame count survives and
+      // halves the offsets that need evaluating.
+      const lockedDuration = cand.calculatedFrames * outputStep;
+      const endOffset = lockDuration ? lockedDuration : (cand.endTime - cand.startTime);
+
       const startStrip = [];
       const endStrip = [];
       let usable = true;
 
       for (let k = -STRIP; k <= STRIP && usable; k++) {
         const ts = cand.startTime + (k * fineStep);
-        const te = cand.endTime + (k * fineStep);
+        const te = ts + endOffset;
         if (ts < 0 || te > duration) {
           usable = false;
           break;
@@ -349,12 +361,24 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
 
       const anchorCost = localCost(STRIP, STRIP);
       let best = null;
+
       for (let ds = -SHIFT; ds <= SHIFT; ds++) {
-        for (let de = -SHIFT; de <= SHIFT; de++) {
+        // Locked duration: start and end slide together, so every offset keeps
+        // the frame count. Free duration: sweep the end independently too.
+        const endShifts = lockDuration ? [ds] : [];
+        if (!lockDuration) {
+          for (let de = -SHIFT; de <= SHIFT; de++) endShifts.push(de);
+        }
+        for (const de of endShifts) {
           const si = ds + STRIP;
           const ei = de + STRIP;
-          const newDuration = endStrip[ei].time - startStrip[si].time;
-          if (newDuration < minCycle || newDuration > maxCycle) continue;
+          const newDuration = (endStrip[ei].time - startStrip[si].time);
+          if (!lockDuration) {
+            if (newDuration < minCycle || newDuration > maxCycle) continue;
+            // Never let refinement quietly change how many frames come out.
+            const newFrames = Math.max(1, Math.round((newDuration / speed) * targetFps));
+            if (newFrames !== cand.calculatedFrames) continue;
+          }
           const cost = localCost(si, ei);
           if (!best || cost < best.cost) {
             best = { cost, si, ei, newDuration };
@@ -364,16 +388,25 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
 
       if (best && best.cost < anchorCost) {
         const s = startStrip[best.si];
-        const e = endStrip[best.ei];
-        const effective = best.newDuration / speed;
-        const frames = Math.max(1, Math.round(effective * targetFps));
         const gain = anchorCost > 1e-9 ? Math.max(0, 1 - (best.cost / anchorCost)) : 0;
+        const finalDuration = lockDuration ? lockedDuration : best.newDuration;
+
+        if (analysis.diagnostics.frameMode === 'speed') {
+          // Speed mode buys the frame count with tempo, so a shifted cycle
+          // needs its tempo re-solved or the count drifts again.
+          // Quantised to the 2 decimals the speed control keeps, so the tempo
+          // shown on the card is the tempo the player actually runs at.
+          cand.speed = Math.round(((finalDuration * targetFps) / cand.calculatedFrames) * 100) / 100;
+          cand.effectiveDuration = cand.calculatedFrames / targetFps;
+        } else {
+          cand.effectiveDuration = finalDuration / cand.speed;
+        }
 
         cand.startTime = s.time;
-        cand.endTime = e.time;
-        cand.duration = best.newDuration;
-        cand.effectiveDuration = effective;
-        cand.calculatedFrames = frames;
+        // The locked end is computed, not read back from the decoder: the frame
+        // count depends on the requested span, and generation seeks to it anyway.
+        cand.endTime = lockDuration ? (s.time + lockedDuration) : endStrip[best.ei].time;
+        cand.duration = cand.endTime - cand.startTime;
         // Keep the reported cost on the ranking scale; only the ratio transfers.
         cand.seamCost = cand.seamCost * (1 - gain);
         cand.distance = cand.seamCost;
@@ -383,7 +416,7 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
         cand.visualScore = Math.min(100, Math.round((cand.visualScore + ((100 - cand.visualScore) * gain)) * 10) / 10);
         cand.score = Math.min(100, Math.round((cand.score + ((100 - cand.score) * gain * 0.5)) * 10) / 10);
         cand.startSample = s;
-        cand.endSample = e;
+        cand.endSample = endStrip[best.ei];
       }
     }
 
@@ -402,10 +435,14 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
     effectiveDuration: Number(cand.effectiveDuration.toFixed(3)),
     calculatedFrames: cand.calculatedFrames,
     calculatedFps: cand.calculatedFps,
+    requestedSpeed: cand.requestedSpeed,
+    frameMode: cand.frameMode,
+    exactFrames: !!cand.exactFrames,
     score: cand.score,
     visualScore: cand.visualScore,
     periodScore: cand.periodScore,
     frameFitScore: cand.frameFitScore,
+    speedFitScore: cand.speedFitScore,
     motionActivityScore: cand.motionActivityScore,
     refined: !!cand.refined,
     seamCost: Number(cand.seamCost.toFixed(4)),

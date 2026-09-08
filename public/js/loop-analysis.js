@@ -273,6 +273,16 @@ export function hasUsableMatte(descriptors) {
   return mean < 0.97 || min < 0.95;
 }
 
+/**
+ * How a candidate is made to deliver the requested frame count:
+ *  - 'exact'   : only cycles whose length already yields `targetFrames` are
+ *                considered, so the trim window moves and the speed is kept.
+ *  - 'speed'   : any cycle is allowed and the playback speed is solved so the
+ *                cycle yields `targetFrames`, so the seam is kept untouched.
+ *  - 'nearest' : the historical behaviour — score how close the count lands.
+ */
+const FRAME_MODES = new Set(['exact', 'speed', 'nearest']);
+
 /** Binomial neighbourhood weights, indexed by radius. */
 const WINDOW_WEIGHTS = [
   [1],
@@ -317,9 +327,36 @@ export function findLoopCandidates(descriptors, times, options = {}) {
   const minCycle = Math.max(1e-3, Number(options.minCycle) || 0.25);
   const maxCycle = Math.max(minCycle, Math.min(span, Number(options.maxCycle) || span));
 
+  // Source seconds consumed by one output frame. A cycle yields exactly
+  // `targetFrames` frames when its duration is targetFrames * outputStep.
+  const outputStep = speed / targetFps;
+  const frameTolerance = Math.max(0, Math.min(targetFrames - 1, Math.round(Number(options.frameTolerance) || 0)));
+  const requestedMode = FRAME_MODES.has(options.frameMode) ? options.frameMode : 'exact';
+
+  // In 'exact' mode the search never looks at cycles that cannot produce the
+  // requested frame count, so the winner is guaranteed to fit rather than
+  // merely scored on how close it came.
+  let bandLo = minCycle;
+  let bandHi = maxCycle;
+  let frameMode = requestedMode;
+  let frameModeFallback = false;
+
+  if (requestedMode === 'exact') {
+    const wantLo = Math.max(minCycle, (targetFrames - frameTolerance - 0.5) * outputStep);
+    const wantHi = Math.min(maxCycle, (targetFrames + frameTolerance + 0.5) * outputStep);
+    if (wantHi > wantLo && wantLo < span) {
+      bandLo = wantLo;
+      bandHi = wantHi;
+    } else {
+      // The requested length simply does not exist inside this search range.
+      frameMode = 'nearest';
+      frameModeFallback = true;
+    }
+  }
+
   const stepMedian = median(Array.from({ length: N - 1 }, (_, i) => times[i + 1] - times[i])) || (span / (N - 1));
-  const lagMin = Math.max(1, Math.floor(minCycle / stepMedian));
-  const lagMax = Math.min(N - 1, Math.ceil(maxCycle / stepMedian));
+  const lagMin = Math.max(1, Math.floor(bandLo / stepMedian));
+  const lagMax = Math.min(N - 1, Math.ceil(bandHi / stepMedian));
   if (lagMax < lagMin) return empty;
   const lagCount = lagMax - lagMin + 1;
 
@@ -345,8 +382,8 @@ export function findLoopCandidates(descriptors, times, options = {}) {
       const j = i + lag;
       if (j >= N) break;
       const duration = times[j] - times[i];
-      if (duration < minCycle) continue;
-      if (duration > maxCycle) break;
+      if (duration < bandLo) continue;
+      if (duration > bandHi) break;
       coarseTable[rowBase + (lag - lagMin)] = descriptorDistance(descriptors[i], descriptors[j], ctxCoarse);
     }
   }
@@ -396,11 +433,16 @@ export function findLoopCandidates(descriptors, times, options = {}) {
   const weights = WINDOW_WEIGHTS[radius];
   const weightTotal = weights.reduce((a, b) => a + b, 0);
 
+  // Smoothness is perceived at the output frame rate, so the neighbourhood the
+  // seam is matched over should step in output frames, not in sample slots.
+  const autoStride = Math.max(1, Math.min(4, Math.round(outputStep / stepMedian) || 1));
+  const stride = Math.max(1, Math.min(8, Math.round(Number(options.windowStride ?? autoStride)) || 1));
+
   function windowedCost(i, j, distFn) {
     let acc = 0;
     for (let k = -radius; k <= radius; k++) {
-      const ii = Math.max(0, Math.min(N - 1, i + k));
-      const jj = Math.max(0, Math.min(N - 1, j + k));
+      const ii = Math.max(0, Math.min(N - 1, i + (k * stride)));
+      const jj = Math.max(0, Math.min(N - 1, j + (k * stride)));
       acc += weights[k + radius] * distFn(ii, jj);
     }
     return acc / weightTotal;
@@ -416,10 +458,38 @@ export function findLoopCandidates(descriptors, times, options = {}) {
   };
 
   function frameFitFor(duration) {
+    if (frameMode === 'speed') {
+      // Solve the speed that turns this cycle into exactly targetFrames, then
+      // score how far that drags the user away from the speed they asked for.
+      // Quantised to what the speed control can actually hold, so the reported
+      // tempo and the tempo the UI applies are the same number.
+      const adaptedSpeed = Math.round(((duration * targetFps) / targetFrames) * 100) / 100;
+      const usable = adaptedSpeed >= 0.1 && adaptedSpeed <= 16;
+      const drift = Math.abs(Math.log2(adaptedSpeed / speed));
+      return {
+        frames: targetFrames,
+        effective: targetFrames / targetFps,
+        fit: usable ? clamp01(1 - drift) : 0,
+        adaptedSpeed: usable ? adaptedSpeed : speed,
+        usable
+      };
+    }
+
     const effective = duration / speed;
     const frames = Math.max(1, Math.round(effective * targetFps));
     const relError = Math.abs(frames - targetFrames) / targetFrames;
-    return { frames, effective, fit: clamp01(1 - (relError * 1.6)) };
+    const frameError = Math.abs(frames - targetFrames);
+    return {
+      frames,
+      effective,
+      // The band already excludes the wrong lengths; this is the hard gate that
+      // makes "exactly N frames" a guarantee rather than a strong preference.
+      fit: frameMode === 'exact'
+        ? clamp01(1 - (frameError / (frameTolerance + 1)))
+        : clamp01(1 - (relError * 1.6)),
+      adaptedSpeed: speed,
+      usable: frameMode !== 'exact' || frameError <= frameTolerance
+    };
   }
 
   const prelim = [];
@@ -432,7 +502,8 @@ export function findLoopCandidates(descriptors, times, options = {}) {
       const base = coarseTable[rowBase + (lag - lagMin)];
       if (base < 0) continue;
       const cost = windowedCost(i, j, coarseAt);
-      const { fit } = frameFitFor(times[j] - times[i]);
+      const { fit, usable } = frameFitFor(times[j] - times[i]);
+      if (!usable) continue;
       const prom = lagProfile[lag - lagMin].prominence;
       const rank = (0.60 * (1 - clamp01(cost / Math.max(coarseMedian, 1e-6)))) + (0.25 * fit) + (0.15 * prom);
       prelim.push({ i, j, lag, cost, rank });
@@ -484,7 +555,7 @@ export function findLoopCandidates(descriptors, times, options = {}) {
     }
     const activity = clamp01(activityRaw / Math.max(baseline, 1e-6));
 
-    const { frames, effective, fit } = frameFitFor(duration);
+    const { frames, effective, fit, adaptedSpeed } = frameFitFor(duration);
     const prominence = lagProfile[p.lag - lagMin].prominence;
 
     const combined = ((w.seam * seam) + (w.period * prominence) + (w.frameFit * fit) + (w.activity * activity)) / weightSum;
@@ -496,16 +567,20 @@ export function findLoopCandidates(descriptors, times, options = {}) {
       startTime: times[p.i],
       endTime: times[p.j],
       duration,
-      speed,
+      speed: adaptedSpeed,
+      requestedSpeed: speed,
       effectiveDuration: effective,
       calculatedFrames: frames,
       calculatedFps: targetFps,
+      frameMode,
+      exactFrames: frames === targetFrames,
       seamCost,
       distance: seamCost,
       score: toScore(combined),
       visualScore: toScore(seam),
       periodScore: toScore(prominence),
       frameFitScore: toScore(fit),
+      speedFitScore: toScore(frameMode === 'speed' ? fit : 1),
       motionActivityScore: toScore(activity)
     });
   }
@@ -540,6 +615,13 @@ export function findLoopCandidates(descriptors, times, options = {}) {
     diagnostics: {
       samples: N,
       mode: matte ? 'matte' : 'opaque',
+      frameMode,
+      frameModeFallback,
+      targetFrames,
+      outputStep,
+      bandLo,
+      bandHi,
+      windowStride: stride,
       stepMedian,
       lagMin,
       lagMax,

@@ -1349,6 +1349,14 @@
               <label for="inputLoopTargetFrames">Target Frames:</label>
               <input type="number" id="inputLoopTargetFrames" class="form-input compact-number" min="4" max="200" value="24" style="width: 48px; text-align: center;">
             </div>
+            <div class="loop-scan-field" title="Cách bảo đảm chu kỳ ra đúng số frame mong muốn">
+              <label for="selectLoopFrameMode">Khớp frame:</label>
+              <select id="selectLoopFrameMode" class="form-input compact-select">
+                <option value="exact" selected>Đúng số frame (dịch chu kỳ)</option>
+                <option value="speed">Đúng số frame (chỉnh tốc độ)</option>
+                <option value="nearest">Gần đúng (ưu tiên viền mượt)</option>
+              </select>
+            </div>
             <div class="loop-scan-field" title="Tốc độ khung hình mong muốn khi phát animation">
               <label for="selectLoopTargetFps">Target FPS:</label>
               <select id="selectLoopTargetFps" class="form-input compact-select">

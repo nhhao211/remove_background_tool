@@ -280,7 +280,8 @@ test('findLoopCandidates: 240-sample scan stays well inside interactive budget',
     minCycle: 0.4,
     maxCycle: 3.0,
     targetFps: 12,
-    targetFrames: 12
+    targetFrames: 12,
+    frameMode: 'nearest'
   });
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
 
@@ -291,4 +292,147 @@ test('findLoopCandidates: 240-sample scan stays well inside interactive budget',
     `refined ${diagnostics.pairsRefined} of ${diagnostics.pairsScanned}`
   );
   assert.ok(elapsedMs < 1500, `ranking took ${elapsedMs.toFixed(0)}ms`);
+
+  // Exact mode narrows the duration band up front, so it never even scans the
+  // pairs the nearest-mode pass has to prune away.
+  const exact = findLoopCandidates(descriptors, times, {
+    minCycle: 0.4,
+    maxCycle: 3.0,
+    targetFps: 12,
+    targetFrames: 12,
+    frameMode: 'exact'
+  });
+  assert.ok(
+    exact.diagnostics.pairsScanned < diagnostics.pairsScanned * 0.25,
+    `exact scanned ${exact.diagnostics.pairsScanned} vs nearest ${diagnostics.pairsScanned}`
+  );
+});
+
+test('frame mode exact: every candidate lands on the requested frame count', () => {
+  const descriptors = orbitSequence(200, 16);
+  const times = uniformTimes(200, 0.05);
+
+  for (const targetFrames of [8, 12, 16, 24]) {
+    const { candidates, diagnostics } = findLoopCandidates(descriptors, times, {
+      minCycle: 0.2,
+      maxCycle: 4.0,
+      targetFps: 12,
+      targetFrames,
+      frameMode: 'exact'
+    });
+    assert.equal(diagnostics.frameMode, 'exact', `mode fell back for ${targetFrames}f`);
+    assert.ok(candidates.length > 0, `no candidate for ${targetFrames}f`);
+    for (const cand of candidates) {
+      assert.equal(
+        cand.calculatedFrames,
+        targetFrames,
+        `wanted ${targetFrames}f, got ${cand.calculatedFrames}f`
+      );
+      assert.equal(cand.exactFrames, true);
+      assert.equal(cand.speed, cand.requestedSpeed, 'exact mode must not retune speed');
+    }
+  }
+});
+
+test('frame mode exact: honours the tolerance band', () => {
+  const descriptors = orbitSequence(200, 16);
+  const times = uniformTimes(200, 0.05);
+  const { candidates } = findLoopCandidates(descriptors, times, {
+    minCycle: 0.2,
+    maxCycle: 4.0,
+    targetFps: 12,
+    targetFrames: 12,
+    frameTolerance: 2,
+    frameMode: 'exact'
+  });
+  assert.ok(candidates.length > 0);
+  for (const cand of candidates) {
+    assert.ok(
+      Math.abs(cand.calculatedFrames - 12) <= 2,
+      `${cand.calculatedFrames}f is outside the ±2 band`
+    );
+  }
+});
+
+test('frame mode exact: falls back when the requested length cannot exist', () => {
+  const descriptors = orbitSequence(60, 12);
+  const times = uniformTimes(60, 0.05);
+  // 400 frames at 12fps is 33s of output; the clip is 3s long.
+  const { diagnostics } = findLoopCandidates(descriptors, times, {
+    minCycle: 0.2,
+    maxCycle: 2.0,
+    targetFps: 12,
+    targetFrames: 400,
+    frameMode: 'exact'
+  });
+  assert.equal(diagnostics.frameModeFallback, true);
+  assert.equal(diagnostics.frameMode, 'nearest');
+});
+
+test('frame mode speed: retunes tempo so the frame count is always exact', () => {
+  const descriptors = orbitSequence(200, 17);
+  const times = uniformTimes(200, 0.05);
+  const { candidates, diagnostics } = findLoopCandidates(descriptors, times, {
+    minCycle: 0.3,
+    maxCycle: 3.0,
+    targetFps: 12,
+    targetFrames: 15,
+    frameMode: 'speed'
+  });
+  assert.equal(diagnostics.frameMode, 'speed');
+  assert.ok(candidates.length > 0);
+  for (const cand of candidates) {
+    assert.equal(cand.calculatedFrames, 15);
+    assert.equal(cand.exactFrames, true);
+    assert.ok(cand.speed >= 0.1 && cand.speed <= 16, `speed ${cand.speed} out of range`);
+    assert.ok(
+      Math.abs(cand.effectiveDuration - (15 / 12)) < 1e-9,
+      `output length ${cand.effectiveDuration}s should be 15/12s`
+    );
+    // The tempo must be representable by the 2-decimal speed control.
+    assert.equal(cand.speed, Math.round(cand.speed * 100) / 100);
+  }
+});
+
+test('frame mode nearest: keeps the legacy soft-scoring behaviour', () => {
+  const descriptors = orbitSequence(200, 16);
+  const times = uniformTimes(200, 0.05);
+  const { candidates, diagnostics } = findLoopCandidates(descriptors, times, {
+    minCycle: 0.2,
+    maxCycle: 4.0,
+    targetFps: 12,
+    targetFrames: 12,
+    frameMode: 'nearest'
+  });
+  assert.equal(diagnostics.frameMode, 'nearest');
+  assert.equal(diagnostics.frameModeFallback, false);
+  assert.ok(candidates.length > 0);
+  // The whole cycle range stays reachable rather than being clipped to a band.
+  assert.ok(diagnostics.bandLo <= 0.2 + 1e-9);
+  assert.ok(diagnostics.bandHi >= 4.0 - 1e-9);
+});
+
+test('findLoopCandidates: reports the output-frame stride it used', () => {
+  const descriptors = orbitSequence(120, 16);
+  const times = uniformTimes(120, 0.05);
+  // 1x speed at 12fps = 0.0833s per output frame vs a 0.05s sample step → 2.
+  const { diagnostics } = findLoopCandidates(descriptors, times, {
+    minCycle: 0.2,
+    maxCycle: 3.0,
+    targetFps: 12,
+    targetFrames: 12,
+    frameMode: 'nearest'
+  });
+  assert.ok(Math.abs(diagnostics.outputStep - (1 / 12)) < 1e-9);
+  assert.equal(diagnostics.windowStride, 2);
+
+  const forced = findLoopCandidates(descriptors, times, {
+    minCycle: 0.2,
+    maxCycle: 3.0,
+    targetFps: 12,
+    targetFrames: 12,
+    frameMode: 'nearest',
+    windowStride: 1
+  });
+  assert.equal(forced.diagnostics.windowStride, 1);
 });

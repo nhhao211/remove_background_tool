@@ -18,7 +18,7 @@
   - `public/js/app.js`: state, event handlers, trim editor, eyedropper, chroma key, sprite generation, preview và download.
   - `public/js/stroke-mask.js`: rasterize nét bút thành mask 1 byte/pixel; dùng chung cho Subject Protect Brush và Bút Xóa. Mode `add`/`subtract` (tên cũ `protect`/`erase` vẫn đọc được từ localStorage).
   - `public/js/erase-mask.js`: nhân alpha của `ImageData` theo mask của Bút Xóa; tách riêng để test được ngoài browser.
-  - `public/js/loop-analysis.js`: lõi thuật toán tìm chu kỳ lặp (descriptor 32x32, lag profile/autocorrelation, seam cost có cửa sổ, chuẩn hoá tương phản). Thuần tuý, không dùng DOM, test bằng `test/loop-analysis.test.mjs`.
+  - `public/js/loop-analysis.js`: lõi thuật toán tìm chu kỳ lặp (descriptor 32x32, lag profile/autocorrelation, seam cost có cửa sổ, chuẩn hoá tương phản). Có 3 chế độ khớp frame (`exact` khoá độ dài chu kỳ, `speed` giải lại tốc độ phát, `nearest` chấm điểm mềm) để chu kỳ ra đúng số frame mong muốn. Thuần tuý, không dùng DOM, test bằng `test/loop-analysis.test.mjs`.
   - `public/js/loop-optimizer.js`: phần cần DOM của Auto Loop Finder (seek, capture, chroma key, tinh chỉnh dưới mức mẫu, thumbnail) cộng crossfade và diff heatmap.
   - `public/js/keyer/`: module matting dùng chung, có baseline byte-identical trong `test/keyer/`. Không sửa nếu chưa cần; `assertOptions()` chặn option lạ.
   - `public/css/style.css`: giao diện và trạng thái tương tác.
