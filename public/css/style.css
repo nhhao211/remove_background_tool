@@ -162,8 +162,7 @@ body {
   display: grid;
   grid-template-columns: 310px minmax(0, 1fr);
   gap: 12px;
-  max-width: 1800px;
-  margin: 0 auto;
+  width: 100%;
   align-items: start;
 }
 
@@ -809,14 +808,14 @@ body {
     "sidebar chroma";
   align-items: start;
   gap: 12px;
-  max-width: 1800px;
-  margin: 0 auto;
+  width: 100%;
 }
 
 .preview-grid {
   grid-area: preview;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  align-items: start;
   gap: 12px;
 }
 
@@ -964,6 +963,45 @@ body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  user-select: none;
+}
+
+/* The sprite preview holds the whole frame grid, so give it far more room than
+   the source-video box: it grows with the viewport instead of being capped at
+   320px, letting "Fit" render the sheet much larger. */
+.sprite-viewport {
+  height: clamp(360px, 68vh, 900px);
+}
+
+/* Drag handle under the sprite preview: click-drag to set the viewport height,
+   double-click to reset. The chosen height is persisted per browser. */
+.viewport-resizer {
+  height: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  touch-action: none;
+}
+.viewport-resizer:hover,
+.viewport-resizer.dragging {
+  background: rgba(59, 130, 246, 0.25);
+}
+.viewport-resizer-grip {
+  width: 46px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+}
+.viewport-resizer:hover .viewport-resizer-grip,
+.viewport-resizer.dragging .viewport-resizer-grip {
+  background: rgba(255, 255, 255, 0.55);
+}
+body.viewport-resizing {
+  cursor: ns-resize;
   user-select: none;
 }
 

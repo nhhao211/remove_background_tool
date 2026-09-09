@@ -125,6 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Preview
   const previewCanvas = document.getElementById('previewCanvas');
   const spriteViewport = document.getElementById('spriteViewport');
+  const spriteViewportResizer = document.getElementById('spriteViewportResizer');
   const btnPlayPause = document.getElementById('btnPlayPause');
   const iconPlayPause = document.getElementById('iconPlayPause');
   const textPlayPause = document.getElementById('textPlayPause');
@@ -5607,6 +5608,57 @@ document.addEventListener('DOMContentLoaded', () => {
     state.panY = 0;
     applyTransform();
   });
+
+  // === PREVIEW HEIGHT RESIZER ===
+  // Drag the handle under the sprite preview to grow/shrink the viewport; the
+  // pick persists per browser. Double-click clears it back to the CSS default.
+  const PREVIEW_HEIGHT_KEY = 'spritePreviewHeight';
+  const PREVIEW_HEIGHT_MIN = 240;
+  const previewHeightMax = () => Math.max(PREVIEW_HEIGHT_MIN + 120, window.innerHeight - 160);
+
+  function applyPreviewHeight(px) {
+    const h = Math.round(Math.max(PREVIEW_HEIGHT_MIN, Math.min(previewHeightMax(), px)));
+    spriteViewport.style.height = `${h}px`;
+    applyTransform();
+    return h;
+  }
+
+  try {
+    const saved = parseInt(localStorage.getItem(PREVIEW_HEIGHT_KEY), 10);
+    if (Number.isFinite(saved)) applyPreviewHeight(saved);
+  } catch (_) { /* storage is optional */ }
+
+  if (spriteViewportResizer) {
+    let resizeStartY = 0;
+    let resizeStartH = 0;
+
+    const onResizeMove = (e) => {
+      const h = applyPreviewHeight(resizeStartH + (e.clientY - resizeStartY));
+      try { localStorage.setItem(PREVIEW_HEIGHT_KEY, String(h)); } catch (_) { /* optional */ }
+    };
+    const onResizeEnd = () => {
+      spriteViewportResizer.classList.remove('dragging');
+      document.body.classList.remove('viewport-resizing');
+      window.removeEventListener('pointermove', onResizeMove);
+      window.removeEventListener('pointerup', onResizeEnd);
+    };
+
+    spriteViewportResizer.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      resizeStartY = e.clientY;
+      resizeStartH = spriteViewport.getBoundingClientRect().height;
+      spriteViewportResizer.classList.add('dragging');
+      document.body.classList.add('viewport-resizing');
+      window.addEventListener('pointermove', onResizeMove);
+      window.addEventListener('pointerup', onResizeEnd);
+    });
+
+    spriteViewportResizer.addEventListener('dblclick', () => {
+      spriteViewport.style.height = '';
+      try { localStorage.removeItem(PREVIEW_HEIGHT_KEY); } catch (_) { /* optional */ }
+      applyTransform();
+    });
+  }
 
   spriteViewport.addEventListener('wheel', (e) => {
     if (state.isEyedropperActive) return; // preview overlay handles zoom while picking
