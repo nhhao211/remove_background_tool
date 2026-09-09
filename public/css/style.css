@@ -1562,6 +1562,48 @@ body {
   cursor: crosshair;
 }
 
+/* Erase Brush surface over the sprite preview.
+   The canvas is pinned to the preview's *rendered* box, transform included, so
+   the mask tint and the brush ring stay welded to the cells through zoom and
+   pan without having to re-derive the transform here. */
+.preview-erase-canvas {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  z-index: 56;
+  touch-action: none;
+  image-rendering: pixelated;
+  /* Matches .sprite-canvas's transform transition so a zoom step does not tear
+     the overlay away from the cells it is drawn over for 50ms. */
+  transition: left 0.05s ease-out, top 0.05s ease-out, width 0.05s ease-out, height 0.05s ease-out;
+}
+
+.preview-erase-canvas.visible {
+  display: block;
+}
+
+.preview-erase-canvas.active {
+  pointer-events: auto;
+  cursor: crosshair;
+  transition: none;
+}
+
+/* Left-drag paints while the brush is armed, so the grab cursor the preview
+   normally shows would be promising a pan that no longer happens there. */
+.sprite-viewport.erase-painting .sprite-canvas {
+  cursor: crosshair;
+  /* Eased transform and eased geometry never agree exactly; while a brush is
+     armed the two surfaces must line up pixel for pixel, so neither eases. */
+  transition: none;
+}
+
+.preview-erase-banner {
+  top: 10px;
+  left: 12px;
+  right: 12px;
+  font-size: 0.74rem;
+}
+
 /* Eyedropper Magnifier Loupe */
 .eyedropper-loupe {
   position: absolute;
@@ -2594,6 +2636,39 @@ body {
   height: 28px;
   margin-left: auto;
   padding: 0 5px;
+}
+
+/* Painting scope for the sprite preview: one cell, or the whole clip. */
+.erase-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+}
+
+.erase-scope-label {
+  font-size: 0.74rem;
+  color: #94a3b8;
+}
+
+.erase-scope-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  font-size: 0.74rem;
+}
+
+.erase-scope-btn.active {
+  color: #fee2e2;
+  border-color: #ef4444;
+  background: rgba(185, 28, 28, 0.35);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.2);
+}
+
+#eraseScopeHint {
+  margin-left: auto;
 }
 
 .erase-brush-controls {

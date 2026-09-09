@@ -13,7 +13,7 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 10. **Clean Sprite Sheet**: Upload PNG/WebP/JPEG tĩnh ở tab riêng, tự nhận diện nền từ biên ảnh hoặc từng cell, bảo vệ vùng màu bị bao kín trong chủ thể, làm sạch viền và export lại PNG/WebP trong suốt.
 11. **Subject Protect Brush**: Vẽ mask mềm trực tiếp trên Source Video để bảo vệ màu và alpha của chủ thể ở những vùng gần màu nền; hỗ trợ bút/tẩy, size, strength, hardness, undo/redo và preset cho chi tiết đặc hoặc bán trong suốt.
 12. **Subject Color Replace**: Dùng eyedropper chọn màu chủ thể từ Source Video hoặc Sprite Preview, chọn màu đích, rồi điều chỉnh tolerance/strength để đổi dải màu tương ứng mà vẫn giữ highlight và bóng.
-13. **Bút Xóa (Erase Brush)**: Bôi trực tiếp lên Source Video để xóa hẳn vùng nền còn sót hay chi tiết thừa mà chroma key không bắt được (logo, micro, bóng, vệt sáng); có Erase/Restore, size/strength/hardness, vòng tròn cỡ bút, undo/redo/clear và mask áp dụng cho mọi frame.
+13. **Bút Xóa (Erase Brush)**: Bôi trực tiếp lên Source Video **hoặc thẳng trên khung Preview** (sprite sheet, cả chế độ Anim và Sheet) để xóa hẳn vùng nền còn sót hay chi tiết thừa mà chroma key không bắt được (logo, micro, bóng, vệt sáng); có Erase/Restore, size/strength/hardness, vòng tròn cỡ bút, undo/redo/clear. Nét bôi trên Source Video áp cho mọi frame, còn nét bôi trên một ô của sprite sheet **chỉ xóa đúng ô đó** — hoạt động như Eraser trong Paint để dọn chi tiết của riêng một frame.
 
 ---
 
@@ -93,11 +93,14 @@ Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http:
 
 4. **Xóa chi tiết thừa bằng Bút Xóa (Erase Brush):**
    - Mở panel **Bút Xóa**, nhấn **Erase** rồi bôi lên vùng nền còn sót hoặc chi tiết không muốn giữ (logo, dây micro, vệt sáng, bóng đổ).
+   - Bôi được trên **Source Video** hoặc **thẳng trên khung Preview** sau khi đã **Generate** — nhìn ngay đúng chỗ cần xóa trên sprite sheet, cả chế độ `Anim` lẫn `Sheet`. Khi bút đang bật, pan khung Preview bằng chuột giữa hoặc chuột phải.
    - `Size` đổi cỡ bút, `Strength` quyết định xóa hẳn hay chỉ làm mờ dần, `Hardness` quyết định biên bút cứng hay mềm.
    - Giữ **Alt** trong lúc bôi để tạm đổi sang chiều ngược lại; nhấn **Restore** để bôi khôi phục lại vùng đã lỡ xóa.
    - Phím `[` và `]` giảm/tăng cỡ bút (thêm **Shift** để nhảy bước lớn), `Esc` để thoát công cụ.
    - **Undo / Redo / Clear** để sửa; `Show mask` chỉ bật/tắt lớp phủ đỏ hướng dẫn, không ảnh hưởng file xuất.
-   - Mask được vẽ theo tọa độ của Source Video nên bám đúng nội dung video và áp dụng cho **mọi frame**. Nét vẽ được lưu theo từng video cùng các thiết lập khác.
+   - Nét bôi trên **Source Video** áp dụng cho **mọi frame**. Nét bôi trên **một ô của Preview** mặc định chỉ xóa **đúng ô đó**, để dọn chi tiết chỉ xuất hiện ở một vài frame.
+   - Hàng `Bôi trên Preview:` chọn giữa **Frame này** và **Mọi frame**; giữ **Shift** lúc bắt đầu nét để tạm đổi sang phạm vi còn lại. Ở chế độ `Sheet`, ô sắp bị bôi được viền nét đứt đỏ, và banner luôn ghi rõ nét sắp vẽ thuộc phạm vi nào.
+   - Mask được vẽ theo tọa độ của Source Video nên bám đúng nội dung video; nét theo frame còn nhớ cả thời điểm được bôi nên nếu bạn đổi số hàng/cột hay FPS rồi **Generate** lại, nét sẽ tự bám sang frame gần thời điểm đó nhất. Nét vẽ được lưu theo từng video cùng các thiết lập khác.
    - Nếu sprite sheet đã generate, nét vẽ mới được áp ngay vào preview; với video quá lớn app sẽ nhắc nhấn **Generate** lại.
 
 5. **Tùy chỉnh Sprite Sheet:**

@@ -6,6 +6,8 @@ import { EditorUtils as U } from './editor-utils.js';
 import { runKeyer } from './keyer/index.js';
 import { normalizeStrokes, rasterizeStrokeMask } from './stroke-mask.js';
 import { applyEraseMask } from './erase-mask.js';
+import { eraseStrokePlan, strokesForFrame, isGlobalStroke } from './erase-frames.js';
+import { mapPreviewPointToSource, cellBrushScale, normalizeSheetLayout } from './preview-erase-map.js';
 import { applyColorReplacement } from './color-replace.js';
 import { applyAlphaBleed } from './alpha-bleed.js';
 import { applyColorGrade, isColorGradeIdentity, COLOR_GRADE_DEFAULTS } from './color-grade.js';
@@ -45,6 +47,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const eraseBrushBannerText = document.getElementById('eraseBrushBannerText');
   const eraseBrushCanvas = document.getElementById('eraseBrushCanvas');
   const btnCancelEraseBrush = document.getElementById('btnCancelEraseBrush');
+  const previewEraseCanvas = document.getElementById('previewEraseCanvas');
+  const previewEraseBanner = document.getElementById('previewEraseBanner');
+  const previewEraseBannerText = document.getElementById('previewEraseBannerText');
+  const btnCancelPreviewErase = document.getElementById('btnCancelPreviewErase');
   const eyedropperLoupe = document.getElementById('eyedropperLoupe');
   const eyedropperCanvas = document.getElementById('eyedropperCanvas');
   const eyedropperColorBadge = document.getElementById('eyedropperColorBadge');
@@ -244,6 +250,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnEraseUndo = document.getElementById('btnEraseUndo');
   const btnEraseRedo = document.getElementById('btnEraseRedo');
   const btnEraseClear = document.getElementById('btnEraseClear');
+  const btnEraseScopeFrame = document.getElementById('btnEraseScopeFrame');
+  const btnEraseScopeAll = document.getElementById('btnEraseScopeAll');
+  const eraseScopeHint = document.getElementById('eraseScopeHint');
   const chkShowEraseMask = document.getElementById('chkShowEraseMask');
   const sliderEraseSize = document.getElementById('sliderEraseSize');
   const numEraseSize = document.getElementById('numEraseSize');
@@ -381,7 +390,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputSpeedCustom', 'btnEditorSkipBack', 'btnEditorPlay', 'btnEditorSkipForward',
       'btnAutoLoopFinder', 'btnSetTrimStart', 'btnSetTrimEnd', 'btnResetTrim', 'trimHandleLeft', 'trimHandleRight',
       'trimStartInput', 'trimEndInput',
-      'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'inputPreviewBgColor', 'btnPreviewMoveToCleaner', 'btnCancelPreviewEyedropper',
+      'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'inputPreviewBgColor', 'btnPreviewMoveToCleaner', 'btnCancelPreviewEyedropper', 'btnCancelPreviewErase',
       'btnGenerate', 'btnMoveToCleaner', 'btnDownloadMain', 'btnDownloadBundleZip', 'btnDownloadSpriteOnly', 'btnDownloadAudioOnly', 'btnDropdownMoveToCleaner',
       'btnBrowseFile', 'btnToggleCollapse', 'btnBrowseSecondary',
       // Sprite Sheet Settings (sidebar)
@@ -399,6 +408,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'headerProtectionBrush', 'btnProtectionBrush', 'btnProtectionEraser', 'btnProtectionUndo', 'btnProtectionRedo', 'btnProtectionClear',
       'chkShowProtectionMask', 'sliderProtectionSize', 'numProtectionSize', 'sliderProtectionStrength', 'numProtectionStrength', 'sliderProtectionHardness', 'numProtectionHardness', 'selectProtectionPreset',
       'headerEraseBrush', 'btnEraseBrush', 'btnEraseRestore', 'btnEraseUndo', 'btnEraseRedo', 'btnEraseClear',
+      'btnEraseScopeFrame', 'btnEraseScopeAll',
       'chkShowEraseMask', 'sliderEraseSize', 'numEraseSize', 'sliderEraseStrength', 'numEraseStrength', 'sliderEraseHardness', 'numEraseHardness',
       'headerColorReplace', 'chkEnableColorReplace', 'inputColorReplaceSource', 'btnPickColorReplaceSource', 'inputColorReplaceTarget',
       'sliderColorReplaceTolerance', 'numColorReplaceTolerance', 'sliderColorReplaceStrength', 'numColorReplaceStrength',
@@ -475,16 +485,40 @@ document.addEventListener('DOMContentLoaded', () => {
     protectionPointerId: null,
     activeProtectionStroke: null,
     eraseTool: null, // 'erase' | 'restore' | null
+    // What a stroke painted on the sprite preview binds to: 'frame' erases only
+    // the cell under the brush (the Paint-style eraser), 'all' erases across the
+    // whole clip the way a stroke on the source video always has. Shift inverts
+    // it for the duration of a stroke.
+    eraseScope: 'frame', // 'frame' | 'all'
     eraseStrokes: [],
     eraseUndoActions: [],
     eraseRedoActions: [],
     erasePointerId: null,
     activeEraseStroke: null,
+    eraseSurface: null, // 'video' | 'preview' — which canvas owns the live stroke
+    // The preview cell a stroke started in. A drag that wanders into the next
+    // cell is clamped to this one instead of teleporting across the crop window.
+    eraseStrokeCell: null,
     eraseCursor: null, // { x, y } in erase-overlay pixels, for the brush ring
+    // Brush ring position on the sprite preview, in preview *bitmap* pixels, so
+    // it survives zoom/pan without being recomputed from the transform.
+    previewEraseCursor: null,
+    // Whether Shift was down at the last preview hover, so the banner and the
+    // cell outline can show the scope the next stroke would actually get.
+    previewEraseShift: false,
     // Phase 2 live re-apply: pre-erase copies of the generated frames plus the
     // sheet geometry needed to recomposite them without seeking the video again.
     rawFrames: [],
     sheetLayout: null,
+    // Where each generated cell was extracted from, in source-video pixels.
+    // Constant with Subject Alignment off; per-frame once alignment slides the
+    // extraction rectangle around. Painting on the preview needs this to run the
+    // layout backwards, so it is recorded on every path.
+    frameOrigins: [],
+    // When each generated cell was sampled, in seconds. A per-frame stroke is
+    // re-bound through these, so it stays on the same moment of the clip after a
+    // regenerate with a different frame count.
+    frameTimes: [],
     eraseLiveAvailable: false,
     eraseRegenerateHintShown: false,
     previewEyedropperPointer: null,
@@ -582,6 +616,7 @@ document.addEventListener('DOMContentLoaded', () => {
       protectionPreset: selectProtectionPreset.value,
       showProtectionMask: chkShowProtectionMask.checked,
       eraseStrokes: normalizeStrokes(state.eraseStrokes),
+      eraseScope: state.eraseScope,
       eraseBrushSize: parseInt(sliderEraseSize.value, 10),
       eraseBrushStrength: parseFloat(sliderEraseStrength.value),
       eraseBrushHardness: parseFloat(sliderEraseHardness.value),
@@ -1175,6 +1210,7 @@ document.addEventListener('DOMContentLoaded', () => {
     selectProtectionPreset.value = saved?.protectionPreset === 'solid' ? 'solid' : 'translucent';
     chkShowProtectionMask.checked = saved?.showProtectionMask !== false;
     state.eraseStrokes = normalizeStrokes(saved?.eraseStrokes);
+    state.eraseScope = saved?.eraseScope === 'all' ? 'all' : 'frame';
     state.eraseUndoActions = [];
     state.eraseRedoActions = [];
     markEraseStrokesChanged();
@@ -2960,6 +2996,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // user falls back to pressing Generate, which costs time but not RAM.
   const LIVE_ERASE_PIXEL_BUDGET = 120e6;
 
+  // Total pixels the red preview tint may allocate across every tile it caches.
+  // One tile per erased cell adds up fast on a full-resolution sheet.
+  const PREVIEW_TINT_PIXEL_BUDGET = 24e6;
+
   function activeBrushSliders() {
     if (state.eraseTool) return { slider: sliderEraseSize, number: numEraseSize, update: updateEraseBrushUI };
     if (state.protectionTool) return { slider: sliderProtectionSize, number: numProtectionSize, update: updateProtectionBrushUI };
@@ -2994,15 +3034,38 @@ document.addEventListener('DOMContentLoaded', () => {
     lblEraseSize.textContent = `${size} px`;
     lblEraseStrength.textContent = `${Math.round(strength * 100)}%`;
     lblEraseHardness.textContent = `${Math.round(hardness * 100)}%`;
+    const framedCount = state.eraseStrokes.reduce((total, stroke) => total + (isGlobalStroke(stroke) ? 0 : 1), 0);
     eraseBrushStatus.textContent = strokeCount > 0
-      ? `${strokeCount} erase stroke${strokeCount > 1 ? 's' : ''}`
+      ? `${strokeCount} erase stroke${strokeCount > 1 ? 's' : ''}${framedCount > 0 ? ` · ${framedCount} theo frame` : ''}`
       : 'No erased areas';
     btnEraseUndo.disabled = state.eraseUndoActions.length === 0;
     btnEraseRedo.disabled = state.eraseRedoActions.length === 0;
     btnEraseClear.disabled = strokeCount === 0;
     btnEraseBrush.classList.toggle('active', state.eraseTool === 'erase');
     btnEraseRestore.classList.toggle('active', state.eraseTool === 'restore');
+    btnEraseScopeFrame?.classList.toggle('active', state.eraseScope === 'frame');
+    btnEraseScopeAll?.classList.toggle('active', state.eraseScope !== 'frame');
+    if (eraseScopeHint) {
+      eraseScopeHint.textContent = state.generatedFrames.length === 0
+        ? 'Cần Generate trước'
+        : 'Giữ Shift để tạm đổi';
+    }
   }
+
+  function setEraseScope(scope) {
+    const next = scope === 'all' ? 'all' : 'frame';
+    if (state.eraseScope === next) return;
+    state.eraseScope = next;
+    updateEraseBrushUI();
+    updatePreviewEraseOverlay();
+    saveClipStateDebounced();
+    showToast(next === 'frame'
+      ? 'Bôi trên Preview chỉ xóa đúng frame đang bôi'
+      : 'Bôi trên Preview áp cho mọi frame', 'info');
+  }
+
+  btnEraseScopeFrame?.addEventListener('click', () => setEraseScope('frame'));
+  btnEraseScopeAll?.addEventListener('click', () => setEraseScope('all'));
 
   syncSliderAndNumber(sliderEraseSize, numEraseSize, { decimals: 0, onChange: () => { updateEraseBrushUI(); updateEraseOverlay(); saveClipStateDebounced(); } });
   syncSliderAndNumber(sliderEraseStrength, numEraseStrength, { decimals: 2, onChange: () => { updateEraseBrushUI(); saveClipStateDebounced(); } });
@@ -3028,7 +3091,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  /**
+   * Repaints every surface the brush can be used on. The mask is one thing drawn
+   * in two places, so the two overlays are never refreshed independently — every
+   * existing caller keeps working and picks up the preview surface for free.
+   */
   function updateEraseOverlay() {
+    updateVideoEraseOverlay();
+    updatePreviewEraseOverlay();
+  }
+
+  function updateVideoEraseOverlay() {
     if (!eraseBrushCanvas) return;
     const shouldShow = state.videoLoaded
       && !state.isEyedropperActive
@@ -3055,9 +3128,7 @@ document.addEventListener('DOMContentLoaded', () => {
       || eraseOverlayCache.height !== targetHeight
       || eraseOverlayCache.revision !== eraseMaskRevision;
     if (cacheStale) {
-      const cacheCanvas = eraseOverlayCache?.canvas || document.createElement('canvas');
-      rasterizeStrokeMask(state.eraseStrokes, {
-        canvas: cacheCanvas,
+      const geometry = {
         sourceWidth: state.videoWidth,
         sourceHeight: state.videoHeight,
         cropX: 0,
@@ -3067,8 +3138,20 @@ document.addEventListener('DOMContentLoaded', () => {
         targetWidth,
         targetHeight,
         color: 'rgba(248,113,113,{alpha})'
-      });
-      eraseOverlayCache = { canvas: cacheCanvas, width: targetWidth, height: targetHeight, revision: eraseMaskRevision };
+      };
+      // Strokes bound to one sprite cell are drawn separately and faintly. The
+      // video is not a cell, so a solid tint here would claim the whole clip
+      // loses that area — but hiding them would leave the user staring at a spot
+      // they erased, wondering where their stroke went.
+      const cacheCanvas = eraseOverlayCache?.canvas || document.createElement('canvas');
+      rasterizeStrokeMask(state.eraseStrokes.filter(isGlobalStroke), { canvas: cacheCanvas, ...geometry });
+      const framed = state.eraseStrokes.filter((stroke) => !isGlobalStroke(stroke));
+      let framedCanvas = null;
+      if (framed.length > 0) {
+        framedCanvas = eraseOverlayCache?.framedCanvas || document.createElement('canvas');
+        rasterizeStrokeMask(framed, { canvas: framedCanvas, ...geometry });
+      }
+      eraseOverlayCache = { canvas: cacheCanvas, framedCanvas, width: targetWidth, height: targetHeight, revision: eraseMaskRevision };
     }
 
     if (eraseBrushCanvas.width !== targetWidth) eraseBrushCanvas.width = targetWidth;
@@ -3076,6 +3159,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const ctx = eraseBrushCanvas.getContext('2d');
     ctx.clearRect(0, 0, targetWidth, targetHeight);
     ctx.drawImage(eraseOverlayCache.canvas, 0, 0);
+    if (eraseOverlayCache.framedCanvas) {
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      ctx.drawImage(eraseOverlayCache.framedCanvas, 0, 0);
+      ctx.restore();
+    }
     drawEraseBrushCursor(ctx, targetWidth, targetHeight);
     eraseBrushCanvas.classList.add('visible');
   }
@@ -3118,13 +3207,58 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  /**
+   * Builds the stroke both surfaces push their points into.
+   *
+   * Alt inverts the tool for the duration of the stroke, the way every other
+   * paint app does it, so touching up an over-erased edge needs no round trip
+   * through the toolbar.
+   *
+   * `binding` is `null` for a stroke that belongs to the whole clip — always the
+   * case on the source video, which has no cells — or `{ frame, frameTime }` for
+   * the Paint-style eraser that only touches the cell it was drawn on.
+   */
+  function createEraseStroke(point, altKey, binding = null) {
+    const painting = altKey ? (state.eraseTool === 'restore') : (state.eraseTool === 'erase');
+    return {
+      mode: painting ? 'add' : 'subtract',
+      points: [point],
+      size: Math.round(U.clampNumber(sliderEraseSize.value, 5, 500, 80)),
+      // Restore has to fully undo what Erase laid down, otherwise a 60%-strength
+      // rub leaves a permanent ghost that no amount of scrubbing removes.
+      strength: painting ? U.clampNumber(sliderEraseStrength.value, 0, 1, 1) : 1,
+      hardness: U.clampNumber(sliderEraseHardness.value, 0, 1, 0.80),
+      frame: binding ? binding.frame : null,
+      frameTime: binding ? binding.frameTime : null
+    };
+  }
+
+  /**
+   * The binding a stroke started on the preview should carry.
+   *
+   * The scope buttons set the default and Shift inverts it for one stroke, the
+   * same bargain Alt strikes with Erase/Restore. `frameTime` rides along so the
+   * stroke can find its frame again if the sheet is regenerated at a different
+   * frame count; without it the index would silently point at another moment of
+   * the clip.
+   */
+  function eraseBindingForFrame(frameIndex, shiftKey) {
+    const perFrame = shiftKey ? state.eraseScope !== 'frame' : state.eraseScope === 'frame';
+    if (!perFrame || !Number.isFinite(frameIndex)) return null;
+    const time = state.frameTimes[frameIndex];
+    return { frame: frameIndex, frameTime: Number.isFinite(time) ? time : null };
+  }
+
   function finishEraseStroke(event) {
     const stroke = state.activeEraseStroke;
     if (!stroke) return;
     if (event?.pointerId != null && event.pointerId !== state.erasePointerId) return;
-    try { eraseBrushCanvas.releasePointerCapture?.(state.erasePointerId); } catch (_) { /* optional */ }
+    const surface = state.eraseSurface === 'preview' ? previewEraseCanvas : eraseBrushCanvas;
+    try { surface?.releasePointerCapture?.(state.erasePointerId); } catch (_) { /* optional */ }
     state.activeEraseStroke = null;
     state.erasePointerId = null;
+    state.eraseSurface = null;
+    state.eraseStrokeCell = null;
     state.eraseUndoActions.push({ type: 'stroke', stroke });
     state.eraseUndoActions = state.eraseUndoActions.slice(-100);
     state.eraseRedoActions = [];
@@ -3148,8 +3282,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.protectionTool) deactivateProtectionBrush();
     state.eraseTool = mode === 'restore' ? 'restore' : 'erase';
     state.eraseCursor = null;
+    state.previewEraseCursor = null;
     video.pause();
     updateVideoPlayPauseBtn();
+    // The sprite preview is a painting surface too, and a brush cannot be aimed
+    // at cells that are flipping past twelve times a second.
+    stopAnimationPreview();
     eraseBrushBanner.classList.add('active');
     eraseBrushCanvas.classList.add('active');
     videoViewport.classList.add('erase-painting');
@@ -3161,15 +3299,19 @@ document.addEventListener('DOMContentLoaded', () => {
     updateEraseBrushUI();
     updateEraseOverlay();
     lucide.createIcons({ root: eraseBrushBanner });
+    if (previewEraseBanner) lucide.createIcons({ root: previewEraseBanner });
     showToast(state.eraseTool === 'restore'
-      ? 'Khôi phục vùng đã bôi xóa trên Source video'
-      : 'Bôi vùng nền hoặc chi tiết thừa cần xóa. Mask áp dụng cho mọi frame.', 'info');
+      ? 'Khôi phục vùng đã bôi xóa. Bôi trên Source video = mọi frame; trên Preview = theo lựa chọn Phạm vi.'
+      : 'Bôi trên Source video để xóa mọi frame, hoặc bôi thẳng lên một ô của Preview để chỉ xóa frame đó.', 'info');
   }
 
   function deactivateEraseBrush() {
     if (state.activeEraseStroke) finishEraseStroke();
     state.eraseTool = null;
     state.eraseCursor = null;
+    state.previewEraseCursor = null;
+    state.previewEraseShift = false;
+    state.eraseStrokeCell = null;
     eraseBrushBanner?.classList.remove('active');
     eraseBrushCanvas?.classList.remove('active');
     videoViewport?.classList.remove('erase-painting');
@@ -3192,21 +3334,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const point = normalizedErasePoint(event.clientX, event.clientY, false);
     if (!point) return;
     event.preventDefault();
-    // Alt inverts the tool for the duration of the stroke, the way every other
-    // paint app does it, so touching up an over-erased edge needs no round trip
-    // through the toolbar.
-    const painting = event.altKey ? (state.eraseTool === 'restore') : (state.eraseTool === 'erase');
-    const stroke = {
-      mode: painting ? 'add' : 'subtract',
-      points: [point],
-      size: Math.round(U.clampNumber(sliderEraseSize.value, 5, 500, 80)),
-      // Restore has to fully undo what Erase laid down, otherwise a 60%-strength
-      // rub leaves a permanent ghost that no amount of scrubbing removes.
-      strength: painting ? U.clampNumber(sliderEraseStrength.value, 0, 1, 1) : 1,
-      hardness: U.clampNumber(sliderEraseHardness.value, 0, 1, 0.80)
-    };
+    const stroke = createEraseStroke(point, event.altKey);
     state.activeEraseStroke = stroke;
     state.erasePointerId = event.pointerId;
+    state.eraseSurface = 'video';
     state.eraseCursor = point;
     state.eraseStrokes.push(stroke);
     markEraseStrokesChanged();
@@ -3216,8 +3347,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   eraseBrushCanvas.addEventListener('pointermove', (event) => {
     if (!state.eraseTool) return;
-    const stroke = state.activeEraseStroke;
+    const stroke = state.eraseSurface === 'video' ? state.activeEraseStroke : null;
     if (!stroke) {
+      if (state.activeEraseStroke) return; // the preview owns the live stroke
       const hover = normalizedErasePoint(event.clientX, event.clientY, false);
       if (!hover) {
         if (state.eraseCursor) {
@@ -3316,9 +3448,10 @@ document.addEventListener('DOMContentLoaded', () => {
     return copy;
   }
 
-  function buildEraseMaskFor({ cropX, cropY, cropWidth, cropHeight, targetWidth, targetHeight }) {
-    if (state.eraseStrokes.length === 0) return null;
-    return rasterizeStrokeMask(state.eraseStrokes, {
+  function buildEraseMaskFor({ strokes, cropX, cropY, cropWidth, cropHeight, targetWidth, targetHeight }) {
+    const list = strokes || state.eraseStrokes;
+    if (list.length === 0) return null;
+    return rasterizeStrokeMask(list, {
       sourceWidth: state.videoWidth,
       sourceHeight: state.videoHeight,
       cropX,
@@ -3330,9 +3463,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }).mask;
   }
 
+  /**
+   * A per-frame source of erase masks for one geometry, or null when there is
+   * nothing to erase.
+   *
+   * Every frame used to share a single mask. Now that a stroke can belong to one
+   * cell, most frames still do — so the shared part is rasterized once, lazily,
+   * and only the handful of frames carrying their own strokes pay for a pass of
+   * their own. That matters on the aligned path, where the geometry is the full
+   * video resolution and a blanket per-frame rasterization would be a 1920x1080
+   * canvas readback on every frame of the clip.
+   *
+   * `frameTimes` is passed in rather than read from state because the generator
+   * computes the new timestamps before it publishes them.
+   *
+   * @returns {((frameIndex: number) => Uint8ClampedArray|null)|null}
+   */
+  function makeEraseMaskProvider(geometry, frameCount, frameTimes) {
+    const plan = eraseStrokePlan(state.eraseStrokes, frameTimes, frameCount);
+    if (plan.globalStrokes.length === 0 && plan.frameIndices.size === 0) return null;
+
+    let sharedMask = null;
+    let sharedBuilt = false;
+    return (frameIndex) => {
+      if (!plan.frameIndices.has(frameIndex)) {
+        if (!sharedBuilt) {
+          sharedBuilt = true;
+          sharedMask = buildEraseMaskFor({ strokes: plan.globalStrokes, ...geometry });
+        }
+        return sharedMask;
+      }
+      return buildEraseMaskFor({
+        strokes: strokesForFrame(state.eraseStrokes, frameIndex, frameTimes, frameCount),
+        ...geometry
+      });
+    };
+  }
+
   function discardLiveEraseCache() {
     state.rawFrames = [];
     state.sheetLayout = null;
+    state.frameOrigins = [];
+    state.frameTimes = [];
     state.eraseLiveAvailable = false;
   }
 
@@ -3351,14 +3523,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!state.eraseLiveAvailable || state.rawFrames.length === 0 || !state.sheetLayout) return false;
     if (state.rawFrames.length !== state.generatedFrames.length) return false;
     const layout = state.sheetLayout;
-    const mask = buildEraseMaskFor({
+    const maskFor = makeEraseMaskProvider({
       cropX: layout.cropX,
       cropY: layout.cropY,
       cropWidth: layout.cropWidth,
       cropHeight: layout.cropHeight,
       targetWidth: layout.cellW,
       targetHeight: layout.cellH
-    });
+    }, state.rawFrames.length, state.frameTimes);
 
     const sheetCtx = state.fullSheetCanvas?.getContext('2d');
     if (sheetCtx) sheetCtx.clearRect(0, 0, state.fullSheetCanvas.width, state.fullSheetCanvas.height);
@@ -3368,7 +3540,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const ctx = frame.getContext('2d', { willReadFrequently: true });
       ctx.clearRect(0, 0, frame.width, frame.height);
       ctx.drawImage(state.rawFrames[index], 0, 0);
-      if (mask) applyEraseMaskToCanvas(frame, mask);
+      if (maskFor) applyEraseMaskToCanvas(frame, maskFor(index));
       if (sheetCtx) {
         const colIndex = index % layout.cellsAcross;
         const rowIndex = Math.floor(index / layout.cellsAcross);
@@ -3378,6 +3550,491 @@ document.addEventListener('DOMContentLoaded', () => {
     updatePreviewViewport();
     return true;
   }
+
+  // === ERASE BRUSH ON THE SPRITE PREVIEW ===
+  //
+  // The same brush, the same strokes, a second surface to draw them on. The
+  // preview is where the problem is usually visible in the first place: a rim of
+  // leftover backdrop or a stray highlight reads clearly on the finished cell
+  // and can be almost invisible against the source video, which still has its
+  // whole background attached. Asking the user to find that spot again on the
+  // video, by eye, is the step this removes.
+  //
+  // What the preview is *not* is a second coordinate system. A point is mapped
+  // straight back through the sheet layout into normalized source-video space
+  // before it joins a stroke, so a mask painted here is the same mask painted on
+  // the video, keeps working after a re-crop or a new cell size, and needs no
+  // second code path anywhere downstream of `state.eraseStrokes`.
+
+  let previewEraseOverlayFrame = 0;
+  // The red mask tiles are rasterized once per (mask revision, tile size, cell
+  // origin) and blitted into the cells, because in Sheet mode the shared part of
+  // the mask is on screen a few dozen times over.
+  let previewEraseTintCache = null;
+
+  function isSubjectAlignmentActive() {
+    return Boolean(state.guidelineEnabled || state.guidelineYEnabled);
+  }
+
+  /** The grid a preview click can be resolved against, or null before Generate. */
+  function previewSheetLayout() {
+    if (state.generatedFrames.length === 0) return null;
+    return normalizeSheetLayout(state.sheetLayout);
+  }
+
+  function isPreviewErasePaintable() {
+    return Boolean(state.eraseTool) && Boolean(previewSheetLayout());
+  }
+
+  /**
+   * The preview canvas's rendered box relative to the viewport.
+   *
+   * `getBoundingClientRect` already includes the zoom/pan transform, so pinning
+   * the overlay to this box keeps the mask and the brush ring welded to the
+   * cells without re-deriving the transform — the same trick the source-video
+   * overlay plays with `getVideoRenderBox`.
+   */
+  function getPreviewEraseBox() {
+    if (!previewCanvas || previewCanvas.width < 1 || previewCanvas.height < 1) return null;
+    const rect = previewCanvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    const parentRect = spriteViewport.getBoundingClientRect();
+    return {
+      parentLeft: rect.left - parentRect.left,
+      parentTop: rect.top - parentRect.top,
+      screenLeft: rect.left,
+      screenTop: rect.top,
+      width: rect.width,
+      height: rect.height,
+      // Bitmap pixels per CSS pixel: line widths are drawn in bitmap space and
+      // would vanish on a big sheet squeezed into a small viewport without it.
+      pixelScale: previewCanvas.width / rect.width
+    };
+  }
+
+  /** Screen point -> preview *bitmap* pixel, or null when outside the canvas. */
+  function previewErasePixel(clientX, clientY, clampToCanvas = false) {
+    const box = getPreviewEraseBox();
+    if (!box) return null;
+    const inside = clientX >= box.screenLeft && clientX <= box.screenLeft + box.width
+      && clientY >= box.screenTop && clientY <= box.screenTop + box.height;
+    if (!inside && !clampToCanvas) return null;
+    return {
+      px: Math.max(0, Math.min(previewCanvas.width, ((clientX - box.screenLeft) / box.width) * previewCanvas.width)),
+      py: Math.max(0, Math.min(previewCanvas.height, ((clientY - box.screenTop) / box.height) * previewCanvas.height))
+    };
+  }
+
+  /**
+   * Holds a stroke inside the cell it started in.
+   *
+   * Without this, dragging across a cell border in Sheet mode would walk the
+   * mapped point off the right edge of the crop and back in at the left, drawing
+   * a line straight across the mask that the user never made.
+   */
+  function clampPixelToStrokeCell(pixel, layout) {
+    const cell = state.eraseStrokeCell;
+    if (!pixel || !cell || !layout) return pixel;
+    const left = cell.column * layout.cellW;
+    const top = cell.row * layout.cellH;
+    return {
+      px: Math.max(left, Math.min(left + layout.cellW, pixel.px)),
+      py: Math.max(top, Math.min(top + layout.cellH, pixel.py))
+    };
+  }
+
+  function previewSourcePoint(pixel, layout) {
+    if (!pixel || !layout) return null;
+    return mapPreviewPointToSource({
+      px: pixel.px,
+      py: pixel.py,
+      mode: state.previewMode === 'sheet' ? 'sheet' : 'play',
+      frameIndex: state.currentFrameIndex,
+      layout,
+      frameOrigins: state.frameOrigins,
+      videoWidth: state.videoWidth,
+      videoHeight: state.videoHeight
+    });
+  }
+
+  /**
+   * The frame the brush is currently over, or null when it is over the empty
+   * tail of the last row. In Anim mode there is only ever one frame on screen.
+   */
+  function previewFrameIndexAtPixel(pixel, layout) {
+    if (!pixel || !layout) return null;
+    if (state.previewMode !== 'sheet') return state.currentFrameIndex;
+    const cell = previewCellAt(pixel, layout);
+    if (!cell) return null;
+    const index = (cell.row * layout.cellsAcross) + cell.column;
+    return index >= 0 && index < state.generatedFrames.length ? index : null;
+  }
+
+  /**
+   * Whether the next stroke would be bound to a single cell.
+   *
+   * While a stroke is live the answer is whatever that stroke committed to, so
+   * the outline does not flicker if the user lets go of Shift mid-drag.
+   */
+  function previewEraseIsPerFrame() {
+    if (state.activeEraseStroke && state.eraseSurface === 'preview') {
+      return state.activeEraseStroke.frame !== null;
+    }
+    return state.previewEraseShift ? state.eraseScope !== 'frame' : state.eraseScope === 'frame';
+  }
+
+  function previewCellAt(pixel, layout) {
+    if (!pixel || !layout) return null;
+    if (state.previewMode !== 'sheet') return { column: 0, row: 0 };
+    return {
+      column: Math.min(layout.cellsAcross - 1, Math.floor(pixel.px / layout.cellW)),
+      row: Math.max(0, Math.floor(pixel.py / layout.cellH))
+    };
+  }
+
+  /**
+   * Which crop window the red tint should be rasterized from, or null when no
+   * honest answer exists.
+   *
+   * With Subject Alignment off every cell was cut from the same window, so one
+   * tile is exact for the whole grid. With alignment on the cells disagree —
+   * each was slid to park the subject on the guideline — so only the single cell
+   * shown in Anim mode can be tinted truthfully. The Sheet grid is left untinted
+   * rather than covered in a mask belonging to some other frame; painting there
+   * still lands correctly, it just does not draw a shape it cannot justify.
+   */
+  function previewTintOrigin(layout) {
+    if (!isSubjectAlignmentActive()) return { x: layout.cropX, y: layout.cropY };
+    if (state.previewMode === 'sheet') return null;
+    // The aligned tile is keyed to one frame, so a running animation would
+    // re-rasterize it on every tick. Nobody is inspecting a mask at 12 fps.
+    if (state.isPlaying) return null;
+    const origin = state.frameOrigins[state.currentFrameIndex];
+    return origin ? { x: origin.x, y: origin.y } : { x: layout.cropX, y: layout.cropY };
+  }
+
+  function schedulePreviewEraseOverlay() {
+    if (previewEraseOverlayFrame) return;
+    previewEraseOverlayFrame = requestAnimationFrame(() => {
+      previewEraseOverlayFrame = 0;
+      updatePreviewEraseOverlay();
+    });
+  }
+
+  /**
+   * Turns the preview surface on or off and keeps its banner honest.
+   *
+   * Arming is not simply "the tool is active": before Generate there is no grid
+   * to map a click against, so the preview stays a plain pan/zoom viewport and
+   * says nothing about painting.
+   */
+  function updatePreviewEraseArming() {
+    const paintable = isPreviewErasePaintable();
+    previewEraseCanvas?.classList.toggle('active', paintable);
+    spriteViewport?.classList.toggle('erase-painting', paintable);
+    previewEraseBanner?.classList.toggle('active', paintable);
+    if (!paintable || !previewEraseBannerText) return;
+    const parts = [state.eraseTool === 'restore'
+      ? 'Bôi trên Preview để khôi phục · Giữ Alt để tạm Erase'
+      : 'Bôi trên Preview để xóa · Giữ Alt để Restore'];
+    // The scope is the thing most likely to surprise: the same gesture either
+    // touches one cell or the whole clip, so the banner names which, and which
+    // cell, before the stroke rather than after.
+    const perFrame = previewEraseIsPerFrame();
+    const hovered = previewFrameIndexAtPixel(state.previewEraseCursor, previewSheetLayout());
+    if (perFrame) {
+      parts.push(hovered === null
+        ? 'Chỉ frame đang bôi · Shift = mọi frame'
+        : `Chỉ frame #${hovered + 1}/${state.generatedFrames.length} · Shift = mọi frame`);
+    } else {
+      parts.push('Áp cho mọi frame · Shift = chỉ frame này');
+    }
+    parts.push('Chuột giữa/phải để pan');
+    // With alignment on, a changed mask moves the alignment itself, so the
+    // preview cannot answer the stroke without a full Generate — say so instead
+    // of letting the user wonder why nothing happened.
+    if (isSubjectAlignmentActive()) {
+      parts.push('Subject Alignment: nhấn Generate để thấy kết quả');
+      if (state.previewMode === 'sheet') parts.push('mask đỏ chỉ hiện ở chế độ Anim');
+    }
+    previewEraseBannerText.textContent = parts.join(' · ');
+  }
+
+  function updatePreviewEraseOverlay() {
+    if (!previewEraseCanvas) return;
+    updatePreviewEraseArming();
+
+    const layout = previewSheetLayout();
+    const shouldShow = Boolean(layout)
+      && !state.isEyedropperActive
+      && (Boolean(state.eraseTool) || (chkShowEraseMask.checked && state.eraseStrokes.length > 0));
+    if (!shouldShow) {
+      previewEraseCanvas.classList.remove('visible');
+      return;
+    }
+    const box = getPreviewEraseBox();
+    if (!box) {
+      previewEraseCanvas.classList.remove('visible');
+      return;
+    }
+
+    previewEraseCanvas.style.left = `${box.parentLeft}px`;
+    previewEraseCanvas.style.top = `${box.parentTop}px`;
+    previewEraseCanvas.style.width = `${box.width}px`;
+    previewEraseCanvas.style.height = `${box.height}px`;
+    // The overlay shares the preview's bitmap resolution, so a cell is exactly
+    // cellW x cellH here and the tint lands on the same pixels the export will.
+    if (previewEraseCanvas.width !== previewCanvas.width) previewEraseCanvas.width = previewCanvas.width;
+    if (previewEraseCanvas.height !== previewCanvas.height) previewEraseCanvas.height = previewCanvas.height;
+
+    const ctx = previewEraseCanvas.getContext('2d');
+    ctx.clearRect(0, 0, previewEraseCanvas.width, previewEraseCanvas.height);
+    if (state.eraseStrokes.length > 0) drawPreviewEraseTint(ctx, layout, box);
+    drawPreviewEraseCursor(ctx, layout, box);
+    previewEraseCanvas.classList.add('visible');
+  }
+
+  /**
+   * The red tiles the tint is blitted from: one shared tile for the strokes that
+   * belong to the whole clip, plus one per cell that carries strokes of its own.
+   *
+   * A cell with its own strokes gets a tile rasterized from *both* sets at once
+   * rather than two overlaid tiles, because a frame-bound Restore has to be able
+   * to rub out a global Erase — which only works if they meet inside the same
+   * rasterization, in paint order.
+   */
+  function previewEraseTintTiles(layout, box) {
+    const origin = previewTintOrigin(layout);
+    if (!origin) return null;
+
+    const frameCount = state.generatedFrames.length;
+    const plan = eraseStrokePlan(state.eraseStrokes, state.frameTimes, frameCount);
+    // Anim mode shows one cell, so rasterizing the other cells' tiles would be
+    // work nobody can see. Sheet mode needs them all at once.
+    //
+    // While the animation runs, the cell on screen changes on every tick and the
+    // overlay is repainted with it, so keying a tile to the current frame would
+    // re-rasterize the mask a dozen times a second. Only the tint shared by
+    // every frame is drawn then — it is correct whatever frame is showing, and
+    // the per-cell erases are visible in the frames themselves regardless.
+    const isSheet = state.previewMode === 'sheet';
+    const animFrozen = !isSheet && !state.isPlaying;
+    const needed = isSheet
+      ? [...plan.frameIndices].filter((index) => index < frameCount)
+      : (animFrozen && plan.frameIndices.has(state.currentFrameIndex) ? [state.currentFrameIndex] : []);
+    const tileCount = (plan.globalStrokes.length > 0 ? 1 : 0) + needed.length;
+    if (tileCount === 0) return null;
+
+    // Rasterize at roughly the size the cell occupies on screen rather than at
+    // full cell resolution: with `Keep source size` a cell can be 1920x1080, and
+    // the tiles are rebuilt on every point added to a live stroke. Quantizing to
+    // 32px steps stops a smooth zoom from thrashing the cache.
+    const screenCellWidth = box.width * (layout.cellW / previewEraseCanvas.width);
+    const quantized = Math.max(32, Math.ceil(screenCellWidth / 32) * 32);
+    let tileWidth = Math.max(8, Math.min(layout.cellW, quantized));
+    let tileHeight = Math.max(8, Math.round(layout.cellH * (tileWidth / layout.cellW)));
+    // Per-cell strokes turn one tile into dozens, so the budget is on the total.
+    // Without it, hand-touching every frame of a full-resolution sheet while
+    // zoomed in would allocate hundreds of megabytes of tint nobody can see at
+    // that scale anyway.
+    if (tileWidth * tileHeight * tileCount > PREVIEW_TINT_PIXEL_BUDGET) {
+      const shrink = Math.sqrt(PREVIEW_TINT_PIXEL_BUDGET / (tileWidth * tileHeight * tileCount));
+      tileWidth = Math.max(8, Math.floor((tileWidth * shrink) / 32) * 32 || 8);
+      tileHeight = Math.max(8, Math.round(layout.cellH * (tileWidth / layout.cellW)));
+    }
+    const originKey = `${origin.x}:${origin.y}`;
+    const scopeKey = isSheet ? 'sheet' : (animFrozen ? `anim:${state.currentFrameIndex}` : 'anim:playing');
+
+    const fresh = previewEraseTintCache
+      && previewEraseTintCache.revision === eraseMaskRevision
+      && previewEraseTintCache.tileWidth === tileWidth
+      && previewEraseTintCache.tileHeight === tileHeight
+      && previewEraseTintCache.originKey === originKey
+      && previewEraseTintCache.scopeKey === scopeKey;
+    if (fresh) return previewEraseTintCache;
+
+    const geometry = {
+      sourceWidth: state.videoWidth,
+      sourceHeight: state.videoHeight,
+      cropX: origin.x,
+      cropY: origin.y,
+      cropWidth: layout.cropWidth,
+      cropHeight: layout.cropHeight,
+      targetWidth: tileWidth,
+      targetHeight: tileHeight,
+      color: 'rgba(248,113,113,{alpha})'
+    };
+    const shared = plan.globalStrokes.length > 0
+      ? rasterizeStrokeMask(plan.globalStrokes, { canvas: previewEraseTintCache?.shared, ...geometry }).canvas
+      : null;
+    const frames = new Map();
+    for (const index of needed) {
+      const strokes = strokesForFrame(state.eraseStrokes, index, state.frameTimes, frameCount);
+      frames.set(index, rasterizeStrokeMask(strokes, {
+        canvas: previewEraseTintCache?.frames?.get(index),
+        ...geometry
+      }).canvas);
+    }
+
+    previewEraseTintCache = { revision: eraseMaskRevision, tileWidth, tileHeight, originKey, scopeKey, shared, frames };
+    return previewEraseTintCache;
+  }
+
+  function drawPreviewEraseTint(ctx, layout, box) {
+    const tiles = previewEraseTintTiles(layout, box);
+    if (!tiles) return;
+
+    if (state.previewMode !== 'sheet') {
+      const tile = tiles.frames.get(state.currentFrameIndex) || tiles.shared;
+      if (tile) ctx.drawImage(tile, 0, 0, layout.cellW, layout.cellH);
+      return;
+    }
+    // Only cells that actually hold a frame: tinting the empty tail of the last
+    // row would show erased areas floating on nothing.
+    const total = state.generatedFrames.length;
+    for (let index = 0; index < total; index += 1) {
+      const tile = tiles.frames.get(index) || tiles.shared;
+      if (!tile) continue;
+      const column = index % layout.cellsAcross;
+      const row = Math.floor(index / layout.cellsAcross);
+      ctx.drawImage(tile, column * layout.cellW, row * layout.cellH, layout.cellW, layout.cellH);
+    }
+  }
+
+  /**
+   * Brush-size ring, drawn in cell pixels. The Size slider is measured in source
+   * video pixels, so on a downscaled sheet the ring is correspondingly smaller —
+   * which is the honest answer to "how much of this cell will that cover".
+   */
+  function drawPreviewEraseCursor(ctx, layout, box) {
+    if (!state.eraseTool || !state.previewEraseCursor) return;
+    const scale = cellBrushScale(layout);
+    if (!scale) return;
+    const radius = Math.max(1, (U.clampNumber(sliderEraseSize.value, 5, 500, 80) * scale) / 2);
+    const stroke = Math.max(1, box.pixelScale);
+    drawPreviewEraseCellOutline(ctx, layout, stroke);
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.lineWidth = 1.5 * stroke;
+    ctx.strokeStyle = state.eraseTool === 'restore' ? 'rgba(134, 239, 172, 0.95)' : 'rgba(255, 255, 255, 0.95)';
+    ctx.beginPath();
+    ctx.arc(state.previewEraseCursor.px, state.previewEraseCursor.py, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = stroke;
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.8)';
+    ctx.beginPath();
+    ctx.arc(state.previewEraseCursor.px, state.previewEraseCursor.py, radius + (1.25 * stroke), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * Outlines the cell a per-frame stroke would land in.
+   *
+   * In Sheet mode every cell looks alike, and "this stroke only affects that
+   * one" is a claim the user has to be able to check before drawing. Drawn only
+   * where it says something: with the scope set to every frame, or in Anim mode
+   * where the single cell on screen is the only target there is.
+   */
+  function drawPreviewEraseCellOutline(ctx, layout, lineScale) {
+    if (state.previewMode !== 'sheet' || !previewEraseIsPerFrame()) return;
+    const cell = state.eraseStrokeCell && state.eraseSurface === 'preview'
+      ? state.eraseStrokeCell
+      : previewCellAt(state.previewEraseCursor, layout);
+    if (!cell) return;
+    const index = (cell.row * layout.cellsAcross) + cell.column;
+    if (index < 0 || index >= state.generatedFrames.length) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.lineWidth = Math.max(1, 1.5 * lineScale);
+    ctx.setLineDash([6 * lineScale, 4 * lineScale]);
+    ctx.strokeStyle = 'rgba(248, 113, 113, 0.9)';
+    ctx.strokeRect(
+      (cell.column * layout.cellW) + (ctx.lineWidth / 2),
+      (cell.row * layout.cellH) + (ctx.lineWidth / 2),
+      layout.cellW - ctx.lineWidth,
+      layout.cellH - ctx.lineWidth
+    );
+    ctx.restore();
+  }
+
+  previewEraseCanvas.addEventListener('pointerdown', (event) => {
+    if (!isPreviewErasePaintable() || event.button !== 0) return;
+    const layout = previewSheetLayout();
+    const pixel = previewErasePixel(event.clientX, event.clientY, false);
+    const point = previewSourcePoint(pixel, layout);
+    if (!point) return;
+    // The tail of the bottom row is empty: it belongs to no frame, so a stroke
+    // started there either quietly erases that spot on every real frame (scope
+    // `all`) or binds to a frame that does not exist. Neither is what anyone
+    // means by painting on blank space, so it is not a painting surface.
+    if (state.previewMode === 'sheet' && point.frameIndex >= state.generatedFrames.length) return;
+    event.preventDefault();
+    state.previewEraseShift = event.shiftKey;
+    const stroke = createEraseStroke(point, event.altKey, eraseBindingForFrame(point.frameIndex, event.shiftKey));
+    state.activeEraseStroke = stroke;
+    state.erasePointerId = event.pointerId;
+    state.eraseSurface = 'preview';
+    state.eraseStrokeCell = previewCellAt(pixel, layout);
+    state.previewEraseCursor = pixel;
+    state.eraseStrokes.push(stroke);
+    markEraseStrokesChanged();
+    previewEraseCanvas.setPointerCapture?.(event.pointerId);
+    updateEraseOverlay();
+  });
+
+  previewEraseCanvas.addEventListener('pointermove', (event) => {
+    if (!state.eraseTool) return;
+    const layout = previewSheetLayout();
+    if (!layout) return;
+    const stroke = state.eraseSurface === 'preview' ? state.activeEraseStroke : null;
+    if (!stroke) {
+      if (state.activeEraseStroke) return; // the source video owns the live stroke
+      const hover = previewErasePixel(event.clientX, event.clientY, false);
+      if (!hover) {
+        if (state.previewEraseCursor) {
+          state.previewEraseCursor = null;
+          updatePreviewEraseOverlay();
+        }
+        return;
+      }
+      state.previewEraseCursor = hover;
+      state.previewEraseShift = event.shiftKey;
+      schedulePreviewEraseOverlay();
+      return;
+    }
+    if (event.pointerId !== state.erasePointerId) return;
+    const pixel = clampPixelToStrokeCell(previewErasePixel(event.clientX, event.clientY, true), layout);
+    const point = previewSourcePoint(pixel, layout);
+    if (!point) return;
+    state.previewEraseCursor = pixel;
+    const previous = stroke.points[stroke.points.length - 1];
+    const nativeDistance = Math.hypot(
+      (point.x - previous.x) * state.videoWidth,
+      (point.y - previous.y) * state.videoHeight
+    );
+    if (nativeDistance < Math.max(1, stroke.size * 0.035)) return;
+    stroke.points.push(point);
+    markEraseStrokesChanged();
+    schedulePreviewEraseOverlay();
+  });
+
+  previewEraseCanvas.addEventListener('pointerleave', () => {
+    if (state.activeEraseStroke || !state.previewEraseCursor) return;
+    state.previewEraseCursor = null;
+    state.previewEraseShift = false;
+    updatePreviewEraseOverlay();
+  });
+
+  previewEraseCanvas.addEventListener('pointerup', finishEraseStroke);
+  previewEraseCanvas.addEventListener('pointercancel', finishEraseStroke);
+  // Right-drag pans while the brush holds the left button, so the context menu
+  // would fire in the middle of a pan. Wheel zoom needs no handler here: it is
+  // left to bubble to the viewport underneath.
+  previewEraseCanvas.addEventListener('contextmenu', (event) => {
+    if (isPreviewErasePaintable()) event.preventDefault();
+  });
+  btnCancelPreviewErase?.addEventListener('click', deactivateEraseBrush);
 
   // === SUBJECT COLOR REPLACEMENT ===
   function updateColorReplaceUI() {
@@ -4458,6 +5115,15 @@ document.addEventListener('DOMContentLoaded', () => {
       }).mask
       : null;
 
+    // Which moment of the clip each cell is sampled from. Computed here rather
+    // than just before the loop because a per-cell erase stroke is bound to the
+    // time it was painted at, and the mask providers below have to resolve those
+    // bindings against this run's sampling — a sheet regenerated at a different
+    // frame count still erases the same moment.
+    const startTime = state.trimStart;
+    const endTime = state.trimEnd;
+    const timestamps = computeLoopTimestamps(startTime, endTime, totalFrames, chkClosedLoop.checked);
+
     // The erase mask is NOT gated on chkTransparentFormat: erasing is an
     // explicit instruction to remove pixels, not a keying refinement, so it must
     // work on an otherwise-opaque export too.
@@ -4467,24 +5133,24 @@ document.addEventListener('DOMContentLoaded', () => {
     // from dragging the alignment. With alignment off there is no bounds pass,
     // so the mask is applied once per frame after the loop (see below), which is
     // what makes live re-apply possible.
-    const eraseMaskStandard = buildEraseMaskFor({
+    const eraseMaskFor = makeEraseMaskProvider({
       cropX: cLeft,
       cropY: cTop,
       cropWidth: cropW,
       cropHeight: cropH,
       targetWidth: cellW,
       targetHeight: cellH
-    });
+    }, totalFrames, timestamps);
 
-    const eraseMaskFull = isGuidelineActive
-      ? buildEraseMaskFor({
+    const eraseMaskFullFor = isGuidelineActive
+      ? makeEraseMaskProvider({
         cropX: 0,
         cropY: 0,
         cropWidth: fullW,
         cropHeight: fullH,
         targetWidth: fullW,
         targetHeight: fullH
-      })
+      }, totalFrames, timestamps)
       : null;
 
     const colorReplaceOptions = {
@@ -4505,9 +5171,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // throws halfway, a stale cache must not repaint a preview it no longer
     // matches.
     discardLiveEraseCache();
-    const startTime = state.trimStart;
-    const endTime = state.trimEnd;
-    const timestamps = computeLoopTimestamps(startTime, endTime, totalFrames, chkClosedLoop.checked);
+    // Where each cell was extracted from. Constant without alignment, but the
+    // preview brush reads it back either way, so it is filled on both paths.
+    const frameOrigins = [];
 
     // Pause video during extraction
     video.pause();
@@ -4544,7 +5210,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // added before a downscale is exactly the detail the downscale removes,
       // so it waits until the cell exists.
       if (gradeActive) applyColorGrade(fullImgData, colorGradeOptions);
-      if (eraseMaskFull) applyEraseMask(fullImgData, eraseMaskFull);
+      if (eraseMaskFullFor) applyEraseMask(fullImgData, eraseMaskFullFor(i));
       clearWatermarkFromImageData(
         fullImgData,
         { x: 0, y: 0, width: fullW, height: fullH },
@@ -4579,6 +5245,8 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
       }
+
+      frameOrigins.push({ x: sourceX, y: sourceY });
 
       // Draw from fullFrameCanvas to frameCanvas preserving full dimensions and exact cell size
       drawSubImageSafe(frameCtx, fullFrameCanvas, sourceX, sourceY, cropW, cropH, 0, 0, cellW, cellH);
@@ -4633,22 +5301,35 @@ document.addEventListener('DOMContentLoaded', () => {
     // repaint the preview instantly instead of re-seeking the whole clip.
     discardLiveEraseCache();
     state.eraseRegenerateHintShown = false;
+    // The grid geometry is published on both paths: painting on the preview has
+    // to run a click back through it to reach a source-video pixel, and that is
+    // needed just as much with alignment on. Only the pre-erase frame cache
+    // below stays exclusive to the unaligned path, because a changed mask moves
+    // the alignment itself and no amount of recompositing can answer that.
+    state.sheetLayout = {
+      cellW,
+      cellH,
+      cellsAcross,
+      cropX: cLeft,
+      cropY: cTop,
+      cropWidth: cropW,
+      cropHeight: cropH
+    };
+    state.frameOrigins = frameOrigins;
+    state.frameTimes = timestamps.slice();
+    // Nothing about the strokes changed, but which frame each one lands on may
+    // have: a new frame count re-binds every per-cell stroke by time. The tint
+    // caches key off the revision, so they have to be told.
+    markEraseStrokesChanged();
     if (!isGuidelineActive) {
-      state.sheetLayout = {
-        cellW,
-        cellH,
-        cellsAcross,
-        cropX: cLeft,
-        cropY: cTop,
-        cropWidth: cropW,
-        cropHeight: cropH
-      };
       if ((totalFrames * cellW * cellH) <= LIVE_ERASE_PIXEL_BUDGET) {
         state.rawFrames = state.generatedFrames.map(cloneFrameCanvas);
         state.eraseLiveAvailable = true;
       }
-      if (eraseMaskStandard) {
-        for (const frame of state.generatedFrames) applyEraseMaskToCanvas(frame, eraseMaskStandard);
+      if (eraseMaskFor) {
+        for (let i = 0; i < totalFrames; i++) {
+          applyEraseMaskToCanvas(state.generatedFrames[i], eraseMaskFor(i));
+        }
         sheetCtx.clearRect(0, 0, sheetW, sheetH);
         for (let i = 0; i < totalFrames; i++) {
           const colIndex = i % cellsAcross;
@@ -4905,6 +5586,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function applyTransform() {
     previewCanvas.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
     zoomLevel.textContent = `${Math.round(state.zoom * 100)}%`;
+    // The erase surface is pinned to the preview's *rendered* box, so it has to
+    // move with every pan and zoom — this is the one place that knows they changed.
+    updatePreviewEraseOverlay();
   }
 
   btnZoomIn.addEventListener('click', () => {
@@ -4935,6 +5619,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Pan canvas on mouse drag
   spriteViewport.addEventListener('mousedown', (e) => {
     if (state.isEyedropperActive) return; // preview eyedropper handles drag/pick
+    // While the Erase Brush is armed the left button paints, so panning moves to
+    // the middle and right buttons. `pointerdown` on the overlay cannot suppress
+    // this: `mousedown` is a separate event and bubbles here regardless.
+    if (isPreviewErasePaintable() && e.button === 0) return;
     state.isDragging = true;
     state.dragStartX = e.clientX - state.panX;
     state.dragStartY = e.clientY - state.panY;

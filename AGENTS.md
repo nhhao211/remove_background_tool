@@ -18,6 +18,8 @@
   - `public/js/app.js`: state, event handlers, trim editor, eyedropper, chroma key, sprite generation, preview và download.
   - `public/js/stroke-mask.js`: rasterize nét bút thành mask 1 byte/pixel; dùng chung cho Subject Protect Brush và Bút Xóa. Mode `add`/`subtract` (tên cũ `protect`/`erase` vẫn đọc được từ localStorage).
   - `public/js/erase-mask.js`: nhân alpha của `ImageData` theo mask của Bút Xóa; tách riêng để test được ngoài browser.
+  - `public/js/preview-erase-map.js`: ánh xạ ngược điểm bấm trên khung Preview (sprite sheet) về tọa độ chuẩn hóa của source video, để bôi Bút Xóa thẳng trên Preview. Thuần tuý, không dùng DOM; test bằng `test/preview-erase-map.test.mjs`.
+  - `public/js/erase-frames.js`: luật gắn nét Bút Xóa vào từng frame — nét *global* (`frame === null`, bôi trên source video) áp cho cả clip, nét *theo frame* (`frame` + `frameTime`, bôi trên một ô Preview) chỉ áp cho đúng ô đó. Gắn lại theo **thời gian** khi số frame đổi; binding không cứu được thì thành `ORPHAN_FRAME` và không áp ở đâu cả. Thuần tuý, không dùng DOM; test bằng `test/erase-frames.test.mjs`.
   - `public/js/color-grade.js`: panel Color & Detail — exposure/contrast chạy ở linear light (pivot là mid-grey sRGB 128 nên không lệch sáng tổng thể), saturation/vibrance chạy ở gamma space giống Photoshop. Vibrance có trọng số theo độ bão hoà sẵn có nên không cháy màu mạnh. Áp ở full-res, ngay sau color replace.
   - `public/js/sharpen.js`: unsharp mask trên luma, làm mờ có chuẩn hoá theo alpha (`blur(a*Y)/blur(a)`) để không hút màu đen từ vùng trong suốt vào viền. Áp trên từng ô **sau** khi thu nhỏ, tức ở đúng độ phân giải xuất.
   - `public/js/alpha-bleed.js`: loang màu RGB ra các pixel alpha 0 quanh chủ thể để GPU lấy mẫu bilinear không hút màu đen vào viền. Không đụng vào alpha.
@@ -123,16 +125,37 @@ npm run dev
 ### 6b. Bút Xóa (Erase Brush)
 
 - Bôi trực tiếp trên Source Video để xóa hẳn vùng nền còn sót hoặc chi tiết thừa mà chroma key không xử lý được.
+- Bôi được **cả trên khung Preview** (sprite sheet đã tạo), ở cả chế độ `Anim` và `Sheet`, sau khi đã Generate. Overlay `#previewEraseCanvas` phủ lên `#previewCanvas` và bám theo zoom/pan vì bám `getBoundingClientRect()` (đã gồm CSS transform); `applyTransform()` gọi lại `updatePreviewEraseOverlay()`.
 - Hai tool: `Erase` (bôi để xóa) và `Restore` (bôi để khôi phục); giữ `Alt` đảo chiều tạm thời trong một nét.
 - `Size` 5–500 px, `Strength` 0–1, `Hardness` 0–1; phím `[` / `]` đổi size (`Shift` để nhảy bước lớn), `Esc` thoát.
 - Có vòng tròn hiển thị cỡ bút bám theo con trỏ; `Show mask` bật/tắt lớp phủ đỏ, không ảnh hưởng kết quả xuất.
 - `Undo` / `Redo` / `Clear` với stack tối đa 100 action; `Clear` cũng undo được.
 - Nét vẽ lưu ở tọa độ chuẩn hóa 0..1 của source video nên bám nội dung video kể cả khi đổi crop/cell size; lưu theo từng clip trong localStorage.
-- Mask là tĩnh và áp dụng cho **mọi** frame.
+- Có **hai loại nét**: nét bôi trên Source Video áp cho **mọi** frame; nét bôi trên một ô của Preview chỉ áp cho **đúng ô đó** — hoạt động như Eraser trong Paint, để dọn chi tiết thừa của riêng một frame.
+- Hàng `Bôi trên Preview:` (`#btnEraseScopeFrame` / `#btnEraseScopeAll`) chọn phạm vi mặc định cho nét vẽ trên Preview; `state.eraseScope` (`'frame' | 'all'`) được lưu trong localStorage. Giữ `Shift` lúc `pointerdown` đảo phạm vi tạm thời cho một nét (giống cách `Alt` đảo Erase/Restore).
+- Thứ tự vẽ được giữ nguyên: `strokesForFrame()` trả về danh sách đã lọc (global xen kẽ với nét của riêng frame đó) nên một nét `Restore` theo frame vẫn xoá được phần một nét `Erase` global đã phủ lên.
 - Erase chạy **sau** keyer như một bước compositing (nhân alpha), không phải một option của keyer — nên vẫn hoạt động khi tắt `Transparent WebP/PNG`.
 - Khi bật Subject Alignment, mask được áp ở full-resolution **trước** `detectSubjectBounds` để chi tiết bị xóa không kéo lệch canh chủ thể.
 - Sau khi đã Generate, app cache bản frame trước-khi-xóa (`state.rawFrames`) và áp lại mask ngay vào preview mà không cần seek lại video; vượt ngưỡng `LIVE_ERASE_PIXEL_BUDGET` (120e6 pixel) thì bỏ cache và hiện toast nhắc nhấn `Generate`.
 - Overlay mask được cache theo `eraseMaskRevision`; mọi thay đổi `state.eraseStrokes` phải gọi `markEraseStrokesChanged()`, nếu không preview sẽ đứng ở mask cũ.
+
+**Bôi trên khung Preview — chi tiết:**
+
+- `state.sheetLayout` (cellW/cellH/cellsAcross/cropX/cropY/cropWidth/cropHeight) và `state.frameOrigins` (điểm `sourceX`/`sourceY` thật của từng frame) được ghi ở **cả hai** nhánh của Generate — có và không có Subject Alignment — vì cả hai đều cần cho ánh xạ ngược. Chỉ phần cache `state.rawFrames` là vẫn chỉ chạy khi tắt alignment. `discardLiveEraseCache()` phải xóa luôn `state.frameOrigins`.
+- `mapPreviewPointToSource()` trong `preview-erase-map.js` đi từ pixel trên canvas preview → ô (cell) → gốc crop của đúng frame đó → tọa độ chuẩn hóa 0..1 của source video. Nét từ Preview vì thế vẫn nằm cùng **hệ toạ độ** với nét từ Source Video; thứ duy nhất khác là cái binding đi kèm nó, nên mọi thứ phía sau `state.eraseStrokes` (export, undo/redo, localStorage, re-apply live) chỉ cần hỏi `erase-frames.js` xem nét có thuộc frame đang xử lý không.
+- Binding nằm ngay trên nét: `frame` (chỉ số ô) và `frameTime` (giây trong video). `normalizeStroke()` trong `stroke-mask.js` mang hai field này qua localStorage; cẩn thận với `Number(null) === 0` — thiếu binding phải trả `null`, nếu không mọi nét global sẽ hoá thành nét của frame 0.
+- `state.frameTimes` (ghi cuối mỗi lần Generate, xoá trong `discardLiveEraseCache()`) là danh sách timestamp của sheet hiện tại. Đổi Rows/Cols hay FPS rồi Generate lại: nét được gắn lại vào frame có timestamp gần `frameTime` nhất, không gắn theo chỉ số. Vì strokes không đổi nên `eraseMaskRevision` cũng không đổi — Generate phải tự gọi `markEraseStrokesChanged()` ở cuối, nếu không lớp phủ đỏ đứng ở binding cũ.
+- `makeEraseMaskProvider(geometry, frameCount, frameTimes)` trả về `(frameIndex) => mask`: frame không có nét riêng dùng chung một mask global rasterize **một lần**; chỉ frame nằm trong `plan.frameIndices` mới trả giá rasterize riêng. Dùng ở cả Generate (`eraseMaskFor` cho ô đã thu nhỏ, `eraseMaskFullFor` cho full-res trước `detectSubjectBounds`) lẫn `reapplyEraseMaskLive()`. Trong Generate, `timestamps` phải được tính **trước** khối tạo mask.
+- Số cột lấy từ `layout.cellsAcross` (lưới đã dựng), không lấy từ ô nhập Rows/Cols — người dùng có thể đổi số đó sau khi Generate.
+- `state.eraseSurface` (`'video' | 'preview'`) quyết định handler nào sở hữu nét đang vẽ; `state.eraseStrokeCell` ghim ô lúc `pointerdown` và `clampPixelToStrokeCell()` kẹp mọi điểm sau đó vào ô đó — nếu không, kéo bút sang ô bên cạnh sẽ nhảy qua mép crop và vạch một đường ngang mask.
+- Không cho bắt đầu nét trên các ô trống ở cuối hàng cuối (`frameIndex >= state.generatedFrames.length`): chỗ đó không hiện gì, mà nét vẽ ở đó hoặc xóa thật trên mọi frame (phạm vi `all`) hoặc thành nét mồ côi (phạm vi `frame`).
+- Pan bằng chuột trái bị chặn khi bút đang bật (`spriteViewport` mousedown guard) vì `pointerdown` không chặn được `mousedown`; lúc đó pan bằng chuột giữa/phải, và `contextmenu` trên overlay bị chặn.
+- Lớp phủ đỏ trên Preview được rasterize ở đúng cỡ ô trên màn hình (làm tròn bước 32 px) và cache theo `(revision, tileWidth, tileHeight, originKey, scopeKey)`: một tile `shared` cho phần global cộng một tile riêng cho mỗi ô có nét của nó. Vì mỗi ô có thể thành một tile nên tổng bị chặn bởi `PREVIEW_TINT_PIXEL_BUDGET` (24e6 pixel) rồi thu nhỏ theo `Math.sqrt`.
+- `updatePreviewViewport()` → `applyTransform()` → `updatePreviewEraseOverlay()` chạy **mỗi tick animation**, nên ở chế độ `Anim` chỉ khi đang dừng (`animFrozen`) mới rasterize tile của ô hiện tại; lúc đang phát chỉ vẽ tile `shared` (`scopeKey = 'anim:playing'`) — vẫn đúng với mọi frame, và phần xóa theo frame đã nằm sẵn trong pixel của frame rồi.
+- Lớp phủ **không hiện** ở chế độ `Sheet` khi bật alignment vì mỗi ô cắt từ một cửa sổ khác nhau nên một tile không thể đúng cho tất cả; khi bật alignment và đang phát cũng bỏ qua. Bôi vẫn ánh xạ đúng, banner nói rõ điều đó.
+- Overlay trên Source Video vẽ hai lớp: nét global đậm bình thường, nét theo frame mờ hơn (`globalAlpha = 0.4`) trong `eraseOverlayCache.framedCanvas` — chúng không áp cho khung video đang xem nhưng vẫn cần thấy được là chúng tồn tại.
+- Banner Preview cho biết nét sắp vẽ thuộc phạm vi nào (`Chỉ frame #N/total · Shift = mọi frame` hoặc ngược lại) và ở chế độ `Sheet` có khung nét đứt đỏ quanh ô đang trỏ tới.
+
 
 ### 7. Generate sprite sheet
 

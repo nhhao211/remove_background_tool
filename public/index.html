@@ -307,6 +307,16 @@
         <div class="sprite-viewport checkerboard-bg" id="spriteViewport">
           <canvas id="previewCanvas" class="sprite-canvas"></canvas>
 
+          <!-- Erase brush on the sprite preview -->
+          <canvas id="previewEraseCanvas" class="preview-erase-canvas" aria-label="Erase mask drawing surface on the sprite preview"></canvas>
+          <div id="previewEraseBanner" class="erase-brush-banner preview-erase-banner">
+            <div class="erase-brush-banner-left">
+              <i data-lucide="eraser" style="width: 15px; height: 15px; color: #f87171;"></i>
+              <span id="previewEraseBannerText">Bôi thẳng trên Preview để xóa · Giữ Alt để Restore · Kéo chuột giữa/phải để pan</span>
+            </div>
+            <button id="btnCancelPreviewErase" class="time-btn" type="button" style="padding: 2px 8px; color: #f87171;">✕ Thoát</button>
+          </div>
+
           <!-- Eyedropper on Preview -->
           <div id="previewEyedropperBanner" class="eyedropper-banner preview-eyedropper-banner">
             <div class="eyedropper-banner-left">
@@ -863,6 +873,18 @@
                   <span>Show mask</span>
                 </label>
               </div>
+              <div class="erase-scope-row">
+                <span class="erase-scope-label">Bôi trên Preview:</span>
+                <button id="btnEraseScopeFrame" class="time-btn erase-scope-btn" type="button" title="Nét vẽ chỉ xóa trên đúng ô (frame) bạn bôi — giống Eraser trong Paint">
+                  <i data-lucide="square-dashed" style="width: 12px; height: 12px;"></i>
+                  <span>Frame này</span>
+                </button>
+                <button id="btnEraseScopeAll" class="time-btn erase-scope-btn" type="button" title="Nét vẽ áp cho mọi frame, giống như khi bôi trên Source video">
+                  <i data-lucide="layers" style="width: 12px; height: 12px;"></i>
+                  <span>Mọi frame</span>
+                </button>
+                <span id="eraseScopeHint" class="hint">Giữ Shift để tạm đổi</span>
+              </div>
               <div class="erase-brush-controls">
                 <label>
                   <span>Size (px)</span>
@@ -889,7 +911,7 @@
                   </div>
                 </label>
               </div>
-              <p class="erase-brush-help">Bút Xóa đưa alpha vùng được bôi về trong suốt, chạy sau chroma key nên xóa được cả nền còn sót lẫn chi tiết thừa nằm trên chủ thể — và hoạt động cả khi tắt <em>Transparent</em>. Mask vẽ trên Source video nên bám theo nội dung gốc, không bị lệch khi bật Subject Alignment. Nếu đã Generate, nét vẽ được áp ngay vào preview mà không cần Generate lại (trừ khi đang bật Subject Alignment).</p>
+              <p class="erase-brush-help">Bút Xóa đưa alpha vùng được bôi về trong suốt, chạy sau chroma key nên xóa được cả nền còn sót lẫn chi tiết thừa nằm trên chủ thể — và hoạt động cả khi tắt <em>Transparent</em>. Mask vẽ trên Source video nên bám theo nội dung gốc, không bị lệch khi bật Subject Alignment. Nếu đã Generate, nét vẽ được áp ngay vào preview mà không cần Generate lại (trừ khi đang bật Subject Alignment). Sau khi Generate bạn còn bôi được <strong>trực tiếp trên khung Preview</strong> — ở cả chế độ Anim lẫn Sheet. Ở đó nét vẽ mặc định <strong>chỉ xóa trên đúng ô (frame) bạn bôi</strong>, giống Eraser trong Paint, để dọn chi tiết thừa chỉ xuất hiện ở vài frame; chuyển sang <em>Mọi frame</em> (hoặc giữ <kbd>Shift</kbd>) khi muốn xóa xuyên suốt. Nét bôi trên Source video luôn áp cho mọi frame. Mọi nét đều được quy đổi về toạ độ video gốc nên vẫn bám nội dung khi đổi crop/cell size, và nét theo frame tự bám lại đúng thời điểm cũ nếu bạn Generate với số frame khác.</p>
             </div>
           </div>
 

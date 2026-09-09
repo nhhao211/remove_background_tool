@@ -16,6 +16,14 @@
  * for exactly this pair, so those two names are still accepted on read and
  * normalized to `add`/`subtract`. Note that `erase` means SUBTRACT — the Erase
  * Brush's painting mode is `add`, because it adds to the erase mask.
+ *
+ * A stroke may also be bound to a single sprite frame (`frame`, plus the
+ * `frameTime` it was painted at so the binding survives a change in frame
+ * count). `null` means the stroke belongs to every frame, which is what every
+ * stroke painted on the source video is and what every stroke saved before the
+ * per-cell eraser existed becomes on read. The rasterizer ignores both fields —
+ * deciding which strokes a given frame gets is `erase-frames.js`'s job — but
+ * they have to survive normalization or they would be dropped on every save.
  */
 
 const clamp01 = (value) => Math.min(1, Math.max(0, Number(value) || 0));
@@ -28,16 +36,39 @@ function normalizePoint(point) {
   return { x: clamp01(point.x), y: clamp01(point.y) };
 }
 
+// `Number(null)` is 0, not NaN, so an absent binding has to be rejected before
+// the numeric check or every global stroke would come back bound to frame 0.
+const missing = (value) => value === null || value === undefined || value === '';
+
+function normalizeFrameIndex(value) {
+  if (missing(value)) return null;
+  const frame = Number(value);
+  if (!Number.isFinite(frame) || frame < 0) return null;
+  return Math.floor(frame);
+}
+
+function normalizeFrameTime(value) {
+  if (missing(value)) return null;
+  const time = Number(value);
+  if (!Number.isFinite(time) || time < 0) return null;
+  return time;
+}
+
 function normalizeStroke(stroke) {
   if (!stroke || !Array.isArray(stroke.points)) return null;
   const points = stroke.points.map(normalizePoint).filter(Boolean).slice(-5000);
   if (points.length === 0) return null;
+  const frame = normalizeFrameIndex(stroke.frame);
   return {
     mode: SUBTRACTIVE_MODES.has(stroke.mode) ? 'subtract' : 'add',
     points,
     size: Math.max(1, Math.min(2000, Number(stroke.size) || 80)),
     strength: clamp01(stroke.strength ?? 0.8),
-    hardness: clamp01(stroke.hardness ?? 0.55)
+    hardness: clamp01(stroke.hardness ?? 0.55),
+    frame,
+    // Only meaningful next to a frame index; carrying it on a global stroke
+    // would invite code to read it as a binding that is not there.
+    frameTime: frame === null ? null : normalizeFrameTime(stroke.frameTime)
   };
 }
 
