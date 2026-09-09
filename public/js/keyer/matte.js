@@ -87,7 +87,15 @@ export function applyDirectMatte(imageData, options = {}) {
 
     if (spill > 0 && (matte > 0 || protection > 0)) {
       const proximity = 1 - smootherstep(transparentThreshold + featherWidth, spillReach, distance);
-      const edgeWeight = 0.35 + (0.65 * (1 - matte));
+      // Despill has to remove the backdrop mixed into the pixel, and the matting
+      // equation says that fraction is exactly (1 - matte). The old floor of
+      // 0.35 charged every fully opaque interior pixel a third of the spill
+      // slider regardless, which visibly drained saturation from any subject
+      // sharing a hue with the backdrop - a blue costume on a blue screen loses
+      // colour that no backdrop ever contributed. The remaining 0.10 floor is
+      // for light that genuinely bounced off the backdrop onto an opaque
+      // subject, which is a real but far weaker effect.
+      const edgeWeight = 0.10 + (0.90 * (1 - matte));
       const colorRetention = 1 - (subjectProtection * (0.15 + (0.75 * matte)));
       const regularCleanup = spill * proximity * edgeWeight * colorRetention;
       // Protected translucent pixels need more, not less, backdrop-color
@@ -377,7 +385,15 @@ export function keyBufferLinear(buffer, options = {}) {
     // Spill suppression: remove only the key-color component
     if (spill > 0 && (matte > 0 || protection > 0)) {
       const proximity = 1 - smootherstep(transparentThreshold + featherWidth, spillReach, distance);
-      const edgeWeight = 0.35 + (0.65 * (1 - matte));
+      // Despill has to remove the backdrop mixed into the pixel, and the matting
+      // equation says that fraction is exactly (1 - matte). The old floor of
+      // 0.35 charged every fully opaque interior pixel a third of the spill
+      // slider regardless, which visibly drained saturation from any subject
+      // sharing a hue with the backdrop - a blue costume on a blue screen loses
+      // colour that no backdrop ever contributed. The remaining 0.10 floor is
+      // for light that genuinely bounced off the backdrop onto an opaque
+      // subject, which is a real but far weaker effect.
+      const edgeWeight = 0.10 + (0.90 * (1 - matte));
       const colorRetention = 1 - (subjectProtection * (0.15 + (0.75 * matte)));
       const regularCleanup = spill * proximity * edgeWeight * colorRetention;
       const protectedCleanup = spill * protection * protectedDecontamination * (0.45 + (0.55 * (1 - matte)));
