@@ -1051,17 +1051,20 @@
               <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
                 <label class="checkbox-row" style="height: auto;">
                   <input type="checkbox" id="chkTransparentFormat" checked>
-                  <span id="lblFormatName">Transparent PNG</span>
+                  <span id="lblFormatName">Transparent WebP</span>
                 </label>
                 
                 <div style="display: flex; align-items: center; gap: 6px;">
-                  <!-- PNG is the default: WebP's lossy encoder subsamples chroma 4:2:0,
-                       which smears saturated colour across the subject edge and is a
-                       large part of why a keyed sprite looks duller and softer than the
-                       source. PNG is lossless and keeps alpha at full resolution. -->
+                  <!-- WebP is the default for file size. Note what it costs: the
+                       canvas WebP encoder is lossy and subsamples chroma 4:2:0, which
+                       smears saturated colour across the subject edge, and it is the
+                       one export path that cannot carry alpha bleed - the browser
+                       gives no way to encode WebP without going through the canvas,
+                       whose premultiplied backing store discards colour at alpha 0.
+                       Switch to PNG when edge quality matters more than size. -->
                   <select id="selectFormat" class="form-input compact-select">
-                    <option value="png" selected>PNG</option>
-                    <option value="webp">WebP</option>
+                    <option value="webp" selected>WebP</option>
+                    <option value="png">PNG</option>
                   </select>
                 </div>
               </div>
