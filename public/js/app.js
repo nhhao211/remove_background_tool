@@ -298,6 +298,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const chkTransparentFormat = document.getElementById('chkTransparentFormat');
   const lblFormatName = document.getElementById('lblFormatName');
   const selectFormat = document.getElementById('selectFormat');
+  const webpQualityRow = document.getElementById('webpQualityRow');
+  const sliderWebpQuality = document.getElementById('sliderWebpQuality');
+  const numWebpQuality = document.getElementById('numWebpQuality');
 
   // Loop Optimization & Seam Smoothing DOM Elements
   const headerLoopSettings = document.getElementById('headerLoopSettings');
@@ -405,7 +408,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'sliderGradeTemperature', 'numGradeTemperature',
       'sliderSharpenAmount', 'numSharpenAmount', 'sliderSharpenRadius', 'numSharpenRadius',
       'sliderSharpenThreshold', 'numSharpenThreshold',
-      'chkTransparentFormat', 'selectFormat',
+      'chkTransparentFormat', 'selectFormat', 'sliderWebpQuality', 'numWebpQuality',
       'btnPickColor',
       'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
       'inputColorHex', 'inputColorRgb', 'btnApplyColorValue', 'btnCopyColor', 'btnPasteColor'
@@ -597,6 +600,7 @@ document.addEventListener('DOMContentLoaded', () => {
       sharpenAmount: parseFloat(sliderSharpenAmount.value),
       sharpenRadius: parseInt(sliderSharpenRadius.value, 10),
       sharpenThreshold: parseFloat(sliderSharpenThreshold.value),
+      webpQuality: parseInt(sliderWebpQuality.value, 10),
       watermarkRect: state.watermarkRect,
       guidelineEnabled: state.guidelineEnabled,
       guidelineX: state.guidelineX,
@@ -1210,6 +1214,9 @@ document.addEventListener('DOMContentLoaded', () => {
     numSharpenRadius.value = sliderSharpenRadius.value;
     numSharpenThreshold.value = parseFloat(sliderSharpenThreshold.value).toFixed(2);
     updateColorGradeStatus();
+
+    sliderWebpQuality.value = String(Math.round(U.clampNumber(saved?.webpQuality, WEBP_QUALITY_MIN, 100, WEBP_QUALITY_DEFAULT)));
+    numWebpQuality.value = sliderWebpQuality.value;
 
     trimStartInput.value = formatTrimValue(state.trimStart);
     trimStartInput.max = state.duration.toFixed(2);
@@ -4283,14 +4290,24 @@ document.addEventListener('DOMContentLoaded', () => {
   chkChromaSmooth.addEventListener('change', () => { updateChromaSliderLabels(); saveClipStateDebounced(); });
 
   // Format toggle
-  selectFormat.addEventListener('change', updateFormatLabels);
+  selectFormat.addEventListener('change', () => {
+    updateFormatLabels();
+    saveClipStateDebounced();
+  });
   chkTransparentFormat.addEventListener('change', updateFormatLabels);
+  syncSliderAndNumber(sliderWebpQuality, numWebpQuality, {
+    decimals: 0,
+    onChange: saveClipStateDebounced
+  });
 
   function updateFormatLabels() {
     const fmt = selectFormat.value.toUpperCase();
     lblFormatName.textContent = `Transparent ${fmt}`;
     lblDownloadBtn.textContent = `Download ${fmt} + audio`;
     lblSpriteOnly.textContent = `Download Sprite Sheet (${fmt})`;
+    // PNG has no quality dial - our encoder is lossless - so the control only
+    // means anything while WebP is selected.
+    if (webpQualityRow) webpQualityRow.hidden = selectFormat.value.toLowerCase() !== 'webp';
   }
 
   // Collapse / Expand
@@ -5586,15 +5603,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const ALPHA_BLEED_PASSES = 3;
 
+  const WEBP_QUALITY_MIN = 60;
+  const WEBP_QUALITY_DEFAULT = 88;
+
+  /**
+   * Reads the WebP quality slider as the 0..1 figure `toBlob` wants.
+   *
+   * The slider stops at 100 for a reason worth knowing: the canvas WebP
+   * encoder treats a quality of exactly 1.0 as a request for lossless VP8L,
+   * not as "the best lossy setting". It is a cliff, not the top of a ramp —
+   * a sprite sheet that lands around 2 MB at 0.88 can pass 20 MB at 1.0.
+   * That is why 100 is reachable but is not the default.
+   */
+  function getWebpQuality() {
+    const raw = parseInt(sliderWebpQuality?.value, 10);
+    if (!Number.isFinite(raw)) return WEBP_QUALITY_DEFAULT / 100;
+    return Math.max(WEBP_QUALITY_MIN, Math.min(100, raw)) / 100;
+  }
+
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   /**
    * Produces the exported sprite sheet as a Blob.
    *
    * PNG goes through our own encoder so alpha bleed survives: the bled colour
    * lives in pixels whose alpha is 0, and a canvas would premultiply it away the
    * moment the data went back through `putImageData` (see `alpha-bleed.js`).
-   * WebP has no such path — `toBlob` is the only encoder — so it ships
-   * unbled, at quality 1.0 rather than the 0.95 that was quietly costing edge
-   * detail on every export.
+   * WebP has no such path — `toBlob` is the only encoder — so it ships unbled,
+   * at whatever quality the user picked. Alpha itself is not the lossy part:
+   * the encoder keeps the alpha plane at full quality, so the silhouette stays
+   * crisp and it is chroma that pays.
    */
   async function encodeSpriteSheetBlob(fmt) {
     const canvas = state.fullSheetCanvas;
@@ -5606,12 +5648,14 @@ document.addEventListener('DOMContentLoaded', () => {
       return encodePNG(sheetData);
     }
 
-    const mime = fmt === 'webp' ? 'image/webp' : 'image/png';
+    const isWebp = fmt === 'webp';
+    const mime = isWebp ? 'image/webp' : 'image/png';
+    const quality = isWebp ? getWebpQuality() : undefined;
     return new Promise((resolve, reject) => {
       canvas.toBlob(
         (blob) => (blob ? resolve(blob) : reject(new Error('Failed to create image blob'))),
         mime,
-        1.0
+        quality
       );
     });
   }
@@ -5637,7 +5681,7 @@ document.addEventListener('DOMContentLoaded', () => {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      showToast(`Downloaded: ${filename}`, 'success');
+      showToast(`Downloaded: ${filename} (${formatFileSize(blob.size)})`, 'success');
     } catch (err) {
       console.error(err);
       showToast(`Failed to export sprite sheet: ${err.message}`, 'error');

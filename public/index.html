@@ -1069,6 +1069,21 @@
                 </div>
               </div>
 
+              <!-- Quality only exists for WebP; PNG is lossless by definition.
+                   100 is a cliff, not the top of a ramp: the canvas encoder
+                   switches to lossless VP8L at exactly 1.0, which is why it
+                   produced files many times larger than every value below it. -->
+              <div id="webpQualityRow" class="webp-quality-row">
+                <label for="numWebpQuality">
+                  <span>WebP quality</span>
+                  <span class="hint">100 = lossless, much larger file</span>
+                </label>
+                <div class="slider-group compact-slider-group">
+                  <input type="range" id="sliderWebpQuality" min="60" max="100" step="1" value="88">
+                  <input type="number" id="numWebpQuality" class="form-input slider-number-input" min="60" max="100" step="1" value="88" aria-label="WebP export quality">
+                </div>
+              </div>
+
               <!-- Eyedropper & Color Swatches -->
               <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
                 <button id="btnPickColor" class="eyedropper-trigger-btn" title="Pick màu từ Source Video hoặc Sprite Preview">
