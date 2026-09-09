@@ -8,6 +8,8 @@ import { normalizeStrokes, rasterizeStrokeMask } from './stroke-mask.js';
 import { applyEraseMask } from './erase-mask.js';
 import { applyColorReplacement } from './color-replace.js';
 import { applyAlphaBleed } from './alpha-bleed.js';
+import { applyColorGrade, isColorGradeIdentity, COLOR_GRADE_DEFAULTS } from './color-grade.js';
+import { applySharpen, isSharpenIdentity, SHARPEN_DEFAULTS } from './sharpen.js';
 import { encodePNG, canEncodePNG } from './png-encoder.js';
 import { detectSubjectBounds, calculateGuidelineShift, alignFrameCanvas, drawSubImageSafe } from './subject-alignment.js';
 import {
@@ -258,6 +260,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const lblCollapseColorReplace = document.getElementById('lblCollapseColorReplace');
   const iconCollapseColorReplace = document.getElementById('iconCollapseColorReplace');
   const chkEnableColorReplace = document.getElementById('chkEnableColorReplace');
+  const headerColorGrade = document.getElementById('headerColorGrade');
+  const bodyColorGrade = document.getElementById('bodyColorGrade');
+  const lblCollapseColorGrade = document.getElementById('lblCollapseColorGrade');
+  const iconCollapseColorGrade = document.getElementById('iconCollapseColorGrade');
+  const colorGradeStatus = document.getElementById('colorGradeStatus');
+  const chkEnableColorGrade = document.getElementById('chkEnableColorGrade');
+  const btnResetColorGrade = document.getElementById('btnResetColorGrade');
+  const sliderGradeExposure = document.getElementById('sliderGradeExposure');
+  const numGradeExposure = document.getElementById('numGradeExposure');
+  const sliderGradeContrast = document.getElementById('sliderGradeContrast');
+  const numGradeContrast = document.getElementById('numGradeContrast');
+  const sliderGradeVibrance = document.getElementById('sliderGradeVibrance');
+  const numGradeVibrance = document.getElementById('numGradeVibrance');
+  const sliderGradeSaturation = document.getElementById('sliderGradeSaturation');
+  const numGradeSaturation = document.getElementById('numGradeSaturation');
+  const sliderGradeTemperature = document.getElementById('sliderGradeTemperature');
+  const numGradeTemperature = document.getElementById('numGradeTemperature');
+  const sliderSharpenAmount = document.getElementById('sliderSharpenAmount');
+  const numSharpenAmount = document.getElementById('numSharpenAmount');
+  const sliderSharpenRadius = document.getElementById('sliderSharpenRadius');
+  const numSharpenRadius = document.getElementById('numSharpenRadius');
+  const sliderSharpenThreshold = document.getElementById('sliderSharpenThreshold');
+  const numSharpenThreshold = document.getElementById('numSharpenThreshold');
   const inputColorReplaceSource = document.getElementById('inputColorReplaceSource');
   const btnPickColorReplaceSource = document.getElementById('btnPickColorReplaceSource');
   const inputColorReplaceTarget = document.getElementById('inputColorReplaceTarget');
@@ -374,6 +399,12 @@ document.addEventListener('DOMContentLoaded', () => {
       'chkShowEraseMask', 'sliderEraseSize', 'numEraseSize', 'sliderEraseStrength', 'numEraseStrength', 'sliderEraseHardness', 'numEraseHardness',
       'headerColorReplace', 'chkEnableColorReplace', 'inputColorReplaceSource', 'btnPickColorReplaceSource', 'inputColorReplaceTarget',
       'sliderColorReplaceTolerance', 'numColorReplaceTolerance', 'sliderColorReplaceStrength', 'numColorReplaceStrength',
+      'headerColorGrade', 'chkEnableColorGrade', 'btnResetColorGrade',
+      'sliderGradeExposure', 'numGradeExposure', 'sliderGradeContrast', 'numGradeContrast',
+      'sliderGradeVibrance', 'numGradeVibrance', 'sliderGradeSaturation', 'numGradeSaturation',
+      'sliderGradeTemperature', 'numGradeTemperature',
+      'sliderSharpenAmount', 'numSharpenAmount', 'sliderSharpenRadius', 'numSharpenRadius',
+      'sliderSharpenThreshold', 'numSharpenThreshold',
       'chkTransparentFormat', 'selectFormat',
       'btnPickColor',
       'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
@@ -557,6 +588,15 @@ document.addEventListener('DOMContentLoaded', () => {
       colorReplaceTarget: inputColorReplaceTarget.value,
       colorReplaceTolerance: parseFloat(sliderColorReplaceTolerance.value),
       colorReplaceStrength: parseFloat(sliderColorReplaceStrength.value),
+      colorGradeEnabled: chkEnableColorGrade.checked,
+      gradeExposure: parseFloat(sliderGradeExposure.value),
+      gradeContrast: parseFloat(sliderGradeContrast.value),
+      gradeVibrance: parseFloat(sliderGradeVibrance.value),
+      gradeSaturation: parseFloat(sliderGradeSaturation.value),
+      gradeTemperature: parseFloat(sliderGradeTemperature.value),
+      sharpenAmount: parseFloat(sliderSharpenAmount.value),
+      sharpenRadius: parseInt(sliderSharpenRadius.value, 10),
+      sharpenThreshold: parseFloat(sliderSharpenThreshold.value),
       watermarkRect: state.watermarkRect,
       guidelineEnabled: state.guidelineEnabled,
       guidelineX: state.guidelineX,
@@ -605,6 +645,56 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  function buildColorGradeOptions() {
+    return {
+      enabled: chkEnableColorGrade.checked,
+      exposure: U.clampNumber(sliderGradeExposure.value, -2, 2, 0),
+      contrast: U.clampNumber(sliderGradeContrast.value, -1, 1, 0),
+      saturation: U.clampNumber(sliderGradeSaturation.value, -1, 1, 0),
+      vibrance: U.clampNumber(sliderGradeVibrance.value, -1, 1, 0),
+      temperature: U.clampNumber(sliderGradeTemperature.value, -1, 1, 0)
+    };
+  }
+
+  function buildSharpenOptions() {
+    return {
+      enabled: chkEnableColorGrade.checked,
+      amount: U.clampNumber(sliderSharpenAmount.value, 0, 2, 0),
+      radius: Math.round(U.clampNumber(sliderSharpenRadius.value, 1, 3, 1)),
+      threshold: U.clampNumber(sliderSharpenThreshold.value, 0, 1, 0.02)
+    };
+  }
+
+  /**
+   * Summarises the panel in its header so a grade left on from an earlier clip
+   * is visible without expanding the section.
+   */
+  function updateColorGradeStatus() {
+    if (!colorGradeStatus) return;
+
+    const grade = buildColorGradeOptions();
+    const sharpen = buildSharpenOptions();
+    const gradeOff = isColorGradeIdentity(grade);
+    const sharpenOff = isSharpenIdentity(sharpen);
+
+    if (gradeOff && sharpenOff) {
+      colorGradeStatus.textContent = chkEnableColorGrade.checked ? 'Enabled, all zero' : 'Off';
+      colorGradeStatus.classList.remove('active');
+      return;
+    }
+
+    const parts = [];
+    if (grade.exposure) parts.push(`${grade.exposure > 0 ? '+' : ''}${grade.exposure.toFixed(2)} EV`);
+    if (grade.contrast) parts.push(`Con ${Math.round(grade.contrast * 100)}%`);
+    if (grade.vibrance) parts.push(`Vib ${Math.round(grade.vibrance * 100)}%`);
+    if (grade.saturation) parts.push(`Sat ${Math.round(grade.saturation * 100)}%`);
+    if (grade.temperature) parts.push(`Temp ${Math.round(grade.temperature * 100)}%`);
+    if (!sharpenOff) parts.push(`Sharp ${sharpen.amount.toFixed(2)}/${sharpen.radius}px`);
+
+    colorGradeStatus.textContent = parts.join(' • ');
+    colorGradeStatus.classList.add('active');
+  }
+
   function saveRecentColor(color) {
     const stored = readJsonStorage(RECENT_COLORS_KEY, []);
     const recent = Array.isArray(stored)
@@ -620,6 +710,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const STORAGE_KEY_ERASE_COLLAPSE = 'video-editor:collapsed:erase-brush';
   const STORAGE_KEY_COLOR_REPLACE_COLLAPSE = 'video-editor:collapsed:color-replace';
   const STORAGE_KEY_GUIDELINE_COLLAPSE = 'video-editor:collapsed:subject-alignment';
+  const STORAGE_KEY_COLOR_GRADE_COLLAPSE = 'video-editor:collapsed:color-grade';
   const STORAGE_KEY_LOOP_COLLAPSE = 'video-editor:collapsed:loop-settings';
 
   function setupCollapsibleSection({
@@ -724,6 +815,15 @@ document.addEventListener('DOMContentLoaded', () => {
     labelEl: lblCollapseColorReplace,
     iconEl: iconCollapseColorReplace,
     storageKey: STORAGE_KEY_COLOR_REPLACE_COLLAPSE,
+    defaultExpanded: false
+  });
+
+  const colorGradeSection = setupCollapsibleSection({
+    headerEl: headerColorGrade,
+    bodyEl: bodyColorGrade,
+    labelEl: lblCollapseColorGrade,
+    iconEl: iconCollapseColorGrade,
+    storageKey: STORAGE_KEY_COLOR_GRADE_COLLAPSE,
     defaultExpanded: false
   });
 
@@ -1091,6 +1191,25 @@ document.addEventListener('DOMContentLoaded', () => {
     chkChromaSmooth.checked = saved?.chromaSmoothEnabled !== false;
     sliderChromaSmooth.value = String(Math.round(U.clampNumber(saved?.chromaSmoothRadius, 1, 2, 1)));
     updateChromaSliderLabels();
+
+    chkEnableColorGrade.checked = saved?.colorGradeEnabled === true;
+    sliderGradeExposure.value = String(U.clampNumber(saved?.gradeExposure, -2, 2, 0));
+    sliderGradeContrast.value = String(U.clampNumber(saved?.gradeContrast, -1, 1, 0));
+    sliderGradeVibrance.value = String(U.clampNumber(saved?.gradeVibrance, -1, 1, 0));
+    sliderGradeSaturation.value = String(U.clampNumber(saved?.gradeSaturation, -1, 1, 0));
+    sliderGradeTemperature.value = String(U.clampNumber(saved?.gradeTemperature, -1, 1, 0));
+    sliderSharpenAmount.value = String(U.clampNumber(saved?.sharpenAmount, 0, 2, 0));
+    sliderSharpenRadius.value = String(Math.round(U.clampNumber(saved?.sharpenRadius, 1, 3, 1)));
+    sliderSharpenThreshold.value = String(U.clampNumber(saved?.sharpenThreshold, 0, 1, 0.02));
+    numGradeExposure.value = parseFloat(sliderGradeExposure.value).toFixed(2);
+    numGradeContrast.value = parseFloat(sliderGradeContrast.value).toFixed(2);
+    numGradeVibrance.value = parseFloat(sliderGradeVibrance.value).toFixed(2);
+    numGradeSaturation.value = parseFloat(sliderGradeSaturation.value).toFixed(2);
+    numGradeTemperature.value = parseFloat(sliderGradeTemperature.value).toFixed(2);
+    numSharpenAmount.value = parseFloat(sliderSharpenAmount.value).toFixed(2);
+    numSharpenRadius.value = sliderSharpenRadius.value;
+    numSharpenThreshold.value = parseFloat(sliderSharpenThreshold.value).toFixed(2);
+    updateColorGradeStatus();
 
     trimStartInput.value = formatTrimValue(state.trimStart);
     trimStartInput.max = state.duration.toFixed(2);
@@ -3272,6 +3391,66 @@ document.addEventListener('DOMContentLoaded', () => {
   syncSliderAndNumber(sliderColorReplaceTolerance, numColorReplaceTolerance, { decimals: 2, onChange: () => { updateColorReplaceUI(); saveClipStateDebounced(); } });
   syncSliderAndNumber(sliderColorReplaceStrength, numColorReplaceStrength, { decimals: 2, onChange: () => { updateColorReplaceUI(); saveClipStateDebounced(); } });
 
+  // Color & Detail. Like the chroma sliders, these only record intent: the
+  // grade is applied while the sheet is generated, so nothing here re-renders.
+  const colorGradeControls = [
+    [sliderGradeExposure, numGradeExposure, 2],
+    [sliderGradeContrast, numGradeContrast, 2],
+    [sliderGradeVibrance, numGradeVibrance, 2],
+    [sliderGradeSaturation, numGradeSaturation, 2],
+    [sliderGradeTemperature, numGradeTemperature, 2],
+    [sliderSharpenAmount, numSharpenAmount, 2],
+    [sliderSharpenRadius, numSharpenRadius, 0],
+    [sliderSharpenThreshold, numSharpenThreshold, 2]
+  ];
+
+  for (const [sliderEl, numberEl, decimals] of colorGradeControls) {
+    syncSliderAndNumber(sliderEl, numberEl, {
+      decimals,
+      onChange: () => {
+        // Touching any slider implies wanting to see it, so the panel switches
+        // itself on rather than silently ignoring the drag.
+        if (!chkEnableColorGrade.checked && !isColorGradeIdentityFromUI()) {
+          chkEnableColorGrade.checked = true;
+        }
+        updateColorGradeStatus();
+        saveClipStateDebounced();
+      }
+    });
+  }
+
+  function isColorGradeIdentityFromUI() {
+    return isColorGradeIdentity({ ...buildColorGradeOptions(), enabled: true })
+      && isSharpenIdentity({ ...buildSharpenOptions(), enabled: true });
+  }
+
+  chkEnableColorGrade?.addEventListener('change', () => {
+    updateColorGradeStatus();
+    saveClipStateDebounced();
+  });
+
+  btnResetColorGrade?.addEventListener('click', () => {
+    sliderGradeExposure.value = String(COLOR_GRADE_DEFAULTS.exposure);
+    numGradeExposure.value = COLOR_GRADE_DEFAULTS.exposure.toFixed(2);
+    sliderGradeContrast.value = String(COLOR_GRADE_DEFAULTS.contrast);
+    numGradeContrast.value = COLOR_GRADE_DEFAULTS.contrast.toFixed(2);
+    sliderGradeVibrance.value = String(COLOR_GRADE_DEFAULTS.vibrance);
+    numGradeVibrance.value = COLOR_GRADE_DEFAULTS.vibrance.toFixed(2);
+    sliderGradeSaturation.value = String(COLOR_GRADE_DEFAULTS.saturation);
+    numGradeSaturation.value = COLOR_GRADE_DEFAULTS.saturation.toFixed(2);
+    sliderGradeTemperature.value = String(COLOR_GRADE_DEFAULTS.temperature);
+    numGradeTemperature.value = COLOR_GRADE_DEFAULTS.temperature.toFixed(2);
+    sliderSharpenAmount.value = String(SHARPEN_DEFAULTS.amount);
+    numSharpenAmount.value = SHARPEN_DEFAULTS.amount.toFixed(2);
+    sliderSharpenRadius.value = String(SHARPEN_DEFAULTS.radius);
+    numSharpenRadius.value = String(SHARPEN_DEFAULTS.radius);
+    sliderSharpenThreshold.value = '0.02';
+    numSharpenThreshold.value = '0.02';
+    updateColorGradeStatus();
+    saveClipStateDebounced();
+    showToast('Color & Detail reset', 'info');
+  });
+
   function setColorReplaceSource(hex, { enable = true } = {}) {
     const color = U.normalizeColor(hex);
     if (!color) return false;
@@ -4299,6 +4478,11 @@ document.addEventListener('DOMContentLoaded', () => {
       strength: U.clampNumber(sliderColorReplaceStrength.value, 0, 1, 1)
     };
 
+    const colorGradeOptions = buildColorGradeOptions();
+    const sharpenOptions = buildSharpenOptions();
+    const gradeActive = !isColorGradeIdentity(colorGradeOptions);
+    const sharpenActive = !isSharpenIdentity(sharpenOptions);
+
     state.generatedFrames = [];
     // Drop the previous run's pre-erase copies immediately: if this generation
     // throws halfway, a stale cache must not repaint a preview it no longer
@@ -4338,6 +4522,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const fullKeyResult = runKeyer(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }));
       fullImgData = fullKeyResult.imageData;
       applyColorReplacement(fullImgData, colorReplaceOptions);
+      // Grading is per-pixel, so it can run at full resolution with the rest of
+      // the colour work. Sharpening cannot: it is a spatial filter, and detail
+      // added before a downscale is exactly the detail the downscale removes,
+      // so it waits until the cell exists.
+      if (gradeActive) applyColorGrade(fullImgData, colorGradeOptions);
       if (eraseMaskFull) applyEraseMask(fullImgData, eraseMaskFull);
       clearWatermarkFromImageData(
         fullImgData,
@@ -4376,6 +4565,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Draw from fullFrameCanvas to frameCanvas preserving full dimensions and exact cell size
       drawSubImageSafe(frameCtx, fullFrameCanvas, sourceX, sourceY, cropW, cropH, 0, 0, cellW, cellH);
+
+      if (sharpenActive) {
+        const cellImgData = frameCtx.getImageData(0, 0, cellW, cellH);
+        applySharpen(cellImgData, sharpenOptions);
+        frameCtx.putImageData(cellImgData, 0, 0);
+      }
 
       // Store individual frame canvas for animation preview
       const singleFrameCopy = document.createElement('canvas');

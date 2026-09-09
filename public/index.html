@@ -948,6 +948,98 @@
             </div>
           </div>
 
+          <div class="form-group color-grade-group collapsible-section" id="groupColorGrade">
+            <div class="section-collapse-header" id="headerColorGrade" role="button" tabindex="0" aria-expanded="false" aria-controls="bodyColorGrade" title="Click to collapse / expand Color & Detail">
+              <div class="section-collapse-title">
+                <i data-lucide="sliders-horizontal" style="width: 14px; height: 14px; color: #fbbf24;"></i>
+                <span class="section-collapse-name">Color &amp; Detail</span>
+                <span id="colorGradeStatus" class="hint">Off</span>
+              </div>
+              <div class="section-collapse-action">
+                <span id="lblCollapseColorGrade" class="section-collapse-state-label">Expand</span>
+                <i data-lucide="chevron-down" id="iconCollapseColorGrade" class="section-collapse-icon" style="width: 14px; height: 14px;"></i>
+              </div>
+            </div>
+            <div id="bodyColorGrade" class="section-collapse-body">
+              <div class="color-grade-toolbar">
+                <label class="checkbox-row color-grade-enable">
+                  <input type="checkbox" id="chkEnableColorGrade">
+                  <span>Enable</span>
+                </label>
+                <button id="btnResetColorGrade" class="eyedropper-trigger-btn" type="button" title="Đưa mọi thanh trượt về 0">
+                  <i data-lucide="rotate-ccw" style="width: 13px; height: 13px;"></i>
+                  <span>Reset</span>
+                </button>
+              </div>
+
+              <div class="color-grade-controls">
+                <label>
+                  <span>Exposure (stops)</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderGradeExposure" min="-2" max="2" step="0.05" value="0">
+                    <input type="number" id="numGradeExposure" class="form-input slider-number-input" min="-2" max="2" step="0.05" value="0.00" aria-label="Exposure in stops">
+                  </div>
+                </label>
+                <label>
+                  <span>Contrast</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderGradeContrast" min="-1" max="1" step="0.01" value="0">
+                    <input type="number" id="numGradeContrast" class="form-input slider-number-input" min="-1" max="1" step="0.01" value="0.00" aria-label="Contrast">
+                  </div>
+                </label>
+                <label>
+                  <span>Vibrance</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderGradeVibrance" min="-1" max="1" step="0.01" value="0">
+                    <input type="number" id="numGradeVibrance" class="form-input slider-number-input" min="-1" max="1" step="0.01" value="0.00" aria-label="Vibrance">
+                  </div>
+                </label>
+                <label>
+                  <span>Saturation</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderGradeSaturation" min="-1" max="1" step="0.01" value="0">
+                    <input type="number" id="numGradeSaturation" class="form-input slider-number-input" min="-1" max="1" step="0.01" value="0.00" aria-label="Saturation">
+                  </div>
+                </label>
+                <label>
+                  <span>Temperature</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderGradeTemperature" min="-1" max="1" step="0.01" value="0">
+                    <input type="number" id="numGradeTemperature" class="form-input slider-number-input" min="-1" max="1" step="0.01" value="0.00" aria-label="Temperature">
+                  </div>
+                </label>
+              </div>
+
+              <p class="color-grade-help"><strong>Vibrance</strong> nâng các màu đang nhợt nhiều hơn các màu đã rực, nên không làm cháy da người hay bệt các mảng màu mạnh — kéo cái này trước, chỉ dùng <strong>Saturation</strong> khi cần đẩy đều toàn bộ. Exposure tính theo stop (linear light), Contrast xoay quanh mid-grey 50% nên không làm sáng/tối tổng thể.</p>
+
+              <div class="color-grade-controls">
+                <label>
+                  <span>Sharpen amount</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderSharpenAmount" min="0" max="2" step="0.05" value="0">
+                    <input type="number" id="numSharpenAmount" class="form-input slider-number-input" min="0" max="2" step="0.05" value="0.00" aria-label="Sharpen amount">
+                  </div>
+                </label>
+                <label>
+                  <span>Sharpen radius (px)</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderSharpenRadius" min="1" max="3" step="1" value="1">
+                    <input type="number" id="numSharpenRadius" class="form-input slider-number-input" min="1" max="3" step="1" value="1" aria-label="Sharpen radius in pixels">
+                  </div>
+                </label>
+                <label>
+                  <span>Sharpen threshold</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderSharpenThreshold" min="0" max="1" step="0.01" value="0.02">
+                    <input type="number" id="numSharpenThreshold" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.02" aria-label="Sharpen threshold">
+                  </div>
+                </label>
+              </div>
+
+              <p class="color-grade-help">Sharpen chạy <em>sau</em> khi thu nhỏ về kích thước ô, tức là ở đúng độ phân giải xuất ra. Làm mờ có chuẩn hoá theo alpha nên không hút màu đen từ vùng trong suốt vào viền chủ thể. Ngưỡng giữ nhiễu khỏi bị khuếch đại — tăng lên nếu thấy hạt. Màu và độ nét áp dụng khi Generate lại.</p>
+            </div>
+          </div>
+
           <!-- Chroma Key / Green Screen Removal Options -->
           <div class="form-group chroma-key-group">
             <label class="form-label">
