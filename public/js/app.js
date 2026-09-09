@@ -7,6 +7,8 @@ import { runKeyer } from './keyer/index.js';
 import { normalizeStrokes, rasterizeStrokeMask } from './stroke-mask.js';
 import { applyEraseMask } from './erase-mask.js';
 import { applyColorReplacement } from './color-replace.js';
+import { applyAlphaBleed } from './alpha-bleed.js';
+import { encodePNG, canEncodePNG } from './png-encoder.js';
 import { detectSubjectBounds, calculateGuidelineShift, alignFrameCanvas, drawSubImageSafe } from './subject-alignment.js';
 import {
   computeLoopTimestamps,
@@ -4224,6 +4226,10 @@ document.addEventListener('DOMContentLoaded', () => {
     frameCanvas.width = cellW;
     frameCanvas.height = cellH;
     const frameCtx = frameCanvas.getContext('2d', { willReadFrequently: true });
+    // frameCtx performs the full-res -> cell downscale, so it is the one context
+    // whose resampling filter is visible in the export.
+    frameCtx.imageSmoothingEnabled = true;
+    frameCtx.imageSmoothingQuality = 'high';
 
     const similarity = U.clampNumber(sliderSimilarity.value, 0, 1, 0.55);
     const blend = U.clampNumber(sliderBlend.value, 0, 1, 0.18);
@@ -4238,21 +4244,10 @@ document.addEventListener('DOMContentLoaded', () => {
     fullFrameCanvas.width = fullW;
     fullFrameCanvas.height = fullH;
     const fullFrameCtx = fullFrameCanvas.getContext('2d', { willReadFrequently: true });
+    fullFrameCtx.imageSmoothingEnabled = true;
+    fullFrameCtx.imageSmoothingQuality = 'high';
 
     const isGuidelineActive = state.guidelineEnabled || state.guidelineYEnabled;
-
-    const protectionMaskStandard = chkTransparentFormat.checked && state.protectionStrokes.length > 0
-      ? rasterizeStrokeMask(state.protectionStrokes, {
-        sourceWidth: state.videoWidth,
-        sourceHeight: state.videoHeight,
-        cropX: cLeft,
-        cropY: cTop,
-        cropWidth: cropW,
-        cropHeight: cropH,
-        targetWidth: cellW,
-        targetHeight: cellH
-      }).mask
-      : null;
 
     const protectionMaskFull = chkTransparentFormat.checked && state.protectionStrokes.length > 0
       ? rasterizeStrokeMask(state.protectionStrokes, {
@@ -4324,32 +4319,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
       frameCtx.clearRect(0, 0, cellW, cellH);
 
+      // Key at native video resolution first, then downscale into the cell.
+      //
+      // Downscaling before the key averages background green into every edge
+      // pixel, so the keyer is then asked to judge colours that never existed in
+      // the source: a half-green edge sample falls between "keep" and "drop" and
+      // alternates between them along the outline, which is exactly what shreds
+      // a smooth silhouette into broken pixels. Keying first and resampling the
+      // finished matte instead lets the downscale interpolate alpha, which is
+      // what produces a clean anti-aliased edge.
+      //
+      // Both paths share this; only the extraction rectangle differs, so the
+      // alignment path is no longer a separate quality tier.
+      fullFrameCtx.clearRect(0, 0, fullW, fullH);
+      fullFrameCtx.drawImage(video, 0, 0, fullW, fullH);
+
+      let fullImgData = fullFrameCtx.getImageData(0, 0, fullW, fullH);
+      const fullKeyResult = runKeyer(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }));
+      fullImgData = fullKeyResult.imageData;
+      applyColorReplacement(fullImgData, colorReplaceOptions);
+      if (eraseMaskFull) applyEraseMask(fullImgData, eraseMaskFull);
+      clearWatermarkFromImageData(
+        fullImgData,
+        { x: 0, y: 0, width: fullW, height: fullH },
+        { width: fullW, height: fullH }
+      );
+      fullFrameCtx.putImageData(fullImgData, 0, 0);
+
+      let sourceX = cLeft;
+      let sourceY = cTop;
+
       if (isGuidelineActive) {
-        // Extract full video frame to capture all content in X and Y without any premature clipping
-        fullFrameCtx.clearRect(0, 0, fullW, fullH);
-        fullFrameCtx.drawImage(video, 0, 0, fullW, fullH);
-
-        let fullImgData = fullFrameCtx.getImageData(0, 0, fullW, fullH);
-        const fullKeyResult = runKeyer(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }));
-        fullImgData = fullKeyResult.imageData;
-        applyColorReplacement(fullImgData, colorReplaceOptions);
-        applyEraseMask(fullImgData, eraseMaskFull);
-        clearWatermarkFromImageData(
-          fullImgData,
-          { x: 0, y: 0, width: fullW, height: fullH },
-          { width: fullW, height: fullH }
-        );
-        fullFrameCtx.putImageData(fullImgData, 0, 0);
-
         // Detect true subject bounds across full frame
         const bounds = detectSubjectBounds(fullImgData, {
           alphaThreshold: 25,
           minPixelsPerCol: 3,
           minPixelsPerRow: 3
         });
-
-        let sourceX = cLeft;
-        let sourceY = cTop;
 
         if (bounds) {
           if (state.guidelineEnabled) {
@@ -4366,28 +4372,10 @@ document.addEventListener('DOMContentLoaded', () => {
             sourceY = anchorY - (state.guidelineY - cTop);
           }
         }
-
-        // Draw from fullFrameCanvas to frameCanvas preserving full dimensions and exact cell size
-        drawSubImageSafe(frameCtx, fullFrameCanvas, sourceX, sourceY, cropW, cropH, 0, 0, cellW, cellH);
-      } else {
-        // Standard crop extraction
-        frameCtx.drawImage(
-          video,
-          cLeft, cTop, cropW, cropH,
-          0, 0, cellW, cellH
-        );
-
-        let imgData = frameCtx.getImageData(0, 0, cellW, cellH);
-        const cellKeyResult = runKeyer(imgData, buildChromaOptions({ protectionMask: protectionMaskStandard }));
-        imgData = cellKeyResult.imageData;
-        applyColorReplacement(imgData, colorReplaceOptions);
-        clearWatermarkFromImageData(
-          imgData,
-          { x: cLeft, y: cTop, width: cropW, height: cropH },
-          { width: cellW, height: cellH }
-        );
-        frameCtx.putImageData(imgData, 0, 0);
       }
+
+      // Draw from fullFrameCanvas to frameCanvas preserving full dimensions and exact cell size
+      drawSubImageSafe(frameCtx, fullFrameCanvas, sourceX, sourceY, cropW, cropH, 0, 0, cellW, cellH);
 
       // Store individual frame canvas for animation preview
       const singleFrameCopy = document.createElement('canvas');
@@ -5401,23 +5389,51 @@ document.addEventListener('DOMContentLoaded', () => {
     saveClipStateDebounced();
   });
 
-  function downloadSpriteSheet() {
+  const ALPHA_BLEED_PASSES = 3;
+
+  /**
+   * Produces the exported sprite sheet as a Blob.
+   *
+   * PNG goes through our own encoder so alpha bleed survives: the bled colour
+   * lives in pixels whose alpha is 0, and a canvas would premultiply it away the
+   * moment the data went back through `putImageData` (see `alpha-bleed.js`).
+   * WebP has no such path — `toBlob` is the only encoder — so it ships
+   * unbled, at quality 1.0 rather than the 0.95 that was quietly costing edge
+   * detail on every export.
+   */
+  async function encodeSpriteSheetBlob(fmt) {
+    const canvas = state.fullSheetCanvas;
+
+    if (fmt !== 'webp' && canEncodePNG()) {
+      const ctx = canvas.getContext('2d');
+      const sheetData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      applyAlphaBleed(sheetData, ALPHA_BLEED_PASSES);
+      return encodePNG(sheetData);
+    }
+
+    const mime = fmt === 'webp' ? 'image/webp' : 'image/png';
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('Failed to create image blob'))),
+        mime,
+        1.0
+      );
+    });
+  }
+
+  async function downloadSpriteSheet() {
     if (!state.fullSheetCanvas) {
       showToast('Please generate the sprite sheet first', 'error');
       return;
     }
 
     const fmt = selectFormat.value.toLowerCase();
-    const mime = fmt === 'webp' ? 'image/webp' : 'image/png';
     const ext = fmt === 'webp' ? 'webp' : 'png';
     const baseName = (inputDownloadName.value.trim() || 'spritesheet').replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `${baseName}.${ext}`;
 
-    state.fullSheetCanvas.toBlob((blob) => {
-      if (!blob) {
-        showToast('Failed to create image blob', 'error');
-        return;
-      }
+    try {
+      const blob = await encodeSpriteSheetBlob(fmt);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -5427,7 +5443,10 @@ document.addEventListener('DOMContentLoaded', () => {
       a.remove();
       URL.revokeObjectURL(url);
       showToast(`Downloaded: ${filename}`, 'success');
-    }, mime, 0.95);
+    } catch (err) {
+      console.error(err);
+      showToast(`Failed to export sprite sheet: ${err.message}`, 'error');
+    }
   }
 
   async function downloadAudio() {
@@ -5481,6 +5500,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error('Failed to read blob'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
   async function downloadBundle() {
     if (!state.fullSheetCanvas) {
       showToast('Please generate sprite sheet before downloading bundle', 'error');
@@ -5488,13 +5516,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const fmt = selectFormat.value.toLowerCase();
-    const mime = fmt === 'webp' ? 'image/webp' : 'image/png';
     const baseName = (inputDownloadName.value.trim() || 'spritesheet').replace(/[^a-zA-Z0-9_-]/g, '_');
-    
+
     showToast('Preparing ZIP package (Sprite Sheet + MP3)...', 'info');
 
     try {
-      const dataUrl = state.fullSheetCanvas.toDataURL(mime, 0.95);
+      const sheetBlob = await encodeSpriteSheetBlob(fmt);
+      const dataUrl = await blobToDataUrl(sheetBlob);
       const formData = new FormData();
       
       if (state.currentVideoFile) {

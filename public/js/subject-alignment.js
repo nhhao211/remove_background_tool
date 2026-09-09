@@ -200,7 +200,7 @@ function drawSubImageSafe(ctx, sourceCanvas, sx, sy, sw, sh, dx, dy, dw, dh) {
     validSy = 0;
     validSh -= trimTop;
     validDy += trimTop * scaleY;
-    validDh += trimTop * scaleY;
+    validDh -= trimTop * scaleY;
   }
 
   if (validSx + validSw > srcW) {

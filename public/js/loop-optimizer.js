@@ -11,6 +11,7 @@
  */
 
 import { runKeyer } from './keyer/index.js';
+import { SRGB_TO_LINEAR, linearToSrgb8 } from './keyer/color.js';
 import {
   buildFrameDescriptor,
   descriptorDistance,
@@ -492,15 +493,30 @@ export function applyLoopCrossfade(frames, crossfadeCount = 0) {
     const weightHead = t * t * (3 - (2 * t));
     const weightTail = 1 - weightHead;
 
+    // Blend in linear light, not in sRGB code values. Averaging two gamma-
+    // encoded numbers lands darker than the light the two frames actually carry,
+    // so a gamma-space crossfade dips in brightness and saturation across the
+    // seam — the frames it touches read as a dull smudge against their
+    // neighbours. Decoding, mixing, then re-encoding keeps the seam at the same
+    // exposure as the rest of the loop.
     for (let i = 0; i < tailData.length; i += 4) {
       const aTail = tailData[i + 3] / 255;
       const aHead = headData[i + 3] / 255;
 
-      const alphaOut = (aTail * weightTail) + (aHead * weightHead);
+      const wTail = aTail * weightTail;
+      const wHead = aHead * weightHead;
+      const alphaOut = wTail + wHead;
+
       if (alphaOut > 0.001) {
-        tailData[i] = Math.round(((tailData[i] * aTail * weightTail) + (headData[i] * aHead * weightHead)) / alphaOut);
-        tailData[i + 1] = Math.round(((tailData[i + 1] * aTail * weightTail) + (headData[i + 1] * aHead * weightHead)) / alphaOut);
-        tailData[i + 2] = Math.round(((tailData[i + 2] * aTail * weightTail) + (headData[i + 2] * aHead * weightHead)) / alphaOut);
+        tailData[i] = linearToSrgb8(
+          ((SRGB_TO_LINEAR[tailData[i]] * wTail) + (SRGB_TO_LINEAR[headData[i]] * wHead)) / alphaOut
+        );
+        tailData[i + 1] = linearToSrgb8(
+          ((SRGB_TO_LINEAR[tailData[i + 1]] * wTail) + (SRGB_TO_LINEAR[headData[i + 1]] * wHead)) / alphaOut
+        );
+        tailData[i + 2] = linearToSrgb8(
+          ((SRGB_TO_LINEAR[tailData[i + 2]] * wTail) + (SRGB_TO_LINEAR[headData[i + 2]] * wHead)) / alphaOut
+        );
         tailData[i + 3] = Math.round(alphaOut * 255);
       } else {
         tailData[i + 3] = 0;
