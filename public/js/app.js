@@ -6344,7 +6344,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const ALPHA_BLEED_PASSES = 3;
 
   const WEBP_QUALITY_MIN = 60;
-  const WEBP_QUALITY_DEFAULT = 88;
+  const WEBP_QUALITY_DEFAULT = 90;
 
   /**
    * Reads the WebP quality slider as the 0..1 figure `toBlob` wants.
@@ -6352,7 +6352,7 @@ document.addEventListener('DOMContentLoaded', () => {
    * The slider stops at 100 for a reason worth knowing: the canvas WebP
    * encoder treats a quality of exactly 1.0 as a request for lossless VP8L,
    * not as "the best lossy setting". It is a cliff, not the top of a ramp —
-   * a sprite sheet that lands around 2 MB at 0.88 can pass 20 MB at 1.0.
+   * a sprite sheet that lands around 2 MB at 0.90 can pass 20 MB at 1.0.
    * That is why 100 is reachable but is not the default.
    */
   function getWebpQuality() {
