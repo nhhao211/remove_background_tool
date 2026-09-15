@@ -26,7 +26,9 @@
   - `public/js/png-encoder.js`: encoder PNG RGBA chạy trong browser (`CompressionStream('deflate')`). Cần thiết vì backing store của canvas là premultiplied: `toBlob`/`putImageData` sẽ xoá sạch màu mà `alpha-bleed.js` vừa ghi ở alpha 0. Đường xuất PNG đi thẳng từ `ImageData` sang encoder này, không quay lại canvas.
   - `public/js/loop-analysis.js`: lõi thuật toán tìm chu kỳ lặp (descriptor 32x32, lag profile/autocorrelation, seam cost có cửa sổ, chuẩn hoá tương phản). Có 3 chế độ khớp frame (`exact` khoá độ dài chu kỳ, `speed` giải lại tốc độ phát, `nearest` chấm điểm mềm) để chu kỳ ra đúng số frame mong muốn. Thuần tuý, không dùng DOM, test bằng `test/loop-analysis.test.mjs`.
   - `public/js/loop-optimizer.js`: phần cần DOM của Auto Loop Finder (seek, capture, chroma key, tinh chỉnh dưới mức mẫu, thumbnail) cộng crossfade và diff heatmap.
-  - `public/js/keyer/`: module matting dùng chung, có baseline byte-identical trong `test/keyer/`. Không sửa nếu chưa cần; `assertOptions()` chặn option lạ.
+  - `public/js/keyer/`: module matting dùng chung, có baseline byte-identical trong `test/keyer/`. Không sửa nếu chưa cần; `assertOptions()` chặn option lạ. Region `matchMode: 'edge'` (xem mục 10) được thêm mà không đổi baseline; test ở `test/keyer/edge-match.test.mjs`.
+  - `public/js/sprite-remover.js`: tab Clean Sprite Sheet (upload ảnh tĩnh, keyer connected, Edge Refine, pick màu trên Original/Result, export).
+  - `public/js/edge-refine.js`: Edge Refine — pass sau keyer, ước lượng lại alpha và màu của dải viền từ ảnh gốc (unmix F/B, fallback color-difference, làm mịn, khử màu nền). Nằm **ngoài** `keyer/` giống `erase-mask.js` để không đụng baseline/whitelist. Thuần tuý, test bằng `test/edge-refine.test.mjs`.
   - `public/css/style.css`: giao diện và trạng thái tương tác.
   - `public/samples/sample_blue_flower.mp4`: video demo được tự động load khi mở app.
 
@@ -185,6 +187,27 @@ npm run dev
 - Khi tạo bundle lỗi, frontend fallback sang download sprite sheet và audio riêng.
 - Menu download tự đóng khi click bên ngoài.
 
+### 10. Clean Sprite Sheet
+
+Tab riêng làm sạch sprite sheet tĩnh (PNG/WebP/JPEG), toàn bộ ở `public/js/sprite-remover.js`. Pipeline:
+
+```
+state.original → runKeyer(connected, keyRegions) → state.keyed (cache)
+  → applyEdgeRefine() → state.result → hiển thị
+  → export PNG: clone → applyAlphaBleed(3) → encodePNG
+```
+
+- **Edge Refine** (`#spriteEdgeRefineSection`): `Refine edges` bật/tắt, `Edge Width` 1–3 px, `Smooth` 0–1, `Decontaminate edge color`, `Pixel art edges` (bỏ smoothing, alpha chỉ còn 0/255; khi bật thì khoá `Smooth`). Tắt `Refine edges` thì `applyEdgeRefine()` trả thẳng `state.keyed` → output **giống hệt từng byte** kết quả keyer.
+- Kéo slider Edge Refine chỉ chạy lại refine trên `state.keyed` đã cache (debounce), không chạy lại flood fill. Bật `Analyze each sprite cell` thì refine gọi riêng từng ô với `rect` nên không loang qua đường kẻ ô.
+- Bất biến của `refineEdges()`: alpha không bao giờ tăng (`α = min(α_refine, α_keyer)`); chỉ ghi pixel cách pixel alpha 0 tối đa `edgeWidth` → lõi nhân vật giữ nguyên từng byte; không đọc/ghi ngoài `rect`. Trạng thái Result ghi thêm `· edge refined (N px)`.
+- **Pick màu trên Result** (khung Transparent): khi Pick đang bật và đang ở phạm vi All Frames (không phải `Pick Below Line`), loupe và click chạy được trên cả Original lẫn Result; hai canvas cùng kích thước và transform nên cùng toạ độ, kể cả ở chế độ `Anim`.
+  - Màu luôn lấy từ `state.original`, không lấy từ Result (Result đã bị nhân alpha/khử màu). Pixel đã trong suốt trên Result bị từ chối kèm toast.
+  - Click thường → phạm vi `edge` (swatch có nhãn `⌇ edge`); `Shift+Click` hoặc `Shift+Enter` → `global` như pick trên Original. Nhãn phạm vi hiện trong loupe.
+  - Click commit đúng pixel loupe đang hiển thị (`state.hoverPick`), không tính lại từ `clientX` của `click` — `click` làm tròn toạ độ nguyên còn `pointermove` có phần lẻ, ở zoom 100 % sẽ lệch sang pixel bên cạnh.
+  - Màu `edge` đi vào keyer dưới dạng `keyRegions: [{ hex, matchMode: 'edge', edgeReach: 2 }]` và **không** tạo `seedPoints`. Trong `applyConnectedMatte()` key `edge` bị loại khỏi BFS chính (`analyze`/`hasAllowedKey`); sau BFS chính mới chạy một BFS phụ bắt đầu từ biên mask, chỉ lan tối đa `edgeReach` bước (clamp 1–4) qua pixel khớp key `edge`. Nhờ vậy một màu viền gần màu nhân vật không loang vào giữa nhân vật. Không có region `edge` thì output keyer không đổi byte nào.
+  - Pick trùng màu đã có: nếu màu đó đang là `global` thì pick `edge` bị bỏ qua (toast "Màu này đã được xoá ở mọi nơi.").
+- **Export**: PNG đi thẳng từ `ImageData` qua `applyAlphaBleed` rồi `png-encoder.js`, không qua canvas, để màu đã khử của pixel viền alpha thấp không bị lượng tử hoá bởi backing store premultiplied. WebP vẫn qua canvas `toBlob` với quality 0.9. Test ở `test/export-pipeline.test.mjs`.
+
 ## API backend
 
 ### `GET /api/health`
@@ -228,5 +251,6 @@ Trả JSON `{ status: "ok", uptime }`.
 - Nếu sửa pipeline audio hoặc ZIP, kiểm tra cả trường hợp input là file local và trường hợp video demo URL.
 - Nếu sửa Canvas/chroma key, kiểm tra cả hai format PNG/WebP, trạng thái transparent bật/tắt, nhiều key colors, alpha edge và preview mode `Anim`/`Sheet`.
 - Bút Xóa phải giữ nguyên vị trí trong pipeline: keyer → color replace → erase → (bounds detection nếu có alignment) → crossfade. Không đẩy erase vào `public/js/keyer/` vì sẽ phải sửa whitelist option và regenerate baseline.
+- Clean Sprite Sheet: giữ Edge Refine ngoài `public/js/keyer/`; tắt Edge Refine phải cho output byte-identical với keyer; refine không được tăng alpha hay đổi pixel lõi. Key `edge` không được tham gia BFS chính và không tạo seed point. Không đổi `test/keyer/baseline/`.
 - Không coi `Split`, `Duplicate`, `Delete` là hệ thống timeline nhiều clip: hiện chúng chỉ thao tác trên `trimStart`/`trimEnd` và state backup.
 - Sau thay đổi lớn, chạy kiểm tra cú pháp, khởi động server, kiểm tra `/api/health`, rồi thử flow demo: load video → trim → generate → preview → download.

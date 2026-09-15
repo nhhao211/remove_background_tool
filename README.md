@@ -10,7 +10,7 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 7. **Download linh hoạt**: Tải về định dạng WebP / PNG trong suốt + Audio MP3 riêng lẻ hoặc tải trọn bộ gói file `.zip`.
 8. **Tốc độ phát nhất quán**: Speed (0.1x–16x) được lưu theo từng video, dùng cho preview/FPS và áp dụng tempo tương ứng khi xuất MP3/ZIP.
 9. **Bộ màu chroma key**: Nhập HEX/RGB, copy/paste, dùng lại màu gần đây và eyedropper; màu được lưu an toàn theo video.
-10. **Clean Sprite Sheet**: Upload PNG/WebP/JPEG tĩnh ở tab riêng, tự nhận diện nền từ biên ảnh hoặc từng cell, bảo vệ vùng màu bị bao kín trong chủ thể, làm sạch viền và export lại PNG/WebP trong suốt.
+10. **Clean Sprite Sheet**: Upload PNG/WebP/JPEG tĩnh ở tab riêng, tự nhận diện nền từ biên ảnh hoặc từng cell, bảo vệ vùng màu bị bao kín trong chủ thể, làm sạch viền và export lại PNG/WebP trong suốt. **Edge Refine** ước lượng lại alpha và màu ở viền nhân vật để hết halo và răng cưa; màu viền còn sót có thể pick thẳng trên khung Result và chỉ bị xoá ở viền, không ăn vào giữa nhân vật.
 11. **Subject Protect Brush**: Vẽ mask mềm trực tiếp trên Source Video để bảo vệ màu và alpha của chủ thể ở những vùng gần màu nền; hỗ trợ bút/tẩy, size, strength, hardness, undo/redo và preset cho chi tiết đặc hoặc bán trong suốt.
 12. **Subject Color Replace**: Dùng eyedropper chọn màu chủ thể từ Source Video hoặc Sprite Preview, chọn màu đích, rồi điều chỉnh tolerance/strength để đổi dải màu tương ứng mà vẫn giữ highlight và bóng.
 13. **Bút Xóa (Erase Brush)**: Bôi trực tiếp lên Source Video **hoặc thẳng trên khung Preview** (sprite sheet, cả chế độ Anim và Sheet) để xóa hẳn vùng nền còn sót hay chi tiết thừa mà chroma key không bắt được (logo, micro, bóng, vệt sáng); có Erase/Restore, size/strength/hardness, vòng tròn cỡ bút, undo/redo/clear. Nét bôi trên Source Video áp cho mọi frame, còn nét bôi trên một ô của sprite sheet **chỉ xóa đúng ô đó** — hoạt động như Eraser trong Paint để dọn chi tiết của riêng một frame.
@@ -129,4 +129,10 @@ Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http:
    - Khai báo đúng Rows/Cols để preview animation theo từng sprite cell.
    - Màu pick từ frame preview được áp dụng cho toàn bộ frame trong sheet. Dùng **Pick Below Line / All Frames** nếu màu chỉ cần xóa bên dưới đường chia của từng sprite; bật **Adjust split line** để kéo đường chia từ 10%–90% chiều cao frame.
 4. Điều chỉnh Similarity, Edge Feather, Spill Suppression, Subject Protection và Edge Cleanup, sau đó nhấn **Apply**.
-5. Kiểm tra kết quả trên checkerboard và tải PNG/WebP bằng nút **Download**.
+5. **Edge Refine** (bật sẵn) làm mịn và khử màu nền ở viền; kéo slider là thấy ngay, không cần Apply lại.
+   - **Edge Width** 1–3 px: độ rộng dải viền được xử lý. **Smooth**: chống răng cưa.
+   - **Decontaminate edge color**: bỏ màu nền lẫn vào pixel viền.
+   - **Pixel art edges**: viền cứng, không bán trong suốt — dùng cho sprite pixel art.
+   - Tắt **Refine edges** để lấy đúng kết quả keyer như trước.
+6. Còn viền màu sót? Bật Pick rồi click **ngay trên khung Result** (Transparent): màu lấy từ ảnh gốc và chỉ bị xoá ở viền (trong 2 px quanh nền đã xoá), swatch có nhãn `⌇ edge`. Giữ **Shift** khi click để xoá màu đó ở mọi nơi. Pick trên Result không dùng được ở chế độ Pick Below Line.
+7. Kiểm tra kết quả trên checkerboard và tải PNG/WebP bằng nút **Download**. PNG giữ nguyên màu viền đã khử.
