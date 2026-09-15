@@ -129,6 +129,11 @@ export function applyDirectMatte(imageData, options = {}) {
  * Sheet path. Flood fills background from the border plus explicit seeds, so
  * enclosed pockets are kept unless a `matchMode: 'global'` key says otherwise.
  *
+ * A `matchMode: 'edge'` key never takes part in that fill: its colour is usually
+ * a fringe close to the subject's own colours and would leak straight through
+ * the subject. It only removes pixels within `edgeReach` (1–4) steps of the
+ * background the fill already found.
+ *
  * Mutates `imageData` and returns `{ imageData, keyColors, removedPixels }`.
  */
 export function applyConnectedMatte(imageData, options = {}) {
@@ -158,8 +163,11 @@ export function applyConnectedMatte(imageData, options = {}) {
   const featherWidth = 0.003 + (0.11 * Math.pow(feather, 1.45));
   const traversalThreshold = transparentThreshold + featherWidth;
   const keyRecords = [
-    ...suppliedColors.map((color) => ({ metrics: colorMetrics(color), region: keyRegions.get(color.hex) || null })),
-    ...detectedColors.map((color) => ({ metrics: colorMetrics(color), region: null }))
+    ...suppliedColors.map((color) => {
+      const region = keyRegions.get(color.hex) || null;
+      return { metrics: colorMetrics(color), region, edge: region?.matchMode === 'edge' };
+    }),
+    ...detectedColors.map((color) => ({ metrics: colorMetrics(color), region: null, edge: false }))
   ];
   const sheetWidth = Math.max(1, Number(options.sheetWidth) || width);
   const sheetHeight = Math.max(1, Number(options.sheetHeight) || height);
@@ -174,7 +182,7 @@ export function applyConnectedMatte(imageData, options = {}) {
 
   const regionAllows = createRegionAllows({ sheetWidth, sheetHeight, offsetX, offsetY });
 
-  const hasAllowedKey = (x, y) => keyRecords.some((record) => regionAllows(record.region, x, y));
+  const hasAllowedKey = (x, y) => keyRecords.some((record) => !record.edge && regionAllows(record.region, x, y));
 
   const analyze = (index) => {
     const offset = index * 4;
@@ -186,7 +194,7 @@ export function applyConnectedMatte(imageData, options = {}) {
     let distance = Infinity;
     for (let recordIndex = 0; recordIndex < keyRecords.length; recordIndex += 1) {
       const record = keyRecords[recordIndex];
-      if (!regionAllows(record.region, x, y)) continue;
+      if (record.edge || !regionAllows(record.region, x, y)) continue;
       const candidateDistance = keyDistance(pixel, record.metrics, luminanceWeight);
       if (candidateDistance < distance) {
         distance = candidateDistance;
@@ -266,6 +274,79 @@ export function applyConnectedMatte(imageData, options = {}) {
       for (let nx = Math.max(0, x - 1); nx <= Math.min(width - 1, x + 1); nx += 1) {
         if (nx === x && ny === y) continue;
         enqueue((ny * width) + nx);
+      }
+    }
+  }
+
+  if (keyRecords.some((record) => record.edge)) {
+    applyEdgeMatches();
+  }
+
+  // Multi-source BFS from the fill's boundary. Depth is counted in 8-neighbour
+  // steps away from the background, so a run of edge-coloured pixels longer
+  // than `edgeReach` stops there instead of tunnelling through a thin neck.
+  function applyEdgeMatches() {
+    const edgeIndexes = [];
+    let maxReach = 0;
+    const reaches = keyRecords.map((record, recordIndex) => {
+      if (!record.edge) return 0;
+      const reach = Math.max(1, Math.min(4, Math.round(Number(record.region.edgeReach) || 2)));
+      edgeIndexes.push(recordIndex);
+      maxReach = Math.max(maxReach, reach);
+      return reach;
+    });
+    const depth = new Uint8Array(width * height);
+    head = 0;
+    tail = 0;
+    for (let index = 0; index < mask.length; index += 1) {
+      if (!mask[index]) continue;
+      const x = index % width;
+      const y = Math.floor(index / width);
+      let borders = false;
+      for (let ny = Math.max(0, y - 1); ny <= Math.min(height - 1, y + 1) && !borders; ny += 1) {
+        for (let nx = Math.max(0, x - 1); nx <= Math.min(width - 1, x + 1); nx += 1) {
+          if (!mask[(ny * width) + nx]) {
+            borders = true;
+            break;
+          }
+        }
+      }
+      if (borders) queue[tail++] = index;
+    }
+
+    while (head < tail) {
+      const index = queue[head++];
+      const nextDepth = depth[index] + 1;
+      if (nextDepth > maxReach) continue;
+      const x = index % width;
+      const y = Math.floor(index / width);
+      for (let ny = Math.max(0, y - 1); ny <= Math.min(height - 1, y + 1); ny += 1) {
+        for (let nx = Math.max(0, x - 1); nx <= Math.min(width - 1, x + 1); nx += 1) {
+          const neighbour = (ny * width) + nx;
+          if (mask[neighbour] || data[(neighbour * 4) + 3] === 0) continue;
+          const pixel = colorMetrics({
+            r: data[neighbour * 4],
+            g: data[(neighbour * 4) + 1],
+            b: data[(neighbour * 4) + 2]
+          });
+          let nearestIndex = 0;
+          let nearestDistance = Infinity;
+          for (const recordIndex of edgeIndexes) {
+            const record = keyRecords[recordIndex];
+            if (reaches[recordIndex] < nextDepth || !regionAllows(record.region, nx, ny)) continue;
+            const candidateDistance = keyDistance(pixel, record.metrics, luminanceWeight);
+            if (candidateDistance < nearestDistance) {
+              nearestDistance = candidateDistance;
+              nearestIndex = recordIndex;
+            }
+          }
+          if (nearestDistance > traversalThreshold) continue;
+          mask[neighbour] = 1;
+          depth[neighbour] = nextDepth;
+          distanceMap[neighbour] = nearestDistance;
+          keyIndexMap[neighbour] = nearestIndex;
+          queue[tail++] = neighbour;
+        }
       }
     }
   }

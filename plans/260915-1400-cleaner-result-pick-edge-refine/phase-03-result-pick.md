@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "Pick Color trên khung Transparent result + phạm vi edge"
-status: pending
+status: done
 priority: P1
 effort: "5h"
 dependencies: []
@@ -81,6 +81,33 @@ Test mới trong `test/keyer/edge-match.test.mjs`:
 - Phím mũi tên sau khi hover Result: di chuyển trên Result; Enter chọn.
 - Xoá swatch `edge` bằng × → kết quả trở lại.
 
+## Kết quả
+
+Chrome headless, clip-08 2×2, key #18c63e, Edge Refine tắt để viền xanh còn đậm. Pixel thử là
+(121,92) `#2eb23b`, sợi lông trên cell clip-01.
+
+- Toạ độ loupe trên Result khớp Original và khớp phép tính từ rect canvas ở Sheet 26/100/381/745 %
+  và Anim 100/381/745 %, sau khi pan. Hex luôn là màu original.
+- Click edge: swatch `#2eb23b ⌇ edge`. 405 pixel đổi alpha, không pixel nào tăng alpha, không pixel
+  nào cách vùng đã trong suốt quá 2 px. Alpha trong trang khớp từng byte với `runKeyer` chạy trong
+  Node với region `edge` và `seedPoints: []`. Cùng màu ở dạng `global` lệch 281 pixel.
+- Shift+Click: phạm vi `global`, 686 pixel đổi, trong đó 256 pixel ở cell clip-02 mà edge pick
+  không động tới. Kết quả giống từng byte với click cùng điểm bên Original.
+- Hover Result, ←/→ di chuyển loupe trên Result (118→121), Enter cho kết quả giống click.
+- Pick trong Anim cho kết quả giống pick trong Sheet.
+- Xoá swatch edge bằng × thì hash trở lại như trước khi pick.
+- Pixel trong suốt trên Result bị từ chối kèm toast, picker vẫn bật. Pick Below Line thì Result không
+  nhận hover lẫn click.
+- Bật Edge Refine rồi pick edge vẫn chạy bình thường, không lỗi console.
+
+Quyết định thêm khi làm:
+- Click dùng đúng pixel loupe đang hiển thị. `click` báo toạ độ nguyên, còn `pointermove` có
+  thể lẻ, nên ở zoom ≥ 100 % click từng rơi lệch sang pixel trong suốt kề sợi viền 1 px. Trường
+  hợp này đã được thấy thật khi test.
+- Pick edge trùng một màu đang `full`/`lower` chỉ báo toast, không thu hẹp key đó về viền.
+- Không thêm nút `btnSpritePickResult`. Nút Pick hiện có đã bật cả hai khung, và subtitle cùng
+  banner trên Result đã chỉ ra cách dùng.
+
 ## Tiêu chí xong
 
-- [ ] `npm test` xanh, baseline không đổi, test `edge-match` mới xanh.
+- [x] `npm test` xanh, baseline không đổi, test `edge-match` mới xanh.

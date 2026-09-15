@@ -738,6 +738,27 @@ body {
   text-align: center;
 }
 
+.cleaner-result-subtitles {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+}
+
+.cleaner-picker-scope {
+  display: block;
+  padding: 0 3px 3px;
+  color: #94a3b8;
+  font: 600 0.6rem ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+
+.cleaner-picker-scope.is-edge {
+  color: #fbbf24;
+}
+
 @media (max-width: 1280px) {
   .app-header {
     flex-wrap: wrap;

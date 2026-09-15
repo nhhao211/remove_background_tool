@@ -70,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnToggleBg = byId('btnCleanerToggleBg');
   const pickBanner = byId('spritePickBanner');
   const pickBannerText = byId('spritePickBannerText');
+  const resultPickBanner = byId('spriteResultPickBanner');
   const lowerHalfGuide = byId('spriteLowerHalfGuide');
   const protectedRegionLabel = byId('spriteProtectedRegionLabel');
   const splitHandle = byId('spriteSplitHandle');
@@ -77,6 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const pickerCanvas = byId('spritePickerCanvas');
   const pickerHex = byId('spritePickerHex');
   const spritePickerCoord = byId('spritePickerCoord');
+  const pickerScope = byId('spritePickerScope');
+  // A Result pick removes its colour only this many px from removed background.
+  const EDGE_REACH = 2;
 
   const state = {
     original: null,
@@ -96,6 +100,9 @@ document.addEventListener('DOMContentLoaded', () => {
     isPicking: false,
     pickerPoint: null,
     pickScope: 'full',
+    pickSurface: 'original',
+    pickShift: false,
+    hoverPick: null,
     lowerSplitRatio: 0.5,
     splitDragPointerId: null,
     splitReprocessTimer: null,
@@ -218,7 +225,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!color) return false;
     const existingIndex = state.manualColors.findIndex((item) => Math.abs(item.r - color.r) + Math.abs(item.g - color.g) + Math.abs(item.b - color.b) < 10);
     const duplicate = existingIndex >= 0;
-    if (point && !state.seedPoints.some((item) => item.x === point.x && item.y === point.y)) {
+    // An edge pick adds nothing to a colour already keyed everywhere, and must
+    // not narrow that key down to the edge.
+    if (duplicate && scope === 'edge' && state.manualColors[existingIndex].scope !== 'edge') {
+      showToast('Màu này đã được xoá ở mọi nơi.', 'info');
+      return false;
+    }
+    // A seed floods background from its point; an edge key must never flood.
+    if (point && scope !== 'edge' && !state.seedPoints.some((item) => item.x === point.x && item.y === point.y)) {
       state.seedPoints.push({ x: point.x, y: point.y, hex: color.hex, scope });
     }
     if (duplicate && !point) {
@@ -244,12 +258,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const manualIndex = state.manualColors.findIndex((item) => item.hex === color.hex);
       const swatch = document.createElement('div');
       swatch.className = `color-swatch cleaner-swatch${manualIndex >= 0 ? '' : ' auto-color'}`;
-      const scopeLabel = color.scope === 'lower' ? ' · lower half of each sprite cell only' : '';
+      const scopeLabel = color.scope === 'lower'
+        ? ' · lower half of each sprite cell only'
+        : (color.scope === 'edge' ? ` · edge only, within ${EDGE_REACH} px of removed background` : '');
       swatch.title = `${hexColor(color)}${manualIndex >= 0 ? ' · picked' : ' · auto detected'}${scopeLabel}`;
       const chip = document.createElement('span');
       chip.style.background = hexColor(color);
       const label = document.createElement('small');
-      label.textContent = `${hexColor(color)}${color.scope === 'lower' ? ' ↓½' : ''}`;
+      label.textContent = `${hexColor(color)}${color.scope === 'lower' ? ' ↓½' : ''}${color.scope === 'edge' ? ' ⌇ edge' : ''}`;
       swatch.append(chip, label);
       if (manualIndex >= 0) {
         const remove = document.createElement('button');
@@ -478,7 +494,11 @@ document.addEventListener('DOMContentLoaded', () => {
     return {
       autoDetect,
       keyColors: state.manualColors,
-      keyRegions: state.manualColors.map((color) => ({
+      keyRegions: state.manualColors.map((color) => (color.scope === 'edge' ? {
+        hex: color.hex,
+        matchMode: 'edge',
+        edgeReach: EDGE_REACH
+      } : {
         hex: color.hex,
         matchMode: 'global',
         ...(color.scope === 'lower' ? {
@@ -598,6 +618,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const transform = `translate(-50%, -50%) translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
     originalCanvas.style.transform = transform;
     resultCanvas.style.transform = transform;
+    state.hoverPick = null;
     zoomLevel.textContent = `${Math.round(state.zoom * 100)}%`;
     if (state.isPicking && state.pickScope === 'lower') requestAnimationFrame(updateLowerHalfGuide);
   }
@@ -639,12 +660,22 @@ document.addEventListener('DOMContentLoaded', () => {
     updateTransform();
   }
 
-  function canvasCoordinates(event) {
-    const rect = originalCanvas.getBoundingClientRect();
+  // Both canvases share size and transform, so a point means the same pixel on either.
+  function surfaceCanvas(surface) {
+    return surface === 'result' ? resultCanvas : originalCanvas;
+  }
+
+  // The lower-half pick needs the split line, which only Original draws.
+  function resultPickable() {
+    return Boolean(state.result) && state.pickScope !== 'lower';
+  }
+
+  function canvasCoordinates(event, canvas = originalCanvas) {
+    const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return null;
-    const x = Math.floor(((event.clientX - rect.left) / rect.width) * originalCanvas.width);
-    const y = Math.floor(((event.clientY - rect.top) / rect.height) * originalCanvas.height);
-    if (x < 0 || y < 0 || x >= originalCanvas.width || y >= originalCanvas.height) return null;
+    const x = Math.floor(((event.clientX - rect.left) / rect.width) * canvas.width);
+    const y = Math.floor(((event.clientY - rect.top) / rect.height) * canvas.height);
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return null;
     return { x, y };
   }
 
@@ -654,60 +685,85 @@ document.addEventListener('DOMContentLoaded', () => {
     return { x: rect.x0 + point.x, y: rect.y0 + point.y };
   }
 
-  function updatePickerByPoint(point) {
+  function updatePickerScopeLabel() {
+    if (!pickerScope) return;
+    const label = state.pickSurface === 'result'
+      ? (state.pickShift ? 'global' : 'edge')
+      : (state.pickScope === 'lower' ? 'lower' : 'global');
+    pickerScope.textContent = label;
+    pickerScope.classList.toggle('is-edge', label === 'edge');
+  }
+
+  function updatePickerByPoint(point, surface = state.pickSurface) {
     if (!state.isPicking || !state.original || !point) return;
     state.pickerPoint = point;
+    state.pickSurface = surface;
+    const canvas = surfaceCanvas(surface);
     const sheetPoint = displayPointToSheet(point);
     const offset = ((sheetPoint.y * state.original.width) + sheetPoint.x) * 4;
     const data = state.original.data;
     const color = { r: data[offset], g: data[offset + 1], b: data[offset + 2] };
     const hex = hexColor(color);
 
-    const rect = originalCanvas.getBoundingClientRect();
-    const clientX = rect.left + ((point.x + 0.5) / originalCanvas.width) * rect.width;
-    const clientY = rect.top + ((point.y + 0.5) / originalCanvas.height) * rect.height;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = rect.left + ((point.x + 0.5) / canvas.width) * rect.width;
+    const clientY = rect.top + ((point.y + 0.5) / canvas.height) * rect.height;
 
     pickerContext.imageSmoothingEnabled = false;
     pickerContext.clearRect(0, 0, 72, 72);
-    pickerContext.drawImage(originalCanvas, point.x - 4, point.y - 4, 9, 9, 0, 0, 72, 72);
+    pickerContext.drawImage(canvas, point.x - 4, point.y - 4, 9, 9, 0, 0, 72, 72);
     pickerHex.textContent = hex;
+    updatePickerScopeLabel();
     if (spritePickerCoord) spritePickerCoord.textContent = `X: ${sheetPoint.x}, Y: ${sheetPoint.y}`;
     pickerLoupe.style.display = 'block';
     pickerLoupe.style.left = `${clientX + 18}px`;
     pickerLoupe.style.top = `${clientY + 18}px`;
   }
 
-  function updatePicker(event) {
+  function updatePicker(event, surface) {
     if (!state.isPicking || !state.original) return;
-    const point = canvasCoordinates(event);
+    state.pickShift = event.shiftKey;
+    const point = surface === 'result' && !resultPickable()
+      ? null
+      : canvasCoordinates(event, surfaceCanvas(surface));
+    state.hoverPick = point ? { surface, point, clientX: event.clientX, clientY: event.clientY } : null;
     if (!point) {
       pickerLoupe.style.display = 'none';
       return;
     }
-    updatePickerByPoint(point);
+    updatePickerByPoint(point, surface);
   }
 
   function movePickerPoint(dx, dy) {
     if (!state.isPicking || !state.original) return false;
-    const cur = state.pickerPoint || { x: Math.floor(originalCanvas.width / 2), y: Math.floor(originalCanvas.height / 2) };
+    const canvas = surfaceCanvas(state.pickSurface);
+    const cur = state.pickerPoint || { x: Math.floor(canvas.width / 2), y: Math.floor(canvas.height / 2) };
     const next = {
-      x: Math.max(0, Math.min(originalCanvas.width - 1, cur.x + dx)),
-      y: Math.max(0, Math.min(originalCanvas.height - 1, cur.y + dy))
+      x: Math.max(0, Math.min(canvas.width - 1, cur.x + dx)),
+      y: Math.max(0, Math.min(canvas.height - 1, cur.y + dy))
     };
     updatePickerByPoint(next);
     return true;
   }
 
-  function confirmPickerSelection() {
-    if (!state.isPicking || !state.original) return false;
-    const point = state.pickerPoint || { x: Math.floor(originalCanvas.width / 2), y: Math.floor(originalCanvas.height / 2) };
-    if (state.pickScope === 'lower' && point.y < Math.floor(originalCanvas.height * state.lowerSplitRatio)) {
+  // Click and Enter both land here. A Result pick is an edge-only key unless
+  // Shift is held; its colour still comes from the original, which is what the
+  // keyer matches against (the Result pixel may already be decontaminated).
+  function commitPick(point, { surface = 'original', shiftKey = false } = {}) {
+    if (!state.isPicking || !state.original || !point) return false;
+    const onResult = surface === 'result';
+    if (onResult && !resultPickable()) return false;
+    if (!onResult && state.pickScope === 'lower' && point.y < Math.floor(originalCanvas.height * state.lowerSplitRatio)) {
       showToast(`Chỉ nhận pixel nằm dưới đường chia ${Math.round(state.lowerSplitRatio * 100)}% của sprite.`, 'info');
       return false;
     }
     const sheetPoint = displayPointToSheet(point);
     const offset = ((sheetPoint.y * state.original.width) + sheetPoint.x) * 4;
-    if (state.original.data[offset + 3] < 10) {
+    if (onResult && state.result.data[offset + 3] < 10) {
+      showToast('Pixel này đã trong suốt trên Result', 'info');
+      return false;
+    }
+    if (!onResult && state.original.data[offset + 3] < 10) {
       showToast('Pixel này đã trong suốt, hãy chọn màu nền nhìn thấy được.', 'info');
       return false;
     }
@@ -717,9 +773,17 @@ document.addEventListener('DOMContentLoaded', () => {
       b: state.original.data[offset + 2]
     };
     color.hex = hexColor(color);
+    const scope = onResult ? (shiftKey ? 'full' : 'edge') : state.pickScope;
     deactivatePicker();
-    addManualColor(color, { point: sheetPoint, scope: state.pickScope });
+    addManualColor(color, { point: sheetPoint, scope });
     return true;
+  }
+
+  function confirmPickerSelection(shiftKey = false) {
+    if (!state.isPicking || !state.original) return false;
+    const canvas = surfaceCanvas(state.pickSurface);
+    const point = state.pickerPoint || { x: Math.floor(canvas.width / 2), y: Math.floor(canvas.height / 2) };
+    return commitPick(point, { surface: state.pickSurface, shiftKey });
   }
 
   function activatePicker(scope = 'full') {
@@ -742,6 +806,8 @@ document.addEventListener('DOMContentLoaded', () => {
     btnPickLower.classList.toggle('active', scope === 'lower');
     pickBanner.classList.add('active');
     originalStage.classList.add('is-picking');
+    resultStage.classList.toggle('is-picking', resultPickable());
+    resultPickBanner?.classList.toggle('active', resultPickable());
     originalStage.classList.toggle('pick-lower-half', scope === 'lower');
     originalStage.classList.toggle('adjust-split-line', scope === 'lower' && adjustSplit.checked);
     splitHandle.disabled = !(scope === 'lower' && adjustSplit.checked);
@@ -757,12 +823,18 @@ document.addEventListener('DOMContentLoaded', () => {
         ? Math.floor(originalCanvas.height * ((state.lowerSplitRatio + 1) / 2))
         : Math.floor(originalCanvas.height / 2)
     };
-    updatePickerByPoint(state.pickerPoint);
+    state.pickShift = false;
+    updatePickerByPoint(state.pickerPoint, 'original');
   }
 
   function deactivatePicker() {
     state.isPicking = false;
     state.pickerPoint = null;
+    state.pickSurface = 'original';
+    state.pickShift = false;
+    state.hoverPick = null;
+    resultStage?.classList.remove('is-picking');
+    resultPickBanner?.classList.remove('active');
     btnPick?.classList.remove('active');
     btnPickLower?.classList.remove('active');
     pickBanner?.classList.remove('active');
@@ -1084,36 +1156,32 @@ document.addEventListener('DOMContentLoaded', () => {
     stage.addEventListener('pointercancel', finishPan);
   });
 
-  originalStage.addEventListener('pointermove', updatePicker);
-  originalStage.addEventListener('pointerleave', () => { pickerLoupe.style.display = 'none'; });
-  originalStage.addEventListener('click', (event) => {
-    if (!state.isPicking || !state.original) return;
-    const point = canvasCoordinates(event);
-    if (!point) return;
-    if (state.pickScope === 'lower' && point.y < Math.floor(originalCanvas.height * state.lowerSplitRatio)) {
-      showToast(`Chỉ nhận pixel nằm dưới đường chia ${Math.round(state.lowerSplitRatio * 100)}% của sprite.`, 'info');
-      return;
-    }
-    const sheetPoint = displayPointToSheet(point);
-    const offset = ((sheetPoint.y * state.original.width) + sheetPoint.x) * 4;
-    if (state.original.data[offset + 3] < 10) {
-      showToast('Pixel này đã trong suốt, hãy chọn màu nền nhìn thấy được.', 'info');
-      return;
-    }
-    const color = {
-      r: state.original.data[offset],
-      g: state.original.data[offset + 1],
-      b: state.original.data[offset + 2]
-    };
-    color.hex = hexColor(color);
-    deactivatePicker();
-    addManualColor(color, { point: sheetPoint, scope: state.pickScope });
+  [[originalStage, 'original'], [resultStage, 'result']].forEach(([stage, surface]) => {
+    stage.addEventListener('pointermove', (event) => updatePicker(event, surface));
+    stage.addEventListener('pointerleave', () => { pickerLoupe.style.display = 'none'; });
+    stage.addEventListener('click', (event) => {
+      if (!state.isPicking || !state.original) return;
+      // Commit the pixel the loupe shows. Click coordinates are whole CSS pixels
+      // while pointermove can be fractional, so at 100 % zoom and above the click
+      // can land one pixel over — on a 1 px fringe, usually its transparent neighbour.
+      const hover = state.hoverPick;
+      const point = hover && hover.surface === surface
+        && Math.abs(hover.clientX - event.clientX) < 1 && Math.abs(hover.clientY - event.clientY) < 1
+        ? hover.point
+        : canvasCoordinates(event, surfaceCanvas(surface));
+      commitPick(point, { surface, shiftKey: event.shiftKey });
+    });
   });
 
   window.addEventListener('keydown', (event) => {
     if (isCleanerActive() && state.isPicking) {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
       const step = event.shiftKey ? 10 : (event.altKey ? 5 : 1);
+      if (event.key === 'Shift') {
+        state.pickShift = true;
+        updatePickerScopeLabel();
+        return;
+      }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
         movePickerPoint(0, -step);
@@ -1132,7 +1200,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       } else if (event.key === 'Enter' || event.code === 'Space') {
         event.preventDefault();
-        confirmPickerSelection();
+        confirmPickerSelection(event.shiftKey);
         return;
       } else if (event.key === 'Escape') {
         event.preventDefault();
@@ -1142,6 +1210,11 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (event.key === 'Escape' && state.isPicking) {
       deactivatePicker();
     }
+  });
+  window.addEventListener('keyup', (event) => {
+    if (event.key !== 'Shift' || !state.isPicking) return;
+    state.pickShift = false;
+    updatePickerScopeLabel();
   });
   window.addEventListener('resize', () => {
     if (isCleanerActive() && state.original) fitToView();

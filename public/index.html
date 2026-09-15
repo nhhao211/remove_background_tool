@@ -1352,6 +1352,7 @@
               <span></span>
               <strong id="spritePickerHex">#000000</strong>
               <small id="spritePickerCoord" class="cleaner-picker-coord">X: 0, Y: 0</small>
+              <small id="spritePickerScope" class="cleaner-picker-scope">global</small>
             </div>
             <div class="cleaner-empty-state"><i data-lucide="image" style="width: 38px; height: 38px;"></i><span>Original sprite sheet</span></div>
           </div>
@@ -1360,10 +1361,14 @@
         <article class="preview-card cleaner-preview-card">
           <div class="card-header">
             <span class="card-title">Transparent result</span>
-            <span id="spriteResultStatus" class="card-subtitle-info">Waiting for image</span>
+            <span class="cleaner-result-subtitles">
+              <span class="card-subtitle-info">Pick viền còn sót ở đây · wheel to zoom · drag to pan</span>
+              <span id="spriteResultStatus" class="card-subtitle-info">Waiting for image</span>
+            </span>
           </div>
           <div id="spriteResultStage" class="cleaner-canvas-stage checkerboard-bg">
             <canvas id="spriteResultCanvas" class="cleaner-canvas"></canvas>
+            <div id="spriteResultPickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i><span>Pick trên Result · chỉ xoá ở viền · Shift+Click = mọi nơi · Esc thoát</span></div>
             <div class="cleaner-empty-state"><i data-lucide="scan-line" style="width: 38px; height: 38px;"></i><span>Cleaned result</span></div>
           </div>
         </article>
