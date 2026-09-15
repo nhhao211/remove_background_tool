@@ -1,4 +1,5 @@
 import { runKeyer } from './keyer/index.js';
+import { refineEdges } from './edge-refine.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const byId = (id) => document.getElementById(id);
@@ -42,6 +43,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const preserveColors = byId('spritePreserveColors');
   const protection = byId('spriteProtection');
   const cleanup = byId('spriteCleanup');
+  const edgeRefineSection = byId('spriteEdgeRefineSection');
+  const edgeRefine = byId('spriteEdgeRefine');
+  const edgeWidth = byId('spriteEdgeWidth');
+  const edgeSmooth = byId('spriteEdgeSmooth');
+  const edgeDecontaminate = byId('spriteEdgeDecontaminate');
+  const edgePixelArt = byId('spriteEdgePixelArt');
   const perCell = byId('spritePerCell');
   const rows = byId('spriteRows');
   const cols = byId('spriteCols');
@@ -71,7 +78,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const state = {
     original: null,
+    keyed: null,
     result: null,
+    lastKeyColors: [],
+    keyerTuning: null,
+    edgeRefineStats: null,
+    edgeRefineTimer: null,
+    resultStatusBase: '',
     fileName: '',
     manualColors: [],
     seedPoints: [],
@@ -398,6 +411,7 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error('Nguồn ảnh không hợp lệ.');
       }
 
+      state.keyed = null;
       state.result = cloneImageData(state.original);
       state.fileName = fileName || 'sprite_sheet.png';
       state.manualColors = [];
@@ -485,6 +499,34 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  // Off returns the keyer's own ImageData, so the output is exactly the keyer's.
+  function applyEdgeRefine(keyed) {
+    state.edgeRefineStats = null;
+    if (!edgeRefine.checked || !state.original) return keyed;
+    const refined = cloneImageData(keyed);
+    const options = {
+      keyColors: state.lastKeyColors,
+      edgeWidth: Number(edgeWidth.value),
+      smooth: Number(edgeSmooth.value),
+      decontaminate: edgeDecontaminate.checked,
+      pixelArt: edgePixelArt.checked,
+      ...state.keyerTuning
+    };
+    const cells = perCell.checked ? gridDefinition().total : 1;
+    let band = 0;
+    for (let index = 0; index < cells; index += 1) {
+      const rect = perCell.checked ? frameRect(index) : null;
+      band += refineEdges(refined, state.original, { ...options, rect }).stats.band;
+    }
+    state.edgeRefineStats = { band };
+    return refined;
+  }
+
+  function resultStatusText() {
+    const stats = state.edgeRefineStats;
+    return stats ? `${state.resultStatusBase} · edge refined (${stats.band.toLocaleString()} px)` : state.resultStatusBase;
+  }
+
   async function runProcessing({ autoDetect = state.autoEnabled } = {}) {
     if (!state.original || state.isProcessing) return;
     if (!autoDetect && state.manualColors.length === 0) {
@@ -504,14 +546,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const working = cloneImageData(state.original);
-      const result = runKeyer(working, { connected: true, ...processOptions(autoDetect) });
-      state.result = result.imageData;
+      const options = processOptions(autoDetect);
+      const result = runKeyer(working, { connected: true, ...options });
+      state.keyed = result.imageData;
+      state.lastKeyColors = result.keyColors;
+      state.keyerTuning = {
+        similarity: options.similarity,
+        feather: options.feather,
+        subjectProtection: options.subjectProtection
+      };
+      state.result = applyEdgeRefine(state.keyed);
       state.detectedColors = autoDetect
         ? result.keyColors.filter((color) => !state.manualColors.some((manual) => manual.hex === color.hex))
         : [];
       renderPreview();
       renderColors();
-      resultStatus.textContent = `${result.removedPixels.toLocaleString()} pixels cleaned · edge-connected mask${preserveColors.checked ? ' · RGB preserved' : ''}`;
+      state.resultStatusBase = `${result.removedPixels.toLocaleString()} pixels cleaned · edge-connected mask${preserveColors.checked ? ' · RGB preserved' : ''}`;
+      resultStatus.textContent = resultStatusText();
       showToast(`Đã làm sạch ${result.removedPixels.toLocaleString()} pixels nền.`, 'success');
     } catch (error) {
       resultStatus.textContent = 'Processing failed';
@@ -527,6 +578,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function resetResult() {
     if (!state.original) return;
+    state.keyed = null;
+    state.edgeRefineStats = null;
     state.result = cloneImageData(state.original);
     state.manualColors = [];
     state.seedPoints = [];
@@ -919,7 +972,9 @@ document.addEventListener('DOMContentLoaded', () => {
     [feather, numSpriteFeather, byId('spriteFeatherValue'), 2],
     [spill, numSpriteSpill, byId('spriteSpillValue'), 2],
     [protection, numSpriteProtection, byId('spriteProtectionValue'), 2],
-    [cleanup, numSpriteCleanup, byId('spriteCleanupValue'), 0]
+    [cleanup, numSpriteCleanup, byId('spriteCleanupValue'), 0],
+    [edgeWidth, byId('numSpriteEdgeWidth'), byId('spriteEdgeWidthValue'), 0],
+    [edgeSmooth, byId('numSpriteEdgeSmooth'), byId('spriteEdgeSmoothValue'), 2]
   ].forEach(([input, numInput, label, decimals]) => {
     function update(val, fromNum = false) {
       let num = parseFloat(val);
@@ -947,6 +1002,28 @@ document.addEventListener('DOMContentLoaded', () => {
       numInput.addEventListener('blur', () => update(numInput.value));
     }
   });
+
+  function syncEdgeRefineControls() {
+    const off = !edgeRefine.checked;
+    [edgeWidth, byId('numSpriteEdgeWidth'), edgeDecontaminate, edgePixelArt].forEach((control) => { control.disabled = off; });
+    [edgeSmooth, byId('numSpriteEdgeSmooth')].forEach((control) => { control.disabled = off || edgePixelArt.checked; });
+  }
+
+  // Refine only: the flood fill result in state.keyed is reused as is.
+  function scheduleEdgeRefine() {
+    syncEdgeRefineControls();
+    clearTimeout(state.edgeRefineTimer);
+    state.edgeRefineTimer = setTimeout(() => {
+      if (!state.keyed || state.isProcessing) return;
+      state.result = applyEdgeRefine(state.keyed);
+      renderPreview();
+      resultStatus.textContent = resultStatusText();
+    }, 80);
+  }
+
+  edgeRefineSection.addEventListener('input', scheduleEdgeRefine);
+  edgeRefineSection.addEventListener('change', scheduleEdgeRefine);
+  syncEdgeRefineControls();
 
   btnZoomOut.addEventListener('click', () => zoomBy(0.8));
   btnZoomIn.addEventListener('click', () => zoomBy(1.25));

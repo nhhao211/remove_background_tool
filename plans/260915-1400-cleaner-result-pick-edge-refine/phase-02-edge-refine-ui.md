@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: "Tích hợp Edge Refine vào Clean Sprite Sheet"
-status: pending
+status: done
 priority: P1
 effort: "3h"
 dependencies: [1]
@@ -57,7 +57,21 @@ Chỉ cần nếu section mới lệch layout; ưu tiên dùng lại class sẵn
 - Bật/tắt `Sprite grid / per-cell`: không có vệt ở ranh giới ô.
 - Move sprite từ tab Video → Sprite sang: refine áp dụng bình thường.
 
+### Kết quả (Chrome headless qua CDP, clip-08, key #18c63e, lưới 2×2)
+
+- Tắt Edge Refine: SHA-256 canvas Result `2ed820da…` trùng bản trước phase (`accf094`), cả khi
+  tắt sau khi đã key lẫn tắt rồi Apply. Status giữ nguyên chuỗi cũ.
+- Bật: viền alpha 255 từ 3074/3169 xuống 0; ở zoom ~477 % viền xanh biến mất trên Checker và
+  Dark BG. Sợi mảnh 1–2 px (nhánh color-difference) ra màu nâu ô-liu thay vì đỏ.
+- Kéo Smooth 0→1 (21 sự kiện) khi animation chạy: progress bar không bật lần nào, status cập
+  nhật đúng 1 lần nhờ debounce, animation vẫn chạy.
+- Pixel art: trong dải refine không còn alpha bán trong suốt. Viền output vẫn còn 66 pixel bán
+  trong suốt: tất cả là pixel lõi (cách nền keyer 2 px, alpha feather của keyer) lộ ra khi pixel
+  viền phía trước bị cắt, và ràng buộc lõi bất biến không cho đổi chúng.
+- Per-cell tắt/bật + Apply: kết quả trùng nhau, 0 pixel hiện trên các đường ranh giới ô.
+- Event `movespritetocleaner` (đường Video → Sprite): kết quả trùng load file. Không có lỗi console.
+
 ## Tiêu chí xong
 
-- [ ] Tắt Edge Refine → output byte-identical với trước phase này.
-- [ ] `node --check public/js/sprite-remover.js`, `npm test` xanh.
+- [x] Tắt Edge Refine → output byte-identical với trước phase này.
+- [x] `node --check public/js/sprite-remover.js`, `npm test` xanh.

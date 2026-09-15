@@ -1222,7 +1222,7 @@
           <span id="spriteSpillValue" class="slider-value" style="display: none;">0.55</span>
         </div>
 
-        <label class="checkbox-row cleaner-preserve-colors">
+        <label class="checkbox-row cleaner-preserve-colors" title="Lõi nhân vật; viền do Edge Refine quyết định">
           <input id="spritePreserveColors" type="checkbox" checked>
           <span>
             Preserve original subject RGB
@@ -1243,6 +1243,37 @@
           <input id="numSpriteCleanup" class="form-input slider-number-input" type="number" min="0" max="3" step="1" value="0" aria-label="Edge Cleanup radius in pixels">
           <span id="spriteCleanupValue" class="slider-value" style="display: none;">0 px</span>
         </div>
+      </div>
+
+      <div id="spriteEdgeRefineSection" class="cleaner-control-section cleaner-sliders">
+        <div class="cleaner-section-title"><span>Edge Refine</span></div>
+        <label class="checkbox-row" title="Ước lượng lại alpha và màu ở viền nhân vật. Tắt = giữ nguyên kết quả keyer">
+          <input id="spriteEdgeRefine" type="checkbox" checked>
+          <span>Refine edges</span>
+        </label>
+
+        <label class="form-label" for="spriteEdgeWidth"><span>Edge Width (px)</span></label>
+        <div class="slider-group">
+          <input id="spriteEdgeWidth" type="range" min="1" max="3" step="1" value="1">
+          <input id="numSpriteEdgeWidth" class="form-input slider-number-input" type="number" min="1" max="3" step="1" value="1" aria-label="Edge Width in pixels">
+          <span id="spriteEdgeWidthValue" class="slider-value" style="display: none;">1 px</span>
+        </div>
+
+        <label class="form-label" for="spriteEdgeSmooth" title="Chống răng cưa"><span>Smooth</span></label>
+        <div class="slider-group">
+          <input id="spriteEdgeSmooth" type="range" min="0" max="1" step="0.01" value="0.35">
+          <input id="numSpriteEdgeSmooth" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.35" aria-label="Edge Smooth value">
+          <span id="spriteEdgeSmoothValue" class="slider-value" style="display: none;">0.35</span>
+        </div>
+
+        <label class="checkbox-row">
+          <input id="spriteEdgeDecontaminate" type="checkbox" checked>
+          <span>Decontaminate edge color <small>Khử màu nền ở viền</small></span>
+        </label>
+        <label class="checkbox-row">
+          <input id="spriteEdgePixelArt" type="checkbox">
+          <span>Pixel art edges <small>Viền cứng, không bán trong suốt</small></span>
+        </label>
       </div>
 
       <div class="cleaner-control-section">
