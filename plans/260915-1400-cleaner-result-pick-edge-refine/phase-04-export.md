@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "Export không mất màu viền"
-status: pending
+status: done
 priority: P2
 effort: "1.5h"
 dependencies: [1]
@@ -30,7 +30,17 @@ Refine vừa khử màu. Không có alpha bleed → engine scale sprite sẽ hú
 Thêm vào `test/export-pipeline.test.mjs` (hoặc file mới): ImageData có pixel alpha 16 với
 RGB đã khử màu → `applyAlphaBleed` + `encodePNG` → decode → RGB/alpha của pixel đó byte-exact.
 
+## Kết quả
+
+- WebP dùng `0.9`, cùng giá trị `WEBP_QUALITY_DEFAULT` của `app.js`. Hằng ở `app.js` nằm trong
+  closure, không import được, nên `sprite-remover.js` đặt hằng cùng tên ý nghĩa kèm comment.
+- Chrome headless, clip-08 bật Edge Refine: PNG 26.5 KB, WebP 10.3 KB tải được, `state.result`
+  không đổi sau khi tải. Mở lại PNG trong tab: alpha và RGB khớp canvas Result từng byte, kể cả
+  3355 pixel bán trong suốt.
+- Giải mã PNG tải về trong Node: alpha và RGB của mọi pixel nhìn thấy khớp keyer + Edge Refine
+  chạy trong Node.
+
 ## Tiêu chí xong
 
-- [ ] PNG tải về mở lại trong tab Clean Sprite Sheet cho kết quả giống hệt preview.
-- [ ] `npm test` xanh.
+- [x] PNG tải về mở lại trong tab Clean Sprite Sheet cho kết quả giống hệt preview.
+- [x] `npm test` xanh.

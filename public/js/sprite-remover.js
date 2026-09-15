@@ -1,5 +1,7 @@
 import { runKeyer } from './keyer/index.js';
 import { refineEdges } from './edge-refine.js';
+import { applyAlphaBleed } from './alpha-bleed.js';
+import { encodePNG, canEncodePNG } from './png-encoder.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const byId = (id) => document.getElementById(id);
@@ -773,25 +775,45 @@ document.addEventListener('DOMContentLoaded', () => {
     return (value || 'clean_sprite_sheet').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
   }
 
-  function downloadResult() {
+  // Same as the Video → Sprite export (app.js ALPHA_BLEED_PASSES, WEBP_QUALITY_DEFAULT).
+  const ALPHA_BLEED_PASSES = 3;
+  const WEBP_QUALITY = 0.9;
+
+  async function encodeResultBlob(format) {
+    // PNG skips the canvas: its premultiplied backing store would quantise the
+    // decontaminated colour of low-alpha edge pixels and erase the bleed.
+    if (format === 'png' && canEncodePNG()) {
+      const out = cloneImageData(state.result);
+      applyAlphaBleed(out, ALPHA_BLEED_PASSES);
+      return encodePNG(out);
+    }
+    const exportCanvas = document.createElement('canvas');
+    drawImageData(exportCanvas, exportCanvas.getContext('2d'), state.result);
+    return new Promise((resolve) => {
+      exportCanvas.toBlob(resolve, `image/${format}`, format === 'webp' ? WEBP_QUALITY : undefined);
+    });
+  }
+
+  async function downloadResult() {
     if (!state.result) return;
     const format = outputFormat.value === 'webp' ? 'webp' : 'png';
-    const exportCanvas = document.createElement('canvas');
-    const exportContext = exportCanvas.getContext('2d');
-    drawImageData(exportCanvas, exportContext, state.result);
-    exportCanvas.toBlob((blob) => {
-      if (!blob) {
-        showToast('Trình duyệt không thể tạo file output.', 'error');
-        return;
-      }
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `${sanitizeName(downloadName.value)}.${format}`;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      showToast(`Đã tải ${anchor.download}`, 'success');
-    }, `image/${format}`, format === 'webp' ? 0.96 : undefined);
+    let blob = null;
+    try {
+      blob = await encodeResultBlob(format);
+    } catch {
+      blob = null;
+    }
+    if (!blob) {
+      showToast('Trình duyệt không thể tạo file output.', 'error');
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${sanitizeName(downloadName.value)}.${format}`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast(`Đã tải ${anchor.download}`, 'success');
   }
 
   dropZone.addEventListener('click', () => imageInput.click());

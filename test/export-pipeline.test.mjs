@@ -5,6 +5,10 @@ import { applyColorGrade } from '../public/js/color-grade.js';
 import { applySharpen } from '../public/js/sharpen.js';
 import { applyAlphaBleed } from '../public/js/alpha-bleed.js';
 import { encodePNG } from '../public/js/png-encoder.js';
+import { loadPNG } from './keyer/png.mjs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 /**
  * The order these run in during generateSpriteSheet:
@@ -91,4 +95,35 @@ test('export pipeline: bleed runs last and only fills what alpha hides', () => {
     if (img.data[(p * 4) + 3] > 0) visibleAfter.push([...img.data.subarray(p * 4, (p * 4) + 3)]);
   }
   assert.deepEqual(visibleAfter, visibleBefore, 'bleed must not touch a pixel anyone can see');
+});
+
+test('export pipeline: a decontaminated low-alpha edge pixel survives bleed + PNG byte-exact', async () => {
+  // Clean Sprite Sheet export: Edge Refine writes subject colour into faint
+  // edge pixels, which a canvas round trip would quantise away.
+  const width = 5;
+  const height = 5;
+  const data = new Uint8ClampedArray(width * height * 4);
+  const set = (x, y, rgba) => data.set(rgba, ((y * width) + x) * 4);
+  for (let y = 1; y < 4; y++) {
+    for (let x = 1; x < 4; x++) set(x, y, [188, 46, 38, 255]);
+  }
+  set(0, 2, [201, 37, 90, 16]);
+  const source = { data: new Uint8ClampedArray(data), width, height };
+  const img = { data, width, height };
+
+  applyAlphaBleed(img, 3);
+  const blob = await encodePNG(img);
+  const file = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'export-pipeline-')), 'edge.png');
+  await fs.writeFile(file, Buffer.from(await blob.arrayBuffer()));
+  const decoded = await loadPNG(file);
+  await fs.rm(path.dirname(file), { recursive: true, force: true });
+
+  assert.deepEqual([...decoded.data.subarray(10 * 4, 11 * 4)], [201, 37, 90, 16], 'alpha-16 edge pixel');
+  for (let p = 0; p < width * height; p++) {
+    const alpha = source.data[(p * 4) + 3];
+    assert.equal(decoded.data[(p * 4) + 3], alpha, `alpha at ${p}`);
+    if (alpha > 0) {
+      assert.deepEqual([...decoded.data.subarray(p * 4, (p * 4) + 3)], [...source.data.subarray(p * 4, (p * 4) + 3)], `visible RGB at ${p}`);
+    }
+  }
 });
