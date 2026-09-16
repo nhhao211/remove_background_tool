@@ -1186,6 +1186,10 @@
             <i data-lucide="arrow-down-to-line" style="width: 14px; height: 14px;"></i>
             <span>Pick Below Line / All Frames</span>
           </button>
+          <button id="btnSpriteRegionPick" class="eyedropper-trigger-btn cleaner-pick-button region" type="button" disabled>
+            <i data-lucide="circle-dashed" style="width: 14px; height: 14px;"></i>
+            <span>Vùng tròn + Pick</span>
+          </button>
         </div>
         <label class="checkbox-row cleaner-split-toggle" title="Bật rồi dùng Pick Below Line để kéo đường chia trên frame preview">
           <input id="spriteAdjustSplit" type="checkbox" disabled>
@@ -1198,6 +1202,35 @@
           <button id="btnSpriteClearColors" class="time-btn color-clear-btn" type="button" disabled>Clear</button>
         </div>
         <div id="spriteColorSwatches" class="color-swatches cleaner-swatches"></div>
+        <div id="spriteRegionControls" class="cleaner-region-controls" hidden>
+          <div class="cleaner-section-title"><span>Vùng đang chọn</span><span id="spriteRegionLabel">—</span></div>
+
+          <label class="form-label" for="spriteRegionTolerance"><span>Tolerance</span></label>
+          <div class="slider-group">
+            <input id="spriteRegionTolerance" type="range" min="0" max="1" step="0.01" value="0.30">
+            <input id="numSpriteRegionTolerance" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.30" aria-label="Region tolerance value">
+            <span id="spriteRegionToleranceValue" class="slider-value" style="display: none;">0.30</span>
+          </div>
+
+          <label class="form-label" for="spriteRegionSoftness"><span>Softness</span></label>
+          <div class="slider-group">
+            <input id="spriteRegionSoftness" type="range" min="0" max="1" step="0.01" value="0.12">
+            <input id="numSpriteRegionSoftness" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.12" aria-label="Region softness value">
+            <span id="spriteRegionSoftnessValue" class="slider-value" style="display: none;">0.12</span>
+          </div>
+
+          <label class="form-label" for="spriteRegionDespill"><span>Despill</span></label>
+          <div class="slider-group">
+            <input id="spriteRegionDespill" type="range" min="0" max="1" step="0.01" value="0">
+            <input id="numSpriteRegionDespill" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0" aria-label="Region despill value">
+            <span id="spriteRegionDespillValue" class="slider-value" style="display: none;">0.00</span>
+          </div>
+
+          <label class="checkbox-row" title="Chỉ xoá mảng màu liền kề với điểm đã pick, vẫn chặn trong vòng tròn">
+            <input id="spriteRegionConnected" type="checkbox">
+            <span>Chỉ vùng liền kề</span>
+          </label>
+        </div>
       </div>
 
       <div class="cleaner-control-section cleaner-sliders">
@@ -1342,6 +1375,8 @@
           </div>
           <div id="spriteOriginalStage" class="cleaner-canvas-stage checkerboard-bg">
             <canvas id="spriteOriginalCanvas" class="cleaner-canvas"></canvas>
+            <canvas id="spriteRegionOverlayOriginal" class="cleaner-canvas cleaner-region-overlay"></canvas>
+            <div id="spriteRegionBanner" class="cleaner-pick-banner cleaner-region-banner"><i data-lucide="circle-dashed" style="width: 15px; height: 15px;"></i><span id="spriteRegionBannerText">Kéo để vẽ vùng tròn</span></div>
             <div id="spritePickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i><span id="spritePickBannerText">Click chọn màu hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn · Esc thoát</span></div>
             <div id="spriteLowerHalfGuide" class="cleaner-lower-half-guide">
               <span id="spriteProtectedRegionLabel">Protected upper region · 50%</span>
@@ -1368,6 +1403,8 @@
           </div>
           <div id="spriteResultStage" class="cleaner-canvas-stage checkerboard-bg">
             <canvas id="spriteResultCanvas" class="cleaner-canvas"></canvas>
+            <canvas id="spriteRegionOverlayResult" class="cleaner-canvas cleaner-region-overlay"></canvas>
+            <div id="spriteRegionBannerResult" class="cleaner-pick-banner cleaner-region-banner"><i data-lucide="circle-dashed" style="width: 15px; height: 15px;"></i><span id="spriteRegionBannerResultText">Kéo để vẽ vùng tròn</span></div>
             <div id="spriteResultPickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i><span>Pick trên Result · chỉ xoá ở viền · Shift+Click = mọi nơi · Esc thoát</span></div>
             <div class="cleaner-empty-state"><i data-lucide="scan-line" style="width: 38px; height: 38px;"></i><span>Cleaned result</span></div>
           </div>

@@ -2,6 +2,8 @@ import { runKeyer } from './keyer/index.js';
 import { refineEdges } from './edge-refine.js';
 import { applyAlphaBleed } from './alpha-bleed.js';
 import { encodePNG, canEncodePNG } from './png-encoder.js';
+import { applyRegionKeys, normalizeRegion, regionIsActive } from './region-key.js';
+import { createRegionOverlay } from './region-overlay.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const byId = (id) => document.getElementById(id);
@@ -79,12 +81,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const pickerHex = byId('spritePickerHex');
   const spritePickerCoord = byId('spritePickerCoord');
   const pickerScope = byId('spritePickerScope');
+  const btnRegionPick = byId('btnSpriteRegionPick');
+  const regionControls = byId('spriteRegionControls');
+  const regionLabel = byId('spriteRegionLabel');
+  const regionTolerance = byId('spriteRegionTolerance');
+  const regionSoftness = byId('spriteRegionSoftness');
+  const regionDespill = byId('spriteRegionDespill');
+  const regionConnected = byId('spriteRegionConnected');
+  const regionOverlayOriginal = byId('spriteRegionOverlayOriginal');
+  const regionOverlayResult = byId('spriteRegionOverlayResult');
+  const regionBanner = byId('spriteRegionBanner');
+  const regionBannerText = byId('spriteRegionBannerText');
+  const regionBannerResult = byId('spriteRegionBannerResult');
+  const regionBannerResultText = byId('spriteRegionBannerResultText');
   // A Result pick removes its colour only this many px from removed background.
   const EDGE_REACH = 2;
 
   const state = {
     original: null,
     keyed: null,
+    // Cached between Edge Refine and the region pass, for the same reason
+    // `keyed` is cached before refine: dragging a region slider must rerun only
+    // the cheapest stage, not the flood fill and not the edge unmix.
+    refined: null,
     result: null,
     lastKeyColors: [],
     keyerTuning: null,
@@ -103,6 +122,12 @@ document.addEventListener('DOMContentLoaded', () => {
     pickSurface: 'original',
     pickShift: false,
     hoverPick: null,
+    colorRegions: [],
+    selectedRegionId: null,
+    regionMode: 'off',
+    regionPicking: false,
+    regionStats: null,
+    regionTimer: null,
     lowerSplitRatio: 0.5,
     splitDragPointerId: null,
     splitReprocessTimer: null,
@@ -282,7 +307,43 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       colorSwatches.appendChild(swatch);
     });
-    btnClearColors.disabled = !state.original || colors.length === 0;
+    renderRegionChips();
+    btnClearColors.disabled = !state.original || (colors.length === 0 && state.colorRegions.length === 0);
+  }
+
+  /**
+   * Regions are listed next to the colours but are deliberately NOT merged into
+   * `state.manualColors`: a region colour must never reach `processOptions()`,
+   * or it would become a global key (or worse, a seed point) and flood the
+   * whole sheet — the exact failure this feature exists to avoid.
+   */
+  function renderRegionChips() {
+    for (const region of state.colorRegions) {
+      const swatch = document.createElement('div');
+      swatch.className = 'color-swatch cleaner-swatch cleaner-region-chip';
+      swatch.classList.toggle('is-selected', region.id === state.selectedRegionId);
+      const radiusPx = Math.round(region.rx * (state.original?.width || 0));
+      const hex = region.colors[0] ? hexColor(region.colors[0]) : 'chưa pick màu';
+      swatch.title = `Vùng tròn · chỉ xoá bên trong vòng tròn · r≈${radiusPx}px`
+        + (region.frame === null ? '' : ` · vẽ trên ô #${region.frame + 1}`);
+      const chip = document.createElement('span');
+      chip.style.background = region.colors[0] ? hexColor(region.colors[0]) : 'transparent';
+      chip.style.border = '1px dashed #38bdf8';
+      const label = document.createElement('small');
+      label.textContent = `◯ ${hex} · r=${radiusPx}px`;
+      swatch.append(chip, label);
+      swatch.addEventListener('click', (event) => {
+        if (event.target.tagName === 'BUTTON') return;
+        selectRegion(region.id);
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `Remove region ${hex}`);
+      remove.addEventListener('click', () => deleteRegion(region.id));
+      swatch.appendChild(remove);
+      colorSwatches.appendChild(swatch);
+    }
   }
 
   function cloneImageData(source) {
@@ -350,6 +411,7 @@ document.addEventListener('DOMContentLoaded', () => {
       drawImageData(resultCanvas, resultContext, state.result);
     }
     updatePreviewButtons();
+    syncRegionOverlays();
     if (fit) requestAnimationFrame(fitToView);
     if (state.isPicking && state.pickScope === 'lower') requestAnimationFrame(updateLowerHalfGuide);
   }
@@ -375,7 +437,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function setControlsEnabled(enabled) {
-    [btnAuto, btnApply, btnReset, btnPick, btnPickLower, adjustSplit, btnAddColor, btnDownload, btnZoomOut, btnZoomIn, btnZoomFit, btnPreviewMode, previewFps]
+    [btnAuto, btnApply, btnReset, btnPick, btnPickLower, btnRegionPick, adjustSplit, btnAddColor, btnDownload, btnZoomOut, btnZoomIn, btnZoomFit, btnPreviewMode, previewFps]
       .forEach((button) => { button.disabled = !enabled; });
     btnPreviewPlay.disabled = !enabled || state.previewMode !== 'anim' || !perCell.checked;
   }
@@ -430,8 +492,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       state.keyed = null;
+      state.refined = null;
       state.result = cloneImageData(state.original);
       state.fileName = fileName || 'sprite_sheet.png';
+      clearRegions();
       state.manualColors = [];
       state.seedPoints = [];
       state.detectedColors = [];
@@ -544,9 +608,65 @@ document.addEventListener('DOMContentLoaded', () => {
     return refined;
   }
 
+  /* ---------------------------------------------------------------- *
+   * Colour regions
+   *
+   * They run AFTER Edge Refine, never before. `refineEdges()` unmixes the
+   * fringe against `state.lastKeyColors`, and a region's colour is by
+   * definition not in that list — so a hole punched before refine would get
+   * its rim "decontaminated" with the wrong background colour. A region
+   * carries its own softness and feather, so its rim is already soft.
+   *
+   * Region coordinates are absolute, normalised against the whole sheet, in
+   * both preview modes. A region drawn on one cell in `Anim` therefore lands
+   * on that cell and nowhere else, without needing a per-cell geometry pass.
+   * ---------------------------------------------------------------- */
+
+  const activeRegions = () => state.colorRegions.filter(regionIsActive);
+
+  const selectedRegion = () => state.colorRegions.find((region) => region.id === state.selectedRegionId) || null;
+
+  function applyRegions(base) {
+    state.regionStats = null;
+    const regions = activeRegions();
+    // No regions means the result is exactly what came out of Edge Refine —
+    // byte for byte, which is the invariant the whole feature rests on.
+    if (regions.length === 0) return base === state.original ? cloneImageData(base) : base;
+    const out = cloneImageData(base);
+    const { removedPixels } = applyRegionKeys(out, regions, {
+      sourceWidth: state.original.width,
+      sourceHeight: state.original.height,
+      cropX: 0,
+      cropY: 0,
+      cropWidth: state.original.width,
+      cropHeight: state.original.height
+    });
+    state.regionStats = { removedPixels, count: regions.length };
+    return out;
+  }
+
+  function recomposeResult() {
+    if (!state.original) return;
+    state.result = applyRegions(state.refined || state.original);
+  }
+
+  // Dragging a region slider reruns only the region pass over the cached
+  // refined image, the same bargain scheduleEdgeRefine() strikes with keyed.
+  function scheduleRegionUpdate() {
+    clearTimeout(state.regionTimer);
+    state.regionTimer = setTimeout(() => {
+      if (state.isProcessing || !state.original) return;
+      recomposeResult();
+      renderPreview();
+      resultStatus.textContent = resultStatusText();
+    }, 60);
+  }
+
   function resultStatusText() {
     const stats = state.edgeRefineStats;
-    return stats ? `${state.resultStatusBase} · edge refined (${stats.band.toLocaleString()} px)` : state.resultStatusBase;
+    const base = stats ? `${state.resultStatusBase} · edge refined (${stats.band.toLocaleString()} px)` : state.resultStatusBase;
+    const region = state.regionStats;
+    return region ? `${base} · ${region.count} vùng (${region.removedPixels.toLocaleString()} px)` : base;
   }
 
   async function runProcessing({ autoDetect = state.autoEnabled } = {}) {
@@ -577,7 +697,8 @@ document.addEventListener('DOMContentLoaded', () => {
         feather: options.feather,
         subjectProtection: options.subjectProtection
       };
-      state.result = applyEdgeRefine(state.keyed);
+      state.refined = applyEdgeRefine(state.keyed);
+      recomposeResult();
       state.detectedColors = autoDetect
         ? result.keyColors.filter((color) => !state.manualColors.some((manual) => manual.hex === color.hex))
         : [];
@@ -601,8 +722,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function resetResult() {
     if (!state.original) return;
     state.keyed = null;
+    state.refined = null;
     state.edgeRefineStats = null;
     state.result = cloneImageData(state.original);
+    clearRegions();
     state.manualColors = [];
     state.seedPoints = [];
     state.detectedColors = [];
@@ -611,6 +734,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderColors();
     resultStatus.textContent = 'Reset to original';
     deactivatePicker();
+    setRegionMode('off');
     showToast('Đã reset kết quả về ảnh gốc.', 'info');
   }
 
@@ -620,6 +744,7 @@ document.addEventListener('DOMContentLoaded', () => {
     resultCanvas.style.transform = transform;
     state.hoverPick = null;
     zoomLevel.textContent = `${Math.round(state.zoom * 100)}%`;
+    syncRegionOverlays();
     if (state.isPicking && state.pickScope === 'lower') requestAnimationFrame(updateLowerHalfGuide);
   }
 
@@ -687,6 +812,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updatePickerScopeLabel() {
     if (!pickerScope) return;
+    if (state.regionPicking) {
+      pickerScope.textContent = 'vùng';
+      pickerScope.classList.remove('is-edge');
+      return;
+    }
     const label = state.pickSurface === 'result'
       ? (state.pickShift ? 'global' : 'edge')
       : (state.pickScope === 'lower' ? 'lower' : 'global');
@@ -695,7 +825,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updatePickerByPoint(point, surface = state.pickSurface) {
-    if (!state.isPicking || !state.original || !point) return;
+    // The region tool runs its own pick session, so the loupe must work while
+    // the global picker is off.
+    if ((!state.isPicking && !state.regionPicking) || !state.original || !point) return;
     state.pickerPoint = point;
     state.pickSurface = surface;
     const canvas = surfaceCanvas(surface);
@@ -842,6 +974,294 @@ document.addEventListener('DOMContentLoaded', () => {
     splitHandle.disabled = true;
     if (pickerLoupe) pickerLoupe.style.display = 'none';
   }
+
+  /* ---------------------------------------------------------------- *
+   * Region tool: draw, pick, edit
+   * ---------------------------------------------------------------- */
+
+  let regionSequence = 0;
+
+  const cellOffset = () => (state.previewMode === 'anim' && perCell.checked
+    ? frameRect(state.currentFrameIndex)
+    : { x0: 0, y0: 0 });
+
+  // Overlay pixels are sheet pixels one for one, so the only thing that shifts
+  // between Sheet and Anim is the origin of the cell on screen.
+  function makeSurfaceMapping(canvas) {
+    return {
+      toSource(px, py) {
+        if (!state.original || px < 0 || py < 0 || px > canvas.width || py > canvas.height) return null;
+        const origin = cellOffset();
+        return {
+          x: (origin.x0 + px) / state.original.width,
+          y: (origin.y0 + py) / state.original.height
+        };
+      },
+      toCanvas(sx, sy) {
+        const origin = cellOffset();
+        return {
+          x: (sx * (state.original?.width || 1)) - origin.x0,
+          y: (sy * (state.original?.height || 1)) - origin.y0
+        };
+      },
+      scaleToCanvas(rx, ry) {
+        return { rx: rx * (state.original?.width || 1), ry: ry * (state.original?.height || 1) };
+      }
+    };
+  }
+
+  function buildOverlay(canvas, surface) {
+    const mapping = makeSurfaceMapping(canvas);
+    return createRegionOverlay({
+      canvas,
+      ...mapping,
+      getRegions: () => state.colorRegions,
+      getSelectedId: () => state.selectedRegionId,
+      getAspect: () => (state.original ? state.original.width / state.original.height : 1),
+      // A region drawn on another cell does not apply here, but hiding it would
+      // leave the user hunting for a region they know they made.
+      isRegionDimmed: (region) => region.frame !== null
+        && state.previewMode === 'anim' && perCell.checked
+        && region.frame !== state.currentFrameIndex,
+      onCreate: (geometry) => createRegion(geometry),
+      onChange: (id, patch) => patchRegion(id, patch),
+      onSelect: (id) => selectRegion(id, { render: false }),
+      onDelete: (id) => deleteRegion(id),
+      onPickRequest: (id, point, event) => commitRegionPick(id, event, surface),
+      onEscape: () => setRegionMode('off')
+    });
+  }
+
+  let regionOverlaysCache = null;
+
+  // Built on first use: renderPreview() sits above this point in the file and
+  // must not trip over a half-initialised module.
+  function regionOverlayEntries() {
+    if (!regionOverlaysCache) {
+      regionOverlaysCache = [
+        { overlay: buildOverlay(regionOverlayOriginal, 'original'), canvas: regionOverlayOriginal, target: originalCanvas },
+        { overlay: buildOverlay(regionOverlayResult, 'result'), canvas: regionOverlayResult, target: resultCanvas }
+      ];
+    }
+    return regionOverlaysCache;
+  }
+
+  function syncRegionOverlays() {
+    const transform = originalCanvas.style.transform;
+    for (const entry of regionOverlayEntries()) {
+      if (entry.canvas.width !== entry.target.width) entry.canvas.width = entry.target.width;
+      if (entry.canvas.height !== entry.target.height) entry.canvas.height = entry.target.height;
+      entry.canvas.style.width = `${entry.target.width}px`;
+      entry.canvas.style.height = `${entry.target.height}px`;
+      entry.canvas.style.transform = transform;
+      entry.overlay.render();
+    }
+  }
+
+  function setRegionMode(mode) {
+    const next = ['draw', 'pick', 'edit'].includes(mode) ? mode : 'off';
+    if (next !== 'off' && !state.original) return;
+    state.regionMode = next;
+    state.regionPicking = next === 'pick';
+    if (next !== 'off') deactivatePicker();
+    if (next === 'off') {
+      state.regionPicking = false;
+      if (pickerLoupe) pickerLoupe.style.display = 'none';
+    }
+    for (const entry of regionOverlayEntries()) entry.overlay.setMode(next === 'off' ? 'off' : next);
+    btnRegionPick?.classList.toggle('active', next !== 'off');
+    updateRegionBanner();
+    syncRegionOverlays();
+  }
+
+  function updateRegionBanner() {
+    const active = state.regionMode !== 'off';
+    [regionBanner, regionBannerResult].forEach((banner) => banner?.classList.toggle('active', active));
+    if (!active) return;
+    // The circle is the area the colour is ALLOWED to be removed from — not a
+    // mask that protects what is outside it. Say so, because the opposite
+    // reading is the natural one.
+    const text = state.regionMode === 'draw'
+      ? 'Kéo từ tâm chi tiết cần xoá · Shift = tròn đều · Vùng tròn là phạm vi ĐƯỢC PHÉP xoá'
+      : (state.regionMode === 'pick'
+        ? 'Click vào màu cần xoá BÊN TRONG vùng · chỉ vùng này bị ảnh hưởng · Esc thoát'
+        : 'Kéo ruột để dời · kéo vành để đổi bán kính · Delete xoá vùng · Esc thoát');
+    if (regionBannerText) regionBannerText.textContent = text;
+    if (regionBannerResultText) regionBannerResultText.textContent = text;
+  }
+
+  function clearRegions() {
+    state.colorRegions = [];
+    state.selectedRegionId = null;
+    state.regionStats = null;
+    renderRegionControls();
+  }
+
+  function createRegion(geometry) {
+    const region = normalizeRegion({
+      ...geometry,
+      id: `region-${++regionSequence}`,
+      colors: [],
+      tolerance: Number(regionTolerance.value),
+      feather: 0.20,
+      softness: Number(regionSoftness.value),
+      despill: Number(regionDespill.value),
+      connected: regionConnected.checked,
+      frame: state.previewMode === 'anim' && perCell.checked ? state.currentFrameIndex : null
+    });
+    if (!region) return;
+    state.colorRegions.push(region);
+    state.selectedRegionId = region.id;
+    renderColors();
+    renderRegionControls();
+    // Straight into picking: a region with no colour does nothing, so making
+    // the user press a second button first would only be a step to forget.
+    setRegionMode('pick');
+  }
+
+  function selectRegion(id, { render = true } = {}) {
+    state.selectedRegionId = id;
+    if (state.regionMode === 'off' && id != null) setRegionMode('edit');
+    renderRegionControls();
+    if (render) {
+      renderColors();
+      syncRegionOverlays();
+    }
+  }
+
+  function deleteRegion(id) {
+    const before = state.colorRegions.length;
+    state.colorRegions = state.colorRegions.filter((region) => region.id !== id);
+    if (state.colorRegions.length === before) return;
+    if (state.selectedRegionId === id) state.selectedRegionId = null;
+    renderColors();
+    renderRegionControls();
+    recomposeResult();
+    renderPreview();
+    resultStatus.textContent = resultStatusText();
+  }
+
+  function patchRegion(id, patch) {
+    const index = state.colorRegions.findIndex((region) => region.id === id);
+    if (index < 0) return;
+    const merged = normalizeRegion({ ...state.colorRegions[index], ...patch });
+    if (!merged) return;
+    state.colorRegions[index] = merged;
+    renderRegionControls();
+    scheduleRegionUpdate();
+  }
+
+  function renderRegionControls() {
+    const region = selectedRegion();
+    if (regionControls) regionControls.hidden = !region;
+    if (!region) return;
+    regionTolerance.value = String(region.tolerance);
+    regionSoftness.value = String(region.softness);
+    regionDespill.value = String(region.despill);
+    regionConnected.checked = region.connected;
+    [['numSpriteRegionTolerance', region.tolerance, 'spriteRegionToleranceValue'],
+      ['numSpriteRegionSoftness', region.softness, 'spriteRegionSoftnessValue'],
+      ['numSpriteRegionDespill', region.despill, 'spriteRegionDespillValue']].forEach(([numId, value, labelId]) => {
+      const numInput = byId(numId);
+      if (numInput && document.activeElement !== numInput) numInput.value = value.toFixed(2);
+      const label = byId(labelId);
+      if (label) label.textContent = value.toFixed(2);
+    });
+    if (regionLabel) {
+      const radiusPx = Math.round(region.rx * (state.original?.width || 0));
+      regionLabel.textContent = `${region.colors[0] ? hexColor(region.colors[0]) : 'chưa pick'} · r=${radiusPx}px`;
+    }
+  }
+
+  /**
+   * A pick inside a region. The colour always comes from `state.original`, the
+   * same rule a Result pick follows: the Result pixel has already been scaled
+   * by alpha and possibly decontaminated, so it is not the colour the matcher
+   * is comparing against.
+   */
+  function commitRegionPick(id, event, surface) {
+    if (!state.original) return;
+    const region = state.colorRegions.find((item) => item.id === id) || null;
+    if (!region) {
+      showToast('Hãy click bên trong vùng tròn.', 'info');
+      return;
+    }
+    const canvas = surfaceCanvas(surface);
+    const hover = state.hoverPick;
+    // Commit the pixel the loupe is showing, for the reason spelled out on the
+    // Original/Result pick path: pointer coordinates are fractional and a
+    // recomputed integer can land one pixel over.
+    const point = hover && hover.surface === surface ? hover.point : canvasCoordinates(event, canvas);
+    if (!point) return;
+    const sheetPoint = displayPointToSheet(point);
+    const offset = ((sheetPoint.y * state.original.width) + sheetPoint.x) * 4;
+    if (surface === 'result' && state.result && state.result.data[offset + 3] < 10) {
+      showToast('Pixel này đã trong suốt trên Result', 'info');
+      return;
+    }
+    const color = {
+      r: state.original.data[offset],
+      g: state.original.data[offset + 1],
+      b: state.original.data[offset + 2]
+    };
+    color.hex = hexColor(color);
+    const duplicate = region.colors.some((item) => Math.abs(item.r - color.r) + Math.abs(item.g - color.g) + Math.abs(item.b - color.b) < 10);
+    if (duplicate) {
+      showToast('Màu này đã có trong vùng.', 'info');
+      return;
+    }
+    region.colors.push(color);
+    region.seed = { x: sheetPoint.x / state.original.width, y: sheetPoint.y / state.original.height };
+    state.selectedRegionId = region.id;
+    setRegionMode('edit');
+    renderColors();
+    renderRegionControls();
+    recomposeResult();
+    renderPreview();
+    resultStatus.textContent = resultStatusText();
+  }
+
+  btnRegionPick?.addEventListener('click', () => {
+    setRegionMode(state.regionMode === 'off' ? 'draw' : 'off');
+  });
+
+  [[regionOverlayOriginal, 'original'], [regionOverlayResult, 'result']].forEach(([canvas, surface]) => {
+    canvas.addEventListener('pointermove', (event) => {
+      if (!state.regionPicking || !state.original) return;
+      const point = canvasCoordinates(event, surfaceCanvas(surface));
+      state.hoverPick = point ? { surface, point, clientX: event.clientX, clientY: event.clientY } : null;
+      if (!point) {
+        pickerLoupe.style.display = 'none';
+        return;
+      }
+      updatePickerByPoint(point, surface);
+    });
+    canvas.addEventListener('pointerleave', () => {
+      if (state.regionPicking) pickerLoupe.style.display = 'none';
+    });
+  });
+
+  [[regionTolerance, 'tolerance'], [regionSoftness, 'softness'], [regionDespill, 'despill']].forEach(([input, key]) => {
+    input.addEventListener('input', () => {
+      const region = selectedRegion();
+      if (!region) return;
+      patchRegion(region.id, { [key]: Number(input.value) });
+    });
+  });
+  [['numSpriteRegionTolerance', regionTolerance], ['numSpriteRegionSoftness', regionSoftness],
+    ['numSpriteRegionDespill', regionDespill]].forEach(([numId, input]) => {
+    const numInput = byId(numId);
+    numInput?.addEventListener('input', () => {
+      if (numInput.value === '' || numInput.value === '-') return;
+      input.value = numInput.value;
+      input.dispatchEvent(new Event('input'));
+    });
+  });
+  regionConnected.addEventListener('change', () => {
+    const region = selectedRegion();
+    if (!region) return;
+    patchRegion(region.id, { connected: regionConnected.checked, seed: region.seed });
+  });
 
   function sanitizeName(value) {
     return (value || 'clean_sprite_sheet').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
@@ -1109,7 +1529,8 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(state.edgeRefineTimer);
     state.edgeRefineTimer = setTimeout(() => {
       if (!state.keyed || state.isProcessing) return;
-      state.result = applyEdgeRefine(state.keyed);
+      state.refined = applyEdgeRefine(state.keyed);
+      recomposeResult();
       renderPreview();
       resultStatus.textContent = resultStatusText();
     }, 80);
@@ -1137,6 +1558,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }, { passive: false });
     stage.addEventListener('pointerdown', (event) => {
       if (!state.original || state.isPicking) return;
+      // While the region tool owns the left button, only middle/right pans.
+      if (state.regionMode !== 'off' && event.button === 0) return;
       state.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, panX: state.panX, panY: state.panY };
       stage.setPointerCapture(event.pointerId);
       stage.classList.add('is-panning');
