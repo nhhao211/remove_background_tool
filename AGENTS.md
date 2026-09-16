@@ -28,6 +28,8 @@
   - `public/js/loop-optimizer.js`: phần cần DOM của Auto Loop Finder (seek, capture, chroma key, tinh chỉnh dưới mức mẫu, thumbnail) cộng crossfade và diff heatmap.
   - `public/js/keyer/`: module matting dùng chung, có baseline byte-identical trong `test/keyer/`. Không sửa nếu chưa cần; `assertOptions()` chặn option lạ. Region `matchMode: 'edge'` (xem mục 10) được thêm mà không đổi baseline; test ở `test/keyer/edge-match.test.mjs`.
   - `public/js/sprite-remover.js`: tab Clean Sprite Sheet (upload ảnh tĩnh, keyer connected, Edge Refine, pick màu trên Original/Result, export).
+  - `public/js/region-key.js`: hạ alpha của pixel vừa nằm trong một vùng tròn/elip vừa khớp màu người dùng pick. Nằm **ngoài** `keyer/` giống `erase-mask.js` — không đụng whitelist option, không đụng baseline. Toạ độ vùng chuẩn hoá 0..1 theo source, cùng hệ với nét Bút Xóa, nên đi qua cùng một phép ánh xạ crop. Thuần tuý, test bằng `test/region-key.test.mjs`.
+  - `public/js/region-overlay.js`: phần tương tác của vùng tròn (vẽ, hit-test, dời, đổi kích thước, vẽ vành nét đứt) dùng chung cho **bốn** bề mặt ở hai tab. Caller chỉ cung cấp `toSource` / `toCanvas` / `scaleToCanvas`; phần hình học thuần tuý test bằng `test/region-overlay.test.mjs`.
   - `public/js/edge-refine.js`: Edge Refine — pass sau keyer, ước lượng lại alpha và màu của dải viền từ ảnh gốc (unmix F/B, fallback color-difference, làm mịn, khử màu nền). Nằm **ngoài** `keyer/` giống `erase-mask.js` để không đụng baseline/whitelist. Thuần tuý, test bằng `test/edge-refine.test.mjs`.
   - `public/css/style.css`: giao diện và trạng thái tương tác.
   - `public/samples/sample_blue_flower.mp4`: video demo được tự động load khi mở app.
@@ -159,6 +161,27 @@ npm run dev
 - Banner Preview cho biết nét sắp vẽ thuộc phạm vi nào (`Chỉ frame #N/total · Shift = mọi frame` hoặc ngược lại) và ở chế độ `Sheet` có khung nét đứt đỏ quanh ô đang trỏ tới.
 
 
+### 6c. Vùng tròn + Pick màu (Circle region + colour pick)
+
+Giải quyết đúng một chuyện mà pick màu toàn ảnh không làm được: xoá một màu **chỉ ở một chi tiết**, khi màu đó cũng có trên áo/da nhân vật ở chỗ khác. Đo trên sheet mẫu: xoá một chi tiết 1 936 px bằng pick thường làm hỏng thêm 12 392 px khác của nhân vật; bằng vùng tròn thì **0** pixel nào ngoài vòng tròn bị đụng tới.
+
+- **Vòng tròn là phạm vi ĐƯỢC PHÉP xoá, không phải mặt nạ bảo vệ.** Cách đọc ngược lại là cách đọc tự nhiên hơn và là cách làm người dùng tưởng tool hỏng, nên banner nói thẳng điều này.
+- Kéo **từ tâm ra** (tâm là nơi con trỏ đã ở sẵn, vì người dùng đang nhìn thẳng vào chi tiết cần xoá). Giữ `Shift` ép tròn đều — hiệu chỉnh theo aspect của source nên tròn *trên màn hình*, không phải tròn trong hệ chuẩn hoá.
+- Vẽ xong là vào ngay chế độ `pick`: một vùng chưa có màu thì không làm gì cả, nên một nút phải bấm nữa chỉ là một nút để quên.
+- Bốn bề mặt vẽ được: `Source Video` (`#regionOverlayCanvas`) và khung `Preview` (`#previewRegionCanvas`) ở tab Video → Sprite; `Original` và `Transparent result` (`#spriteRegionOverlayOriginal` / `#spriteRegionOverlayResult`) ở tab Clean Sprite Sheet. Cả bốn đều bám `getBoundingClientRect()` (đã gồm CSS transform) nên zoom/pan không cần code riêng.
+- Slider `Tolerance` / `Softness` / `Despill` và checkbox `Chỉ vùng liền kề` áp cho **vùng đang chọn**. `Chỉ vùng liền kề` chạy BFS 8 hướng từ điểm pick, hàng đợi `Int32Array` cỡ bounding box, và không bao giờ ra khỏi ellipse.
+- Vùng vẽ trên Source Video áp cho **mọi** frame; vẽ trên một ô Preview mặc định chỉ áp cho **đúng ô đó**. Hàng `Vẽ trên Preview:` (`#btnRegionScopeFrame` / `#btnRegionScopeAll`, lưu ở `state.regionScope`) đặt mặc định, giữ `Shift` lúc `pointerdown` đảo phạm vi cho một vùng — đúng thoả thuận `Alt` với Erase/Restore.
+- Binding dùng lại **nguyên** `erase-frames.js`: `frame` + `frameTime`, gắn lại theo **thời gian** khi số frame đổi, binding hỏng thành `ORPHAN_FRAME` và không áp ở đâu cả. Cẩn thận `Number(null) === 0` như ghi chú ở `stroke-mask.js`: `frame`/`frameTime` thiếu phải là `null`, nếu không mọi vùng global hoá thành vùng của frame 0.
+- Màu **luôn** lấy từ ảnh gốc (`video` ở tab Video, `state.original` ở tab Cleaner), không lấy từ Result: pixel Result đã bị nhân alpha và có thể đã khử màu nền, không phải màu mà matcher sẽ so sánh.
+- Vị trí pipeline ở tab Video: `runKeyer → colorReplace → colorGrade → region → erase → (detectSubjectBounds) → crossfade → sharpen`. Region đứng trước `detectSubjectBounds` vì đúng lý do của Bút Xóa: chi tiết đã xoá không được kéo lệch canh chủ thể. Không gate theo `chkTransparentFormat` — đây là lệnh xoá tường minh.
+- `makeRegionProvider(frameCount, frameTimes)` trả `(frameIndex) => regions|null`, rẻ hơn `makeEraseMaskProvider` nhiều vì vùng không phải rasterize (chỉ lọc danh sách, không cache). Không có vùng nào ⇒ trả `null` ⇒ mỗi frame đi đúng đường cũ, output **giống hệt từng byte**.
+- `reapplyEraseMaskLive()` đã đổi tên thành `reapplyLocalEditsLive()` và áp cả hai theo thứ tự `region → erase`; `state.rawFrames` giờ là bản "trước vùng **và** trước erase". Nhờ vậy kéo `Tolerance` của một vùng cập nhật preview ngay, không seek lại clip (vẫn chỉ khi tắt Subject Alignment).
+- `saveClipState()` lưu `colorRegions` + `regionScope`, `schemaVersion` 4 → 5; clip schema 4 đọc lại vẫn chạy, thiếu `colorRegions` ⇒ `[]`. Vùng hỏng bị `normalizeRegions()` bỏ, không throw.
+- Trên Preview, một vùng được vẽ lại ở **mọi ô nó áp dụng**: `previewSurfaceRegions()` sinh một bản copy cho từng ô, id ghép `id@@frameIndex` để một cú kéo biết nó đang nắm bản nào. Overlay chỉ làm việc trong *surface space* (canvas chuẩn hoá 0..1); chuyển đổi sang toạ độ source nằm gọn ở `previewRegionToSurface` / `previewSurfaceToSource` / `surfaceRadiiToSource`.
+- Pan chuột trái của `spriteViewport` bị chặn khi tool đang bật (`mousedown` guard, vì `pointerdown` không chặn được `mousedown`); pan bằng chuột giữa/phải. Không cho vẽ trên các ô trống ở cuối hàng cuối.
+- **Giới hạn đã biết:** nhân vật di chuyển thì vòng tròn đứng yên (đúng giới hạn Bút Xóa đang có). Lối ra: vẽ vùng riêng cho từng ô trên Preview, hoặc vẽ rộng hơn rồi siết bằng `Tolerance` + `Chỉ vùng liền kề`.
+- Bất biến của `applyRegionKeys()`: alpha **không bao giờ tăng**; không đọc/ghi ngoài bounding box của vùng (`test/region-key.test.mjs` chứng minh bằng `Proxy` bắt mọi truy cập); vùng không bật/không có màu/hình suy biến là no-op byte-identical.
+
 ### 7. Generate sprite sheet
 
 - Nút `Generate` seek video tới các thời điểm phân bố đều trong vùng trim.
@@ -193,9 +216,12 @@ Tab riêng làm sạch sprite sheet tĩnh (PNG/WebP/JPEG), toàn bộ ở `publi
 
 ```
 state.original → runKeyer(connected, keyRegions) → state.keyed (cache)
-  → applyEdgeRefine() → state.result → hiển thị
+  → applyEdgeRefine() → state.refined (cache)
+  → applyRegionKeys() → state.result → hiển thị
   → export PNG: clone → applyAlphaBleed(3) → encodePNG
 ```
+
+- Vùng tròn chạy **sau** Edge Refine, không phải trước: refine unmix dải viền theo `state.lastKeyColors` — nó không biết gì về màu của vùng, nên nếu vùng chạy trước thì refine sẽ đọc một dải viền vừa bị vùng đổi alpha và unmix theo màu key sai. Chạy sau thì vùng chỉ nhìn thấy alpha đã chốt và hạ nó xuống. Không có vùng nào ⇒ `applyRegions()` trả thẳng `state.refined` ⇒ output giống hệt từng byte trước khi có feature.
 
 - **Edge Refine** (`#spriteEdgeRefineSection`): `Refine edges` bật/tắt, `Edge Width` 1–3 px, `Smooth` 0–1, `Decontaminate edge color`, `Pixel art edges` (bỏ smoothing, alpha chỉ còn 0/255; khi bật thì khoá `Smooth`). Tắt `Refine edges` thì `applyEdgeRefine()` trả thẳng `state.keyed` → output **giống hệt từng byte** kết quả keyer.
 - Kéo slider Edge Refine chỉ chạy lại refine trên `state.keyed` đã cache (debounce), không chạy lại flood fill. Bật `Analyze each sprite cell` thì refine gọi riêng từng ô với `rect` nên không loang qua đường kẻ ô.
@@ -251,6 +277,10 @@ Trả JSON `{ status: "ok", uptime }`.
 - Nếu sửa pipeline audio hoặc ZIP, kiểm tra cả trường hợp input là file local và trường hợp video demo URL.
 - Nếu sửa Canvas/chroma key, kiểm tra cả hai format PNG/WebP, trạng thái transparent bật/tắt, nhiều key colors, alpha edge và preview mode `Anim`/`Sheet`.
 - Bút Xóa phải giữ nguyên vị trí trong pipeline: keyer → color replace → erase → (bounds detection nếu có alignment) → crossfade. Không đẩy erase vào `public/js/keyer/` vì sẽ phải sửa whitelist option và regenerate baseline.
+- Vùng tròn phải giữ nguyên vị trí trong pipeline: keyer → color replace → **region** → erase → (bounds detection nếu có alignment) → crossfade. Không đẩy `region-key.js` vào `public/js/keyer/` vì sẽ phải sửa whitelist option và regenerate baseline. Ở tab Cleaner, region chạy **sau** Edge Refine.
+- Không có vùng nào ⇒ output **giống hệt từng byte** với trước khi có feature, ở **cả hai** tab.
+- `applyRegionKeys()` không bao giờ tăng alpha và không đọc/ghi ngoài bounding box của vùng.
+- `frame`/`frameTime` của vùng (và của nét Bút Xóa) thiếu thì phải là `null`, không phải `0` — `Number(null) === 0` sẽ biến mọi binding global thành frame 0. Xem ghi chú ở `stroke-mask.js` và `erase-frames.js`.
 - Clean Sprite Sheet: giữ Edge Refine ngoài `public/js/keyer/`; tắt Edge Refine phải cho output byte-identical với keyer; refine không được tăng alpha hay đổi pixel lõi. Key `edge` không được tham gia BFS chính và không tạo seed point. Không đổi `test/keyer/baseline/`.
 - Không coi `Split`, `Duplicate`, `Delete` là hệ thống timeline nhiều clip: hiện chúng chỉ thao tác trên `trimStart`/`trimEnd` và state backup.
 - Sau thay đổi lớn, chạy kiểm tra cú pháp, khởi động server, kiểm tra `/api/health`, rồi thử flow demo: load video → trim → generate → preview → download.

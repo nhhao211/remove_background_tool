@@ -14,6 +14,7 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 11. **Subject Protect Brush**: Vẽ mask mềm trực tiếp trên Source Video để bảo vệ màu và alpha của chủ thể ở những vùng gần màu nền; hỗ trợ bút/tẩy, size, strength, hardness, undo/redo và preset cho chi tiết đặc hoặc bán trong suốt.
 12. **Subject Color Replace**: Dùng eyedropper chọn màu chủ thể từ Source Video hoặc Sprite Preview, chọn màu đích, rồi điều chỉnh tolerance/strength để đổi dải màu tương ứng mà vẫn giữ highlight và bóng.
 13. **Bút Xóa (Erase Brush)**: Bôi trực tiếp lên Source Video **hoặc thẳng trên khung Preview** (sprite sheet, cả chế độ Anim và Sheet) để xóa hẳn vùng nền còn sót hay chi tiết thừa mà chroma key không bắt được (logo, micro, bóng, vệt sáng); có Erase/Restore, size/strength/hardness, vòng tròn cỡ bút, undo/redo/clear. Nét bôi trên Source Video áp cho mọi frame, còn nét bôi trên một ô của sprite sheet **chỉ xóa đúng ô đó** — hoạt động như Eraser trong Paint để dọn chi tiết của riêng một frame.
+14. **Vùng tròn + Pick màu (Circle region + colour pick)**: Kéo một vòng tròn quanh chi tiết cần xoá rồi bấm vào màu bên trong nó. Màu đó **chỉ bị xoá trong vòng tròn**, nên một màu trùng với màu áo/da nhân vật vẫn giữ nguyên ở mọi nơi khác. Có ở cả `Video → Sprite` và `Clean Sprite Sheet`; vẽ được trên video gốc, trên khung Preview, và trên cả hai khung của tab làm sạch. Đo trên sheet mẫu: xoá một chi tiết 1 936 px bằng pick màu thường làm hỏng thêm **12 392 px** khác của nhân vật, còn bằng vùng tròn thì **0 pixel** nào ngoài vòng tròn bị đụng tới.
 
 ---
 
@@ -103,7 +104,15 @@ Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http:
    - Mask được vẽ theo tọa độ của Source Video nên bám đúng nội dung video; nét theo frame còn nhớ cả thời điểm được bôi nên nếu bạn đổi số hàng/cột hay FPS rồi **Generate** lại, nét sẽ tự bám sang frame gần thời điểm đó nhất. Nét vẽ được lưu theo từng video cùng các thiết lập khác.
    - Nếu sprite sheet đã generate, nét vẽ mới được áp ngay vào preview; với video quá lớn app sẽ nhắc nhấn **Generate** lại.
 
-5. **Tùy chỉnh Sprite Sheet:**
+5. **Xoá một màu chỉ ở một chi tiết bằng Vùng tròn + Pick màu:**
+   - Nhấn **Vùng tròn + Pick màu** trong panel chroma key, rồi kéo từ **tâm** chi tiết cần xoá ra ngoài. Giữ **Shift** để được vòng tròn đều.
+   - Vẽ xong, con trỏ chuyển sang chế độ pick: bấm vào **màu cần xoá bên trong vòng tròn**. Vòng tròn là *phạm vi được phép xoá*, không phải vùng được bảo vệ.
+   - `Tolerance` quyết định dải màu được tính là trùng, `Softness` làm mềm vành vòng tròn, `Despill` khử màu nền còn dính lại, `Chỉ vùng liền kề` giới hạn ở đúng mảng màu liền với điểm bạn bấm.
+   - Vẽ trên **Source Video** ⇒ áp cho **mọi frame**. Vẽ thẳng lên **một ô Preview** ⇒ mặc định chỉ ô đó; hàng `Vẽ trên Preview:` đổi mặc định và giữ **Shift** lúc bắt đầu kéo để đảo phạm vi.
+   - Kéo ruột vòng tròn để dời, kéo vành để đổi bán kính, **Delete** để xoá vùng, **Esc** để thoát. Khi tool đang bật, pan khung Preview bằng chuột giữa hoặc chuột phải.
+   - Nhân vật di chuyển thì vòng tròn đứng yên: hãy vẽ vùng riêng cho từng ô trên Preview, hoặc vẽ rộng hơn rồi siết lại bằng `Tolerance` và `Chỉ vùng liền kề`.
+
+6. **Tùy chỉnh Sprite Sheet:**
    - **Frames**: Số lượng frame cần trích xuất (VD: 24).
    - **Cols & Rows**: Số cột và số hàng của sprite sheet (VD: 6 cột x 4 hàng = 24 frames).
    - **Cell (native)**: Kích thước pixel mỗi ô (VD: 512px).
@@ -112,12 +121,12 @@ Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http:
    - **Auto FPS**: Tự động tính toán tốc độ khung hình phù hợp với độ dài video.
    - **Video Speed** và **Reset** điều khiển tốc độ preview; state được khôi phục khi mở lại cùng video.
 
-6. **Tạo và Preview:**
+7. **Tạo và Preview:**
    - Nhấn nút **⚙ Generate** màu xanh dương.
    - Xem chuyển động nhân vật trong khung **Sprite sheet preview** (nút `▶ Play / ⏸ Pause`).
    - Nhấn nút `▦ Sheet` để xem toàn bộ lưới sprite sheet.
 
-7. **Tải về:**
+8. **Tải về:**
    - Nhấn **📥 Download WebP/PNG + audio** để tải gói `.zip` gồm cả Sprite Sheet và file `.mp3`.
    - Hoặc mở menu thả xuống để tải riêng Sprite Sheet hoặc file Audio MP3.
 
