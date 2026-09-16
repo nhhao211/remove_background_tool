@@ -1,5 +1,8 @@
+import { initCollapsibleSections } from './sidebar-sections.js';
+
 document.addEventListener('DOMContentLoaded', () => {
   const byId = (id) => document.getElementById(id);
+  initCollapsibleSections(byId('reframeSidebar'), { storagePrefix: 'reframe.section' });
 
   const imageInput = byId('reframeImageInput');
   const dropZone = byId('reframeDropZone');

@@ -289,10 +289,63 @@ body {
   font-weight: 650;
 }
 
-.cleaner-section-title span:last-child {
+.cleaner-section-title span + span {
+  margin-left: auto;
   color: #64748b;
   font-size: 0.68rem;
   font-weight: 500;
+}
+
+/* Collapsible sidebar sections. The whole title row is the toggle, so the
+   chevron needs no hit area of its own. */
+.cleaner-section-title[role="button"] {
+  cursor: pointer;
+  user-select: none;
+  gap: 6px;
+  padding: 3px 5px;
+  margin: -3px -5px 9px;
+  border-radius: 6px;
+  transition: background-color 0.15s ease;
+}
+
+.cleaner-section-title[role="button"]:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cleaner-section-title[role="button"]:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+.cleaner-section-chevron {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-right: 1.6px solid #64748b;
+  border-bottom: 1.6px solid #64748b;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.cleaner-section-title[role="button"]:hover .cleaner-section-chevron {
+  border-color: #cbd5e1;
+}
+
+.cleaner-control-section.is-collapsed .cleaner-section-chevron {
+  transform: translateY(1px) rotate(-45deg);
+}
+
+.cleaner-control-section.is-collapsed .cleaner-section-body {
+  display: none;
+}
+
+.cleaner-control-section.is-collapsed .cleaner-section-title {
+  margin-bottom: -3px;
+}
+
+.cleaner-control-section.is-collapsed {
+  padding-top: 9px;
+  padding-bottom: 9px;
 }
 
 .cleaner-pick-button {
@@ -827,6 +880,19 @@ body {
     position: static;
     width: 100%;
     max-height: none;
+    /* Stacked above the preview, one column would be a screen and a half of
+       scrolling before the canvas appears. The sections are independent blocks,
+       so they flow side by side for as long as the width allows. */
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(255px, 1fr));
+    align-items: start;
+  }
+
+  .cleaner-sidebar-header,
+  .cleaner-drop-zone,
+  .cleaner-primary-actions,
+  .cleaner-progress {
+    grid-column: 1 / -1;
   }
 
   .cleaner-preview-area {

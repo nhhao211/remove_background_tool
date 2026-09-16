@@ -4,9 +4,13 @@ import { applyAlphaBleed } from './alpha-bleed.js';
 import { encodePNG, canEncodePNG } from './png-encoder.js';
 import { applyRegionKeys, normalizeRegion, regionIsActive } from './region-key.js';
 import { createRegionOverlay } from './region-overlay.js';
+import { initCollapsibleSections } from './sidebar-sections.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const byId = (id) => document.getElementById(id);
+  // Fold the sidebar's sections before anything reads their layout: the column
+  // is taller than any viewport with all of them open.
+  initCollapsibleSections(byId('cleanerSidebar'), { storagePrefix: 'cleaner.section' });
   const tabVideo = byId('tabVideoWorkspace');
   const tabCleaner = byId('tabSpriteCleaner');
   const tabReframe = byId('tabSpriteReframe');

@@ -1228,7 +1228,7 @@
 
   <!-- Uploaded Sprite Sheet Background Remover -->
   <main id="spriteCleanerWorkspace" class="cleaner-workspace workspace-panel" role="tabpanel" aria-labelledby="tabSpriteCleaner" hidden>
-    <aside class="settings-card cleaner-sidebar">
+    <aside id="cleanerSidebar" class="settings-card cleaner-sidebar">
       <div class="cleaner-sidebar-header">
         <div>
           <span class="card-title"><i data-lucide="wand-sparkles" style="width: 17px; height: 17px; color: #a78bfa;"></i> Background cleanup</span>
@@ -1257,7 +1257,7 @@
 
       <div id="spriteProcessProgress" class="cleaner-progress" aria-hidden="true"><span></span></div>
 
-      <div class="cleaner-control-section">
+      <div class="cleaner-control-section" data-section-key="background-colors">
         <div class="cleaner-section-title"><span>Background colors</span><span id="spriteColorCount">0 colors</span></div>
         <div class="cleaner-pick-actions">
           <button id="btnSpritePickColor" class="eyedropper-trigger-btn cleaner-pick-button" type="button" disabled>
@@ -1326,7 +1326,8 @@
         </div>
       </div>
 
-      <div class="cleaner-control-section cleaner-sliders">
+      <div class="cleaner-control-section cleaner-sliders" data-section-key="keying">
+        <div class="cleaner-section-title"><span>Keying</span></div>
         <label class="form-label" for="spriteSimilarity"><span>Similarity</span></label>
         <div class="slider-group">
           <input id="spriteSimilarity" type="range" min="0" max="1" step="0.01" value="0.48">
@@ -1371,7 +1372,7 @@
         </div>
       </div>
 
-      <div id="spriteEdgeRefineSection" class="cleaner-control-section cleaner-sliders">
+      <div id="spriteEdgeRefineSection" class="cleaner-control-section cleaner-sliders" data-section-key="edge-refine" data-collapsed="true">
         <div class="cleaner-section-title"><span>Edge Refine</span></div>
         <label class="checkbox-row" title="Ước lượng lại alpha và màu ở viền nhân vật. Tắt = giữ nguyên kết quả keyer">
           <input id="spriteEdgeRefine" type="checkbox" checked>
@@ -1402,7 +1403,8 @@
         </label>
       </div>
 
-      <div class="cleaner-control-section">
+      <div class="cleaner-control-section" data-section-key="sprite-grid" data-collapsed="true">
+        <div class="cleaner-section-title"><span>Sprite grid</span></div>
         <label class="checkbox-row cleaner-cell-toggle">
           <input id="spritePerCell" type="checkbox" checked>
           <span>Sprite grid / per-cell analysis</span>
@@ -1413,7 +1415,8 @@
         </div>
       </div>
 
-      <div class="cleaner-control-section cleaner-export-section">
+      <div class="cleaner-control-section cleaner-export-section" data-section-key="export">
+        <div class="cleaner-section-title"><span>Export</span></div>
         <label class="form-label" for="spriteDownloadName">Download name</label>
         <input id="spriteDownloadName" class="form-input" type="text" value="clean_sprite_sheet">
         <div class="cleaner-export-row">
@@ -1508,7 +1511,7 @@
 
   <!-- Sprite Sheet Grid Reframer -->
   <main id="spriteReframeWorkspace" class="reframe-workspace workspace-panel" role="tabpanel" aria-labelledby="tabSpriteReframe" hidden>
-    <aside class="settings-card cleaner-sidebar">
+    <aside id="reframeSidebar" class="settings-card cleaner-sidebar">
       <div class="cleaner-sidebar-header">
         <div>
           <span class="card-title"><i data-lucide="replace" style="width: 17px; height: 17px; color: #38bdf8;"></i> Sprite reframer</span>
@@ -1555,7 +1558,8 @@
         </label>
       </div>
 
-      <div class="cleaner-control-section cleaner-export-section">
+      <div class="cleaner-control-section cleaner-export-section" data-section-key="export">
+        <div class="cleaner-section-title"><span>Export</span></div>
         <label class="form-label" for="reframeDownloadName">Download name</label>
         <input id="reframeDownloadName" class="form-input" type="text" value="sprite_sheet_6x4_16x9">
         <div class="cleaner-export-row">
