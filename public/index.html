@@ -161,6 +161,16 @@
           </div>
           <canvas id="eraseBrushCanvas" class="erase-brush-canvas" aria-label="Erase mask drawing surface"></canvas>
 
+          <!-- Circle region + colour pick -->
+          <div id="regionBanner" class="erase-brush-banner region-tool-banner">
+            <div class="erase-brush-banner-left">
+              <i data-lucide="circle-dashed" style="width: 16px; height: 16px; color: #38bdf8;"></i>
+              <span id="regionBannerText">Kéo từ tâm chi tiết cần xoá · Shift = tròn đều · Vùng vẽ ở đây áp cho mọi frame</span>
+            </div>
+            <button id="btnCancelRegionTool" class="time-btn" type="button" style="padding: 2px 8px; color: #38bdf8;">✕ Thoát</button>
+          </div>
+          <canvas id="regionOverlayCanvas" class="erase-brush-canvas region-overlay-canvas" aria-label="Circle region drawing surface"></canvas>
+
           <!-- Eyedropper Magnifier Loupe -->
           <div id="eyedropperLoupe" class="eyedropper-loupe">
             <canvas id="eyedropperCanvas" class="eyedropper-canvas" width="60" height="60"></canvas>
@@ -309,6 +319,14 @@
 
           <!-- Erase brush on the sprite preview -->
           <canvas id="previewEraseCanvas" class="preview-erase-canvas" aria-label="Erase mask drawing surface on the sprite preview"></canvas>
+          <canvas id="previewRegionCanvas" class="preview-erase-canvas region-overlay-canvas" aria-label="Circle region drawing surface on the sprite preview"></canvas>
+          <div id="previewRegionBanner" class="erase-brush-banner preview-erase-banner region-tool-banner">
+            <div class="erase-brush-banner-left">
+              <i data-lucide="circle-dashed" style="width: 15px; height: 15px; color: #38bdf8;"></i>
+              <span id="previewRegionBannerText">Kéo để vẽ vùng trên ô này · Shift đảo phạm vi · Kéo chuột giữa/phải để pan</span>
+            </div>
+            <button id="btnCancelPreviewRegion" class="time-btn" type="button" style="padding: 2px 8px; color: #38bdf8;">✕ Thoát</button>
+          </div>
           <div id="previewEraseBanner" class="erase-brush-banner preview-erase-banner">
             <div class="erase-brush-banner-left">
               <i data-lucide="eraser" style="width: 15px; height: 15px; color: #f87171;"></i>
@@ -1136,6 +1154,60 @@
               <div id="swatchesList" class="color-swatches">
                 <!-- Swatches dynamically injected here -->
               </div>
+
+              <!-- Circle region + colour pick: remove a colour inside one circle only -->
+              <div class="region-tool-row">
+                <button id="btnRegionPick" class="eyedropper-trigger-btn region-pick-btn" type="button" title="Khoanh một vòng tròn rồi pick màu cần xoá bên trong nó">
+                  <i data-lucide="circle-dashed" style="width: 14px; height: 14px;"></i>
+                  <span>Vùng tròn + Pick màu</span>
+                </button>
+                <span id="regionToolStatus" class="hint">Chưa có vùng nào</span>
+              </div>
+              <div id="regionList" class="color-swatches region-list"></div>
+              <div id="regionControls" class="region-controls" hidden>
+                <div class="region-controls-head">
+                  <span>Vùng đang chọn</span>
+                  <span id="regionLabel" class="hint">—</span>
+                </div>
+                <label>
+                  <span>Tolerance</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderRegionTolerance" min="0" max="1" step="0.01" value="0.30">
+                    <input type="number" id="numRegionTolerance" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.30" aria-label="Region colour tolerance">
+                  </div>
+                </label>
+                <label>
+                  <span>Softness</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderRegionSoftness" min="0" max="1" step="0.01" value="0.12">
+                    <input type="number" id="numRegionSoftness" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.12" aria-label="Region edge softness">
+                  </div>
+                </label>
+                <label>
+                  <span>Despill</span>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderRegionDespill" min="0" max="1" step="0.01" value="0">
+                    <input type="number" id="numRegionDespill" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.00" aria-label="Region despill strength">
+                  </div>
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" id="chkRegionConnected">
+                  <span>Chỉ vùng liền kề với điểm pick</span>
+                </label>
+                <div class="erase-scope-row">
+                  <span class="erase-scope-label">Vẽ trên Preview:</span>
+                  <button id="btnRegionScopeFrame" class="time-btn erase-scope-btn" type="button" title="Vùng chỉ áp cho đúng ô (frame) bạn vẽ">
+                    <i data-lucide="square-dashed" style="width: 12px; height: 12px;"></i>
+                    <span>Frame này</span>
+                  </button>
+                  <button id="btnRegionScopeAll" class="time-btn erase-scope-btn" type="button" title="Vùng áp cho mọi frame, như khi vẽ trên Source video">
+                    <i data-lucide="layers" style="width: 12px; height: 12px;"></i>
+                    <span>Mọi frame</span>
+                  </button>
+                  <span class="hint">Giữ Shift để tạm đổi</span>
+                </div>
+              </div>
+              <p class="erase-brush-help">Vòng tròn là <strong>phạm vi được phép xoá</strong>, không phải vùng được bảo vệ: màu bạn pick chỉ mất bên trong nó, nên một màu cũng có trên người nhân vật vẫn giữ nguyên ở mọi nơi khác. Vẽ trên Source video ⇒ áp cho mọi frame; vẽ thẳng lên một ô Preview ⇒ mặc định chỉ ô đó. Vùng chạy sau chroma key và trước Bút Xóa, hoạt động cả khi tắt <em>Transparent</em>. Nhân vật di chuyển thì vòng tròn đứng yên — hãy vẽ vùng riêng cho từng ô trên Preview, hoặc vẽ rộng hơn rồi siết bằng <em>Tolerance</em> và <em>Chỉ vùng liền kề</em>.</p>
             </div>
           </div>
         </div>

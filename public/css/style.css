@@ -1683,6 +1683,83 @@ body.viewport-resizing {
   transition: none;
 }
 
+/* Circle region tool. The overlay is a handful of vector rings rather than a
+   rasterized tint, so it sits above the erase overlay and needs no pixel budget. */
+.region-overlay-canvas {
+  z-index: 57;
+}
+
+.region-tool-banner {
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.region-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.region-pick-btn.active {
+  border-color: #38bdf8;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.region-list {
+  margin-top: 4px;
+}
+
+.region-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.region-chip.is-selected {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.region-chip .region-chip-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.6);
+}
+
+.region-chip .region-chip-remove {
+  border: none;
+  background: none;
+  color: #f87171;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.region-controls {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+}
+
+.region-controls-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* Left-drag paints while the brush is armed, so the grab cursor the preview
    normally shows would be promising a pan that no longer happens there. */
 .sprite-viewport.erase-painting .sprite-canvas {

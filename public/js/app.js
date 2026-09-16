@@ -6,8 +6,10 @@ import { EditorUtils as U } from './editor-utils.js';
 import { runKeyer } from './keyer/index.js';
 import { normalizeStrokes, rasterizeStrokeMask } from './stroke-mask.js';
 import { applyEraseMask } from './erase-mask.js';
-import { eraseStrokePlan, strokesForFrame, isGlobalStroke } from './erase-frames.js';
-import { mapPreviewPointToSource, cellBrushScale, normalizeSheetLayout } from './preview-erase-map.js';
+import { eraseStrokePlan, strokesForFrame, isGlobalStroke, resolveStrokeFrame } from './erase-frames.js';
+import { applyRegionKeys, normalizeRegion, normalizeRegions, regionIsActive } from './region-key.js';
+import { createRegionOverlay } from './region-overlay.js';
+import { mapPreviewPointToSource, cellBrushScale, normalizeSheetLayout, cellSourceOrigin } from './preview-erase-map.js';
 import { applyColorReplacement } from './color-replace.js';
 import { applyAlphaBleed } from './alpha-bleed.js';
 import { applyColorGrade, isColorGradeIdentity, COLOR_GRADE_DEFAULTS } from './color-grade.js';
@@ -507,8 +509,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // Whether Shift was down at the last preview hover, so the banner and the
     // cell outline can show the scope the next stroke would actually get.
     previewEraseShift: false,
-    // Phase 2 live re-apply: pre-erase copies of the generated frames plus the
-    // sheet geometry needed to recomposite them without seeking the video again.
+    // Circle regions: a colour removed inside one ellipse only. Stored in
+    // normalised source-video coordinates, bound to the whole clip (`frame:
+    // null`) or to one cell, exactly like an erase stroke.
+    colorRegions: [],
+    selectedRegionId: null,
+    regionMode: 'off',
+    regionScope: 'frame',
+    // Phase 2 live re-apply: pre-region, pre-erase copies of the generated frames
+    // plus the sheet geometry needed to recomposite them without seeking again.
     rawFrames: [],
     sheetLayout: null,
     // Where each generated cell was extracted from, in source-video pixels.
@@ -586,7 +595,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const stored = readJsonStorage(CLIP_STATE_KEY, {});
     const states = Array.isArray(stored) ? {} : stored;
     const saved = states[state.sourceId];
-    if (!saved || ![1, 2, 3, 4].includes(saved.schemaVersion)) return null;
+    if (!saved || ![1, 2, 3, 4, 5].includes(saved.schemaVersion)) return null;
     return saved;
   }
 
@@ -595,7 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const stored = readJsonStorage(CLIP_STATE_KEY, {});
     const states = Array.isArray(stored) ? {} : stored;
     states[state.sourceId] = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       sourceId: state.sourceId,
       trimStart: state.trimStart,
       trimEnd: state.trimEnd,
@@ -618,6 +627,10 @@ document.addEventListener('DOMContentLoaded', () => {
       showProtectionMask: chkShowProtectionMask.checked,
       eraseStrokes: normalizeStrokes(state.eraseStrokes),
       eraseScope: state.eraseScope,
+      // Schema 4 has no colorRegions; a missing list reads back as [], so older
+      // saved clips keep working untouched.
+      colorRegions: normalizeRegions(state.colorRegions),
+      regionScope: state.regionScope,
       eraseBrushSize: parseInt(sliderEraseSize.value, 10),
       eraseBrushStrength: parseFloat(sliderEraseStrength.value),
       eraseBrushHardness: parseFloat(sliderEraseHardness.value),
@@ -1212,6 +1225,11 @@ document.addEventListener('DOMContentLoaded', () => {
     chkShowProtectionMask.checked = saved?.showProtectionMask !== false;
     state.eraseStrokes = normalizeStrokes(saved?.eraseStrokes);
     state.eraseScope = saved?.eraseScope === 'all' ? 'all' : 'frame';
+    state.colorRegions = normalizeRegions(saved?.colorRegions);
+    state.selectedRegionId = null;
+    state.regionScope = saved?.regionScope === 'all' ? 'all' : 'frame';
+    setRegionMode('off');
+    renderRegionUI();
     state.eraseUndoActions = [];
     state.eraseRedoActions = [];
     markEraseStrokesChanged();
@@ -3100,6 +3118,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateEraseOverlay() {
     updateVideoEraseOverlay();
     updatePreviewEraseOverlay();
+    // One overlay pass for every surface: the region rings are pinned to the same
+    // two boxes, so they must never be refreshed on a different schedule.
+    updateRegionOverlays();
   }
 
   function updateVideoEraseOverlay() {
@@ -3265,7 +3286,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.eraseRedoActions = [];
     updateEraseBrushUI();
     updateEraseOverlay();
-    if (!reapplyEraseMaskLive() && state.generatedFrames.length > 0 && !state.eraseRegenerateHintShown) {
+    if (!reapplyLocalEditsLive() && state.generatedFrames.length > 0 && !state.eraseRegenerateHintShown) {
       state.eraseRegenerateHintShown = true;
       showToast('Nhấn Generate để áp Bút Xóa vào sprite sheet', 'info');
     }
@@ -3281,6 +3302,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.isEyedropperActive) deactivateEyedropper();
     if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
     if (state.protectionTool) deactivateProtectionBrush();
+    if (regionToolArmed()) deactivateRegionTool();
     state.eraseTool = mode === 'restore' ? 'restore' : 'erase';
     state.eraseCursor = null;
     state.previewEraseCursor = null;
@@ -3396,7 +3418,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.eraseRedoActions.push(action);
     updateEraseBrushUI();
     updateEraseOverlay();
-    reapplyEraseMaskLive();
+    reapplyLocalEditsLive();
     saveClipStateDebounced();
   });
 
@@ -3409,7 +3431,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.eraseUndoActions.push(action);
     updateEraseBrushUI();
     updateEraseOverlay();
-    reapplyEraseMaskLive();
+    reapplyLocalEditsLive();
     saveClipStateDebounced();
   });
 
@@ -3422,7 +3444,7 @@ document.addEventListener('DOMContentLoaded', () => {
     markEraseStrokesChanged();
     updateEraseBrushUI();
     updateEraseOverlay();
-    reapplyEraseMaskLive();
+    reapplyLocalEditsLive();
     saveClipStateDebounced();
     showToast('Đã xóa toàn bộ nét Bút Xóa. Có thể Undo để khôi phục.', 'info');
   });
@@ -3510,8 +3532,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   /**
-   * Re-composites the already-generated frames against the current erase mask,
-   * so a stroke shows up in the preview without seeking the video again.
+   * Re-composites the already-generated frames against the current local edits —
+   * the circle regions and then the erase mask — so an edit shows up in the
+   * preview without seeking the video again.
    *
    * Only possible when Subject Alignment is off: with a guideline active the
    * erase mask is applied to the full-resolution frame *before* subject bounds
@@ -3520,10 +3543,19 @@ document.addEventListener('DOMContentLoaded', () => {
    *
    * @returns {boolean} whether the preview was refreshed
    */
-  function reapplyEraseMaskLive() {
+  function reapplyLocalEditsLive() {
     if (!state.eraseLiveAvailable || state.rawFrames.length === 0 || !state.sheetLayout) return false;
     if (state.rawFrames.length !== state.generatedFrames.length) return false;
     const layout = state.sheetLayout;
+    const regionsFor = makeRegionProvider(state.rawFrames.length, state.frameTimes);
+    const regionGeometry = {
+      sourceWidth: state.videoWidth,
+      sourceHeight: state.videoHeight,
+      cropX: layout.cropX,
+      cropY: layout.cropY,
+      cropWidth: layout.cropWidth,
+      cropHeight: layout.cropHeight
+    };
     const maskFor = makeEraseMaskProvider({
       cropX: layout.cropX,
       cropY: layout.cropY,
@@ -3541,6 +3573,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const ctx = frame.getContext('2d', { willReadFrequently: true });
       ctx.clearRect(0, 0, frame.width, frame.height);
       ctx.drawImage(state.rawFrames[index], 0, 0);
+      // region before erase, the same order the generator uses.
+      if (regionsFor) applyRegionsToCanvas(frame, regionsFor(index), regionGeometry);
       if (maskFor) applyEraseMaskToCanvas(frame, maskFor(index));
       if (sheetCtx) {
         const colIndex = index % layout.cellsAcross;
@@ -3549,6 +3583,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
     updatePreviewViewport();
+    scheduleRegionOverlay();
     return true;
   }
 
@@ -4036,6 +4071,656 @@ document.addEventListener('DOMContentLoaded', () => {
     if (isPreviewErasePaintable()) event.preventDefault();
   });
   btnCancelPreviewErase?.addEventListener('click', deactivateEraseBrush);
+
+  // === CIRCLE REGION + COLOUR PICK ===
+  //
+  // The same shape of problem as the Erase Brush: a local edit stored in
+  // normalised source-video coordinates, bound either to the whole clip or to one
+  // cell. So it reuses the Brush's machinery wholesale — `erase-frames.js` for the
+  // binding, the same two drawing surfaces, the same live re-apply cache. What it
+  // adds is that the circle removes *one colour* instead of every pixel, which is
+  // the only way to take a colour off a detail when that same colour is also on
+  // the character somewhere else.
+  //
+  // Two coordinate spaces meet here. A region is stored in normalised
+  // source-video space, because that is what makes it survive a re-crop, a new
+  // cell size or Subject Alignment. The overlay, on the other hand, only ever
+  // deals in *surface* space: the overlay canvas normalised to 0..1. On the video
+  // those two are the same thing; on the Preview they are not, and everything
+  // that crosses that boundary goes through previewRegionToSurface /
+  // surfaceRegionToSource below.
+
+  const btnRegionPick = document.getElementById('btnRegionPick');
+  const btnCancelRegionTool = document.getElementById('btnCancelRegionTool');
+  const btnCancelPreviewRegion = document.getElementById('btnCancelPreviewRegion');
+  const regionBanner = document.getElementById('regionBanner');
+  const regionBannerText = document.getElementById('regionBannerText');
+  const previewRegionBanner = document.getElementById('previewRegionBanner');
+  const previewRegionBannerText = document.getElementById('previewRegionBannerText');
+  const regionOverlayCanvas = document.getElementById('regionOverlayCanvas');
+  const previewRegionCanvas = document.getElementById('previewRegionCanvas');
+  const regionListEl = document.getElementById('regionList');
+  const regionControls = document.getElementById('regionControls');
+  const regionLabel = document.getElementById('regionLabel');
+  const regionToolStatus = document.getElementById('regionToolStatus');
+  const sliderRegionTolerance = document.getElementById('sliderRegionTolerance');
+  const numRegionTolerance = document.getElementById('numRegionTolerance');
+  const sliderRegionSoftness = document.getElementById('sliderRegionSoftness');
+  const numRegionSoftness = document.getElementById('numRegionSoftness');
+  const sliderRegionDespill = document.getElementById('sliderRegionDespill');
+  const numRegionDespill = document.getElementById('numRegionDespill');
+  const chkRegionConnected = document.getElementById('chkRegionConnected');
+  const btnRegionScopeFrame = document.getElementById('btnRegionScopeFrame');
+  const btnRegionScopeAll = document.getElementById('btnRegionScopeAll');
+
+  // A region drawn on the Preview is shown on every cell it applies to, so one
+  // stored region can be several shapes on screen. The cell index rides in the
+  // id the overlay sees, which is how a drag knows which copy it grabbed.
+  const SURFACE_ID_SEP = '@@';
+  const baseRegionId = (id) => (typeof id === 'string' ? id.split(SURFACE_ID_SEP)[0] : id);
+  const surfaceIdFrame = (id) => {
+    const parts = typeof id === 'string' ? id.split(SURFACE_ID_SEP) : [];
+    const frame = parts.length > 1 ? Number(parts[1]) : NaN;
+    return Number.isFinite(frame) ? frame : null;
+  };
+
+  let regionSequence = 0;
+  let regionOverlaysCache = null;
+
+  const activeRegions = () => state.colorRegions.filter(regionIsActive);
+  const selectedRegion = () => state.colorRegions.find((item) => item.id === state.selectedRegionId) || null;
+  const regionToolArmed = () => state.regionMode !== 'off';
+
+  /* ---------------- pipeline ---------------- */
+
+  /**
+   * A per-frame source of the regions that apply to one frame, or null when
+   * nothing applies anywhere.
+   *
+   * Much cheaper than `makeEraseMaskProvider`: a region needs no rasterization,
+   * so there is nothing to cache — the work is a list filter, and the geometry is
+   * supplied at the call site instead, because the same list is applied at two
+   * different resolutions on the two generator paths.
+   */
+  function makeRegionProvider(frameCount, frameTimes) {
+    const regions = activeRegions();
+    if (regions.length === 0) return null;
+    const plan = eraseStrokePlan(regions, frameTimes, frameCount);
+    if (plan.globalStrokes.length === 0 && plan.frameIndices.size === 0) return null;
+    return (frameIndex) => {
+      const list = strokesForFrame(regions, frameIndex, frameTimes, frameCount);
+      return list.length > 0 ? list : null;
+    };
+  }
+
+  function applyRegionsToCanvas(canvas, regions, geometry) {
+    if (!canvas || !regions || regions.length === 0) return;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const stats = applyRegionKeys(imgData, regions, geometry);
+    if (stats.regionsApplied === 0) return;
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  /* ---------------- surface <-> source ---------------- */
+
+  /** Source pixels per preview-bitmap pixel, on each axis. */
+  function previewSourcePerPixel(layout) {
+    return { x: layout.cropWidth / layout.cellW, y: layout.cropHeight / layout.cellH };
+  }
+
+  /**
+   * One stored region as it should be drawn on a given cell of the Preview, in
+   * surface space (the preview canvas normalised to 0..1).
+   */
+  function previewRegionToSurface(region, frameIndex, layout) {
+    const origin = cellSourceOrigin(layout, state.frameOrigins, frameIndex);
+    const sheetW = previewRegionCanvas.width || 1;
+    const sheetH = previewRegionCanvas.height || 1;
+    const column = state.previewMode === 'sheet' ? frameIndex % layout.cellsAcross : 0;
+    const row = state.previewMode === 'sheet' ? Math.floor(frameIndex / layout.cellsAcross) : 0;
+    const px = (column * layout.cellW) + ((((region.cx * state.videoWidth) - origin.x) / layout.cropWidth) * layout.cellW);
+    const py = (row * layout.cellH) + ((((region.cy * state.videoHeight) - origin.y) / layout.cropHeight) * layout.cellH);
+    const per = previewSourcePerPixel(layout);
+    return {
+      ...region,
+      id: `${region.id}${SURFACE_ID_SEP}${frameIndex}`,
+      cx: px / sheetW,
+      cy: py / sheetH,
+      rx: ((region.rx * state.videoWidth) / per.x) / sheetW,
+      ry: ((region.ry * state.videoHeight) / per.y) / sheetH
+    };
+  }
+
+  /** Surface radii back to normalised source radii. */
+  function surfaceRadiiToSource(rx, ry, layout) {
+    if (!layout) return { rx, ry };
+    const per = previewSourcePerPixel(layout);
+    return {
+      rx: ((rx * (previewRegionCanvas.width || 1)) * per.x) / Math.max(1, state.videoWidth),
+      ry: ((ry * (previewRegionCanvas.height || 1)) * per.y) / Math.max(1, state.videoHeight)
+    };
+  }
+
+  /**
+   * A surface point on the Preview back to a normalised source point.
+   *
+   * `cellFrame` holds the point inside one cell, so dragging a region near a cell
+   * border cannot walk its centre into the neighbouring cell's crop window and
+   * teleport the circle across the sheet.
+   */
+  function previewSurfaceToSource(x, y, cellFrame = null) {
+    const layout = previewSheetLayout();
+    if (!layout) return null;
+    let px = x * (previewRegionCanvas.width || 1);
+    let py = y * (previewRegionCanvas.height || 1);
+    if (cellFrame != null && state.previewMode === 'sheet') {
+      const column = cellFrame % layout.cellsAcross;
+      const row = Math.floor(cellFrame / layout.cellsAcross);
+      px = Math.max(column * layout.cellW, Math.min(((column + 1) * layout.cellW) - 1, px));
+      py = Math.max(row * layout.cellH, Math.min(((row + 1) * layout.cellH) - 1, py));
+    }
+    return previewSourcePoint({ px, py }, layout);
+  }
+
+  /* ---------------- overlays ---------------- */
+
+  function videoRegionMapping() {
+    return {
+      toSource(px, py) {
+        const width = regionOverlayCanvas.width || 1;
+        const height = regionOverlayCanvas.height || 1;
+        if (px < 0 || py < 0 || px > width || py > height) return null;
+        return { x: px / width, y: py / height };
+      },
+      toCanvas: (sx, sy) => ({ x: sx * (regionOverlayCanvas.width || 1), y: sy * (regionOverlayCanvas.height || 1) }),
+      scaleToCanvas: (rx, ry) => ({ rx: rx * (regionOverlayCanvas.width || 1), ry: ry * (regionOverlayCanvas.height || 1) }),
+      getAspect: () => (state.videoHeight > 0 ? state.videoWidth / state.videoHeight : 1),
+      getRegions: () => state.colorRegions,
+      getSelectedId: () => state.selectedRegionId,
+      onCreate: (region, event) => createRegion(region, { binding: null, event }),
+      onChange: (id, patch) => patchRegion(id, patch),
+      onPickRequest: (id, source, event) => commitRegionPick(id, source, event, 'video')
+    };
+  }
+
+  function previewRegionMapping() {
+    return {
+      toSource(px, py) {
+        const width = previewRegionCanvas.width || 1;
+        const height = previewRegionCanvas.height || 1;
+        if (px < 0 || py < 0 || px > width || py > height) return null;
+        const layout = previewSheetLayout();
+        if (!layout) return null;
+        // The tail of the bottom row belongs to no frame. Same refusal the Erase
+        // Brush makes there, for the same reason.
+        const mapped = previewSourcePoint({ px, py }, layout);
+        if (!mapped) return null;
+        if (state.previewMode === 'sheet' && mapped.frameIndex >= state.generatedFrames.length) return null;
+        return { x: px / width, y: py / height };
+      },
+      toCanvas: (sx, sy) => ({ x: sx * (previewRegionCanvas.width || 1), y: sy * (previewRegionCanvas.height || 1) }),
+      scaleToCanvas: (rx, ry) => ({ rx: rx * (previewRegionCanvas.width || 1), ry: ry * (previewRegionCanvas.height || 1) }),
+      getAspect: () => {
+        const width = previewRegionCanvas.width || 1;
+        const height = previewRegionCanvas.height || 1;
+        return width / height;
+      },
+      getRegions: () => previewSurfaceRegions(),
+      getSelectedId: () => {
+        const selected = previewSurfaceRegions().find((item) => baseRegionId(item.id) === state.selectedRegionId);
+        return selected ? selected.id : null;
+      },
+      onCreate: (region, event) => {
+        const layout = previewSheetLayout();
+        // The centre is the drag anchor, so the cell it lands in is the cell the
+        // user started on — not wherever the drag happened to finish.
+        const centre = previewSurfaceToSource(region.cx, region.cy);
+        if (!centre || !layout) return;
+        const radii = surfaceRadiiToSource(region.rx, region.ry, layout);
+        createRegion({ cx: centre.x, cy: centre.y, ...radii }, {
+          binding: regionBindingForFrame(centre.frameIndex, event?.shiftKey === true),
+          event
+        });
+      },
+      onChange: (id, patch) => {
+        const layout = previewSheetLayout();
+        if (!layout) return;
+        const next = {};
+        if (patch.cx !== undefined || patch.cy !== undefined) {
+          const centre = previewSurfaceToSource(patch.cx, patch.cy, surfaceIdFrame(id));
+          if (!centre) return;
+          next.cx = centre.x;
+          next.cy = centre.y;
+        }
+        if (patch.rx !== undefined || patch.ry !== undefined) {
+          Object.assign(next, surfaceRadiiToSource(patch.rx, patch.ry, layout));
+        }
+        patchRegion(baseRegionId(id), next);
+      },
+      onPickRequest: (id, source, event) => {
+        const point = previewSurfaceToSource(source.x, source.y);
+        if (!point) return;
+        commitRegionPick(baseRegionId(id), point, event, 'preview');
+      }
+    };
+  }
+
+  /** Every visible copy of every region, in Preview surface space. */
+  function previewSurfaceRegions() {
+    const layout = previewSheetLayout();
+    if (!layout) return [];
+    const count = state.generatedFrames.length;
+    const frames = state.previewMode === 'sheet'
+      ? Array.from({ length: count }, (_, index) => index)
+      : [Math.max(0, Math.min(count - 1, state.currentFrameIndex))];
+    const out = [];
+    for (const region of state.colorRegions) {
+      const bound = resolveStrokeFrame(region, state.frameTimes, count);
+      for (const frameIndex of frames) {
+        // A global region is drawn on every cell because it applies to every
+        // cell; an orphaned binding (ORPHAN_FRAME) matches nothing and is drawn
+        // nowhere, exactly as it is applied nowhere.
+        if (bound !== null && bound !== frameIndex) continue;
+        out.push(previewRegionToSurface(region, frameIndex, layout));
+      }
+    }
+    return out;
+  }
+
+  function regionOverlayEntries() {
+    if (!regionOverlaysCache) {
+      const shared = {
+        onSelect: (id) => selectRegion(baseRegionId(id)),
+        onDelete: (id) => deleteRegion(baseRegionId(id)),
+        onEscape: () => deactivateRegionTool()
+      };
+      regionOverlaysCache = [
+        {
+          key: 'video',
+          canvas: regionOverlayCanvas,
+          overlay: createRegionOverlay({
+            canvas: regionOverlayCanvas,
+            ...shared,
+            // The video is not a cell, so a region bound to one does not apply to
+            // what is on screen here — drawn faintly rather than hidden, the same
+            // convention framed erase strokes follow.
+            isRegionDimmed: (region) => region.frame !== null && region.frame !== undefined,
+            ...videoRegionMapping()
+          })
+        },
+        {
+          key: 'preview',
+          canvas: previewRegionCanvas,
+          overlay: createRegionOverlay({
+            canvas: previewRegionCanvas,
+            ...shared,
+            // On the Preview a copy is only drawn on cells it actually applies to,
+            // so nothing here is ever out of scope.
+            isRegionDimmed: () => false,
+            ...previewRegionMapping()
+          })
+        }
+      ];
+    }
+    return regionOverlaysCache;
+  }
+
+  function regionOverlayFor(key) {
+    return regionOverlayEntries().find((entry) => entry.key === key) || null;
+  }
+
+  /* ---------------- overlay geometry ---------------- */
+
+  function updateRegionOverlays() {
+    updateVideoRegionOverlay();
+    updatePreviewRegionOverlay();
+  }
+
+  function updateVideoRegionOverlay() {
+    if (!regionOverlayCanvas) return;
+    const entry = regionOverlayFor('video');
+    const shouldShow = state.videoLoaded && !state.isEyedropperActive
+      && (regionToolArmed() || state.colorRegions.length > 0);
+    const box = shouldShow ? getVideoRenderBox() : null;
+    if (!box || box.width < 1 || box.height < 1) {
+      regionOverlayCanvas.classList.remove('visible');
+      return;
+    }
+    regionOverlayCanvas.style.left = `${box.parentLeft}px`;
+    regionOverlayCanvas.style.top = `${box.parentTop}px`;
+    regionOverlayCanvas.style.width = `${box.width}px`;
+    regionOverlayCanvas.style.height = `${box.height}px`;
+    const width = Math.max(1, Math.round(box.width));
+    const height = Math.max(1, Math.round(box.height));
+    if (regionOverlayCanvas.width !== width) regionOverlayCanvas.width = width;
+    if (regionOverlayCanvas.height !== height) regionOverlayCanvas.height = height;
+    entry.overlay.render();
+    regionOverlayCanvas.classList.add('visible');
+  }
+
+  function updatePreviewRegionOverlay() {
+    if (!previewRegionCanvas) return;
+    const entry = regionOverlayFor('preview');
+    const layout = previewSheetLayout();
+    const shouldShow = Boolean(layout) && !state.isEyedropperActive
+      && (regionToolArmed() || state.colorRegions.length > 0);
+    const box = shouldShow ? getPreviewEraseBox() : null;
+    if (!box) {
+      previewRegionCanvas.classList.remove('visible');
+      return;
+    }
+    previewRegionCanvas.style.left = `${box.parentLeft}px`;
+    previewRegionCanvas.style.top = `${box.parentTop}px`;
+    previewRegionCanvas.style.width = `${box.width}px`;
+    previewRegionCanvas.style.height = `${box.height}px`;
+    if (previewRegionCanvas.width !== previewCanvas.width) previewRegionCanvas.width = previewCanvas.width;
+    if (previewRegionCanvas.height !== previewCanvas.height) previewRegionCanvas.height = previewCanvas.height;
+    entry.overlay.render();
+    previewRegionCanvas.classList.add('visible');
+  }
+
+  let regionOverlayFrame = 0;
+  function scheduleRegionOverlay() {
+    if (regionOverlayFrame) return;
+    regionOverlayFrame = requestAnimationFrame(() => {
+      regionOverlayFrame = 0;
+      updateRegionOverlays();
+    });
+  }
+
+  /* ---------------- mode ---------------- */
+
+  function setRegionMode(mode) {
+    const next = ['draw', 'pick', 'edit'].includes(mode) ? mode : 'off';
+    state.regionMode = next;
+    for (const entry of regionOverlayEntries()) entry.overlay.setMode(next);
+    btnRegionPick?.classList.toggle('active', next !== 'off');
+    regionBanner?.classList.toggle('active', next !== 'off');
+    previewRegionBanner?.classList.toggle('active', next !== 'off' && Boolean(previewSheetLayout()));
+    videoViewport?.classList.toggle('erase-painting', next !== 'off' || Boolean(state.eraseTool));
+    spriteViewport?.classList.toggle('erase-painting', next !== 'off' || Boolean(state.eraseTool));
+    updateRegionBanner();
+    updateRegionOverlays();
+  }
+
+  function updateRegionBanner() {
+    // The circle is the area the colour is ALLOWED to be removed from, not a mask
+    // that protects what is outside it. Say so: the opposite reading is the
+    // natural one, and it is the one that makes the tool look broken.
+    const videoText = state.regionMode === 'draw'
+      ? 'Kéo từ tâm chi tiết cần xoá · Shift = tròn đều · Vùng vẽ ở đây áp cho MỌI frame'
+      : (state.regionMode === 'pick'
+        ? 'Click vào màu cần xoá BÊN TRONG vòng tròn · chỉ vùng này bị ảnh hưởng · Esc thoát'
+        : 'Kéo ruột để dời · kéo vành để đổi bán kính · Delete xoá vùng · Esc thoát');
+    const scope = state.regionScope === 'frame' ? 'chỉ ô này' : 'mọi frame';
+    const previewText = state.regionMode === 'draw'
+      ? `Kéo để vẽ vùng (${scope}) · Shift đảo phạm vi · Kéo chuột giữa/phải để pan`
+      : videoText;
+    if (regionBannerText) regionBannerText.textContent = videoText;
+    if (previewRegionBannerText) previewRegionBannerText.textContent = previewText;
+  }
+
+  function activateRegionTool() {
+    if (!state.videoLoaded) {
+      showToast('Vui lòng tải video trước khi dùng Vùng tròn', 'error');
+      return;
+    }
+    if (state.isEyedropperActive) deactivateEyedropper();
+    if (state.isWatermarkSelectActive) deactivateWatermarkSelect();
+    if (state.protectionTool) deactivateProtectionBrush();
+    if (state.eraseTool) deactivateEraseBrush();
+    video.pause();
+    updateVideoPlayPauseBtn();
+    // A circle cannot be aimed at cells flipping past twelve times a second.
+    stopAnimationPreview();
+    setRegionMode(state.colorRegions.length > 0 && state.selectedRegionId ? 'edit' : 'draw');
+    lucide.createIcons({ root: regionBanner });
+    if (previewRegionBanner) lucide.createIcons({ root: previewRegionBanner });
+    showToast('Khoanh vòng tròn quanh chi tiết, rồi pick màu cần xoá bên trong nó. Vẽ trên Source video = mọi frame; vẽ trên Preview = theo Phạm vi.', 'info');
+  }
+
+  function deactivateRegionTool() {
+    setRegionMode('off');
+  }
+
+  /* ---------------- region lifecycle ---------------- */
+
+  function regionBindingForFrame(frameIndex, shiftKey) {
+    const perFrame = shiftKey ? state.regionScope !== 'frame' : state.regionScope === 'frame';
+    if (!perFrame || !Number.isFinite(frameIndex)) return null;
+    const time = state.frameTimes[frameIndex];
+    return { frame: frameIndex, frameTime: Number.isFinite(time) ? time : null };
+  }
+
+  function createRegion(geometry, { binding = null, event = null } = {}) {
+    const region = normalizeRegion({
+      cx: geometry.cx,
+      cy: geometry.cy,
+      rx: geometry.rx,
+      ry: geometry.ry,
+      id: `region-${++regionSequence}`,
+      colors: [],
+      tolerance: U.clampNumber(sliderRegionTolerance.value, 0, 1, 0.30),
+      softness: U.clampNumber(sliderRegionSoftness.value, 0, 1, 0.12),
+      despill: U.clampNumber(sliderRegionDespill.value, 0, 1, 0),
+      connected: chkRegionConnected.checked,
+      frame: binding ? binding.frame : null,
+      frameTime: binding ? binding.frameTime : null
+    });
+    if (!region) return;
+    state.colorRegions.push(region);
+    state.selectedRegionId = region.id;
+    // Straight into picking: a region with no colour does nothing at all, and a
+    // second button to press here is a second button to forget.
+    setRegionMode('pick');
+    renderRegionUI();
+    saveClipStateDebounced();
+    if (event) event.preventDefault?.();
+  }
+
+  function selectRegion(id) {
+    state.selectedRegionId = id;
+    renderRegionUI();
+    updateRegionOverlays();
+  }
+
+  function deleteRegion(id) {
+    const before = state.colorRegions.length;
+    state.colorRegions = state.colorRegions.filter((region) => region.id !== id);
+    if (state.colorRegions.length === before) return;
+    if (state.selectedRegionId === id) state.selectedRegionId = null;
+    renderRegionUI();
+    markEraseStrokesChanged();
+    reapplyLocalEditsLive();
+    updateRegionOverlays();
+    saveClipStateDebounced();
+  }
+
+  function patchRegion(id, patch) {
+    const index = state.colorRegions.findIndex((region) => region.id === id);
+    if (index < 0) return;
+    const merged = normalizeRegion({ ...state.colorRegions[index], ...patch });
+    if (!merged) return;
+    state.colorRegions[index] = merged;
+    renderRegionUI();
+    scheduleRegionLiveUpdate();
+    saveClipStateDebounced();
+  }
+
+  let regionLiveTimer = null;
+  function scheduleRegionLiveUpdate() {
+    clearTimeout(regionLiveTimer);
+    regionLiveTimer = setTimeout(() => {
+      regionLiveTimer = null;
+      reapplyLocalEditsLive();
+    }, 60);
+  }
+
+  /**
+   * Commits a picked colour into a region.
+   *
+   * The colour is read from the *source video*, never from the preview, even when
+   * the click landed on the preview: a preview pixel has already been through the
+   * keyer, so its alpha is premultiplied and its RGB may be decontaminated — it
+   * is not the colour the matcher will be comparing against during the next
+   * Generate.
+   */
+  function commitRegionPick(id, source, event, surface) {
+    const region = state.colorRegions.find((item) => item.id === baseRegionId(id)) || null;
+    if (!region) {
+      showToast('Hãy click bên trong vòng tròn.', 'info');
+      return;
+    }
+    if (!state.videoLoaded) return;
+    if (sampleCanvas.width !== state.videoWidth || sampleCanvas.height !== state.videoHeight) {
+      sampleCanvas.width = state.videoWidth;
+      sampleCanvas.height = state.videoHeight;
+    }
+    sampleCtx.drawImage(video, 0, 0, state.videoWidth, state.videoHeight);
+    const px = Math.max(0, Math.min(state.videoWidth - 1, Math.floor(source.x * state.videoWidth)));
+    const py = Math.max(0, Math.min(state.videoHeight - 1, Math.floor(source.y * state.videoHeight)));
+    const pixel = sampleCtx.getImageData(px, py, 1, 1).data;
+    const color = { r: pixel[0], g: pixel[1], b: pixel[2], hex: rgbToHex(pixel[0], pixel[1], pixel[2]) };
+    const duplicate = region.colors.some((item) => Math.abs(item.r - color.r) + Math.abs(item.g - color.g) + Math.abs(item.b - color.b) < 10);
+    if (duplicate) {
+      showToast('Màu này đã có trong vùng.', 'info');
+      return;
+    }
+    region.colors.push(color);
+    region.seed = { x: source.x, y: source.y };
+    state.selectedRegionId = region.id;
+    setRegionMode('edit');
+    renderRegionUI();
+    markEraseStrokesChanged();
+    if (!reapplyLocalEditsLive() && state.generatedFrames.length > 0 && !state.eraseRegenerateHintShown) {
+      state.eraseRegenerateHintShown = true;
+      showToast('Nhấn Generate để áp vùng vào sprite sheet', 'info');
+    }
+    saveClipStateDebounced();
+    if (surface === 'preview' && event) event.preventDefault?.();
+  }
+
+  /* ---------------- UI ---------------- */
+
+  function renderRegionUI() {
+    renderRegionList();
+    renderRegionControls();
+    if (regionToolStatus) {
+      const total = state.colorRegions.length;
+      const ready = activeRegions().length;
+      regionToolStatus.textContent = total === 0
+        ? 'Chưa có vùng nào'
+        : `${total} vùng · ${ready} đã có màu`;
+    }
+    updateRegionScopeButtons();
+    updateRegionBanner();
+  }
+
+  function renderRegionList() {
+    if (!regionListEl) return;
+    regionListEl.innerHTML = '';
+    for (const region of state.colorRegions) {
+      const chip = document.createElement('div');
+      chip.className = 'region-chip';
+      chip.classList.toggle('is-selected', region.id === state.selectedRegionId);
+      const dot = document.createElement('span');
+      dot.className = 'region-chip-dot';
+      dot.style.background = region.colors[0]?.hex || 'transparent';
+      const label = document.createElement('span');
+      const scope = region.frame === null ? 'mọi frame' : `frame #${region.frame + 1}`;
+      label.textContent = `${region.colors[0]?.hex || 'chưa pick'} · ${scope}`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'region-chip-remove';
+      remove.textContent = '×';
+      remove.title = 'Xoá vùng này';
+      remove.addEventListener('click', (event) => {
+        event.stopPropagation();
+        deleteRegion(region.id);
+      });
+      chip.append(dot, label, remove);
+      chip.addEventListener('click', () => {
+        selectRegion(region.id);
+        if (state.regionMode === 'off') setRegionMode('edit');
+      });
+      regionListEl.appendChild(chip);
+    }
+  }
+
+  function renderRegionControls() {
+    const region = selectedRegion();
+    if (regionControls) regionControls.hidden = !region;
+    if (!region) return;
+    sliderRegionTolerance.value = String(region.tolerance);
+    sliderRegionSoftness.value = String(region.softness);
+    sliderRegionDespill.value = String(region.despill);
+    chkRegionConnected.checked = region.connected;
+    for (const [numberEl, value] of [[numRegionTolerance, region.tolerance],
+      [numRegionSoftness, region.softness], [numRegionDespill, region.despill]]) {
+      if (numberEl && document.activeElement !== numberEl) numberEl.value = value.toFixed(2);
+    }
+    if (regionLabel) {
+      const radiusPx = Math.round(region.rx * state.videoWidth);
+      regionLabel.textContent = `${region.colors[0]?.hex || 'chưa pick'} · r=${radiusPx}px · ${region.frame === null ? 'mọi frame' : `frame #${region.frame + 1}`}`;
+    }
+  }
+
+  function updateRegionScopeButtons() {
+    btnRegionScopeFrame?.classList.toggle('active', state.regionScope === 'frame');
+    btnRegionScopeAll?.classList.toggle('active', state.regionScope !== 'frame');
+  }
+
+  /* ---------------- wiring ---------------- */
+
+  btnRegionPick?.addEventListener('click', () => {
+    if (regionToolArmed()) deactivateRegionTool();
+    else activateRegionTool();
+  });
+  btnCancelRegionTool?.addEventListener('click', deactivateRegionTool);
+  btnCancelPreviewRegion?.addEventListener('click', deactivateRegionTool);
+
+  btnRegionScopeFrame?.addEventListener('click', () => {
+    state.regionScope = 'frame';
+    updateRegionScopeButtons();
+    updateRegionBanner();
+    saveClipStateDebounced();
+  });
+  btnRegionScopeAll?.addEventListener('click', () => {
+    state.regionScope = 'all';
+    updateRegionScopeButtons();
+    updateRegionBanner();
+    saveClipStateDebounced();
+  });
+
+  for (const [sliderEl, numberEl, key] of [
+    [sliderRegionTolerance, numRegionTolerance, 'tolerance'],
+    [sliderRegionSoftness, numRegionSoftness, 'softness'],
+    [sliderRegionDespill, numRegionDespill, 'despill']
+  ]) {
+    syncSliderAndNumber(sliderEl, numberEl, {
+      decimals: 2,
+      onChange: () => {
+        const region = selectedRegion();
+        if (!region) return;
+        patchRegion(region.id, { [key]: U.clampNumber(sliderEl.value, 0, 1, 0) });
+        updateRegionOverlays();
+      }
+    });
+  }
+  chkRegionConnected?.addEventListener('change', () => {
+    const region = selectedRegion();
+    if (!region) return;
+    patchRegion(region.id, { connected: chkRegionConnected.checked });
+  });
+
+  // Right-drag pans the preview while the tool holds the left button, so the
+  // context menu would otherwise open in the middle of a pan.
+  previewRegionCanvas?.addEventListener('contextmenu', (event) => {
+    if (regionToolArmed()) event.preventDefault();
+  });
+
+  renderRegionUI();
 
   // === SUBJECT COLOR REPLACEMENT ===
   function updateColorReplaceUI() {
@@ -5154,6 +5839,27 @@ document.addEventListener('DOMContentLoaded', () => {
       }, totalFrames, timestamps)
       : null;
 
+    // Circle regions ride the same two paths for the same reasons, and are not
+    // gated on chkTransparentFormat either: "remove this colour from this detail"
+    // is an explicit instruction, not a matting refinement.
+    const regionsFor = makeRegionProvider(totalFrames, timestamps);
+    const regionGeometryCell = {
+      sourceWidth: state.videoWidth,
+      sourceHeight: state.videoHeight,
+      cropX: cLeft,
+      cropY: cTop,
+      cropWidth: cropW,
+      cropHeight: cropH
+    };
+    const regionGeometryFull = {
+      sourceWidth: state.videoWidth,
+      sourceHeight: state.videoHeight,
+      cropX: 0,
+      cropY: 0,
+      cropWidth: fullW,
+      cropHeight: fullH
+    };
+
     const colorReplaceOptions = {
       enabled: chkEnableColorReplace.checked,
       sourceColor: U.normalizeColor(inputColorReplaceSource.value),
@@ -5211,6 +5917,12 @@ document.addEventListener('DOMContentLoaded', () => {
       // added before a downscale is exactly the detail the downscale removes,
       // so it waits until the cell exists.
       if (gradeActive) applyColorGrade(fullImgData, colorGradeOptions);
+      // Region then erase, and both before detectSubjectBounds: a detail that has
+      // been removed must not go on dragging the subject alignment.
+      if (regionsFor && isGuidelineActive) {
+        const regions = regionsFor(i);
+        if (regions) applyRegionKeys(fullImgData, regions, regionGeometryFull);
+      }
       if (eraseMaskFullFor) applyEraseMask(fullImgData, eraseMaskFullFor(i));
       clearWatermarkFromImageData(
         fullImgData,
@@ -5327,9 +6039,10 @@ document.addEventListener('DOMContentLoaded', () => {
         state.rawFrames = state.generatedFrames.map(cloneFrameCanvas);
         state.eraseLiveAvailable = true;
       }
-      if (eraseMaskFor) {
+      if (regionsFor || eraseMaskFor) {
         for (let i = 0; i < totalFrames; i++) {
-          applyEraseMaskToCanvas(state.generatedFrames[i], eraseMaskFor(i));
+          if (regionsFor) applyRegionsToCanvas(state.generatedFrames[i], regionsFor(i), regionGeometryCell);
+          if (eraseMaskFor) applyEraseMaskToCanvas(state.generatedFrames[i], eraseMaskFor(i));
         }
         sheetCtx.clearRect(0, 0, sheetW, sheetH);
         for (let i = 0; i < totalFrames; i++) {
@@ -5342,6 +6055,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     state.fullSheetCanvas = sheetCanvas;
     updatePreviewViewport();
+    // A new frame count re-binds every per-cell region by time, so the rings on
+    // the preview may belong to different cells than they did a moment ago.
+    updateRegionOverlays();
   }
 
   function seekVideoAsync(vid, time) {
@@ -5590,6 +6306,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // The erase surface is pinned to the preview's *rendered* box, so it has to
     // move with every pan and zoom — this is the one place that knows they changed.
     updatePreviewEraseOverlay();
+    updatePreviewRegionOverlay();
   }
 
   btnZoomIn.addEventListener('click', () => {
@@ -5675,6 +6392,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // the middle and right buttons. `pointerdown` on the overlay cannot suppress
     // this: `mousedown` is a separate event and bubbles here regardless.
     if (isPreviewErasePaintable() && e.button === 0) return;
+    if (regionToolArmed() && e.button === 0) return;
     state.isDragging = true;
     state.dragStartX = e.clientX - state.panX;
     state.dragStartY = e.clientY - state.panY;
