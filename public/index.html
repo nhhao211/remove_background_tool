@@ -1169,6 +1169,16 @@
                   <span>Vùng đang chọn</span>
                   <span id="regionLabel" class="hint">—</span>
                 </div>
+                <div class="region-step-row">
+                  <button id="btnRegionPickColor" class="time-btn region-step-btn" type="button" title="Bước 2: click vào màu cần xoá bên trong vòng tròn">
+                    <i data-lucide="pipette" style="width: 12px; height: 12px;"></i>
+                    <span>Pick màu trong vùng</span>
+                  </button>
+                  <button id="btnRegionDrawNew" class="time-btn region-step-btn" type="button" title="Vẽ thêm một vòng tròn nữa">
+                    <i data-lucide="circle-dashed" style="width: 12px; height: 12px;"></i>
+                    <span>Vẽ vùng mới</span>
+                  </button>
+                </div>
                 <label>
                   <span>Tolerance</span>
                   <div class="slider-group compact-slider-group">
@@ -1276,6 +1286,17 @@
         <div id="spriteColorSwatches" class="color-swatches cleaner-swatches"></div>
         <div id="spriteRegionControls" class="cleaner-region-controls" hidden>
           <div class="cleaner-section-title"><span>Vùng đang chọn</span><span id="spriteRegionLabel">—</span></div>
+
+          <div class="region-step-row">
+            <button id="btnSpriteRegionPickColor" class="time-btn region-step-btn" type="button" title="Bước 2: click vào màu cần xoá bên trong vòng tròn">
+              <i data-lucide="pipette" style="width: 12px; height: 12px;"></i>
+              <span>Pick màu trong vùng</span>
+            </button>
+            <button id="btnSpriteRegionDrawNew" class="time-btn region-step-btn" type="button" title="Vẽ thêm một vòng tròn nữa">
+              <i data-lucide="circle-dashed" style="width: 12px; height: 12px;"></i>
+              <span>Vẽ vùng mới</span>
+            </button>
+          </div>
 
           <label class="form-label" for="spriteRegionTolerance"><span>Tolerance</span></label>
           <div class="slider-group">

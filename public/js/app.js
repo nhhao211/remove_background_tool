@@ -4112,6 +4112,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const chkRegionConnected = document.getElementById('chkRegionConnected');
   const btnRegionScopeFrame = document.getElementById('btnRegionScopeFrame');
   const btnRegionScopeAll = document.getElementById('btnRegionScopeAll');
+  const btnRegionPickColor = document.getElementById('btnRegionPickColor');
+  const btnRegionDrawNew = document.getElementById('btnRegionDrawNew');
 
   // A region drawn on the Preview is shown on every cell it applies to, so one
   // stored region can be several shapes on screen. The cell index rides in the
@@ -4380,8 +4382,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateVideoRegionOverlay() {
     if (!regionOverlayCanvas) return;
     const entry = regionOverlayFor('video');
-    const shouldShow = state.videoLoaded && !state.isEyedropperActive
-      && (regionToolArmed() || state.colorRegions.length > 0);
+    // Only while the tool is armed: a dashed ring left on top of a finished
+    // sprite sheet reads as part of the artwork.
+    const shouldShow = state.videoLoaded && !state.isEyedropperActive && regionToolArmed();
     const box = shouldShow ? getVideoRenderBox() : null;
     if (!box || box.width < 1 || box.height < 1) {
       regionOverlayCanvas.classList.remove('visible');
@@ -4403,8 +4406,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!previewRegionCanvas) return;
     const entry = regionOverlayFor('preview');
     const layout = previewSheetLayout();
-    const shouldShow = Boolean(layout) && !state.isEyedropperActive
-      && (regionToolArmed() || state.colorRegions.length > 0);
+    const shouldShow = Boolean(layout) && !state.isEyedropperActive && regionToolArmed();
     const box = shouldShow ? getPreviewEraseBox() : null;
     if (!box) {
       previewRegionCanvas.classList.remove('visible');
@@ -4432,10 +4434,15 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ---------------- mode ---------------- */
 
   function setRegionMode(mode) {
-    const next = ['draw', 'pick', 'edit'].includes(mode) ? mode : 'off';
+    let next = ['draw', 'pick', 'edit'].includes(mode) ? mode : 'off';
+    // Step 2 has no meaning without step 1: there is no circle to put the colour
+    // in, so a click would sample the video and silently do nothing.
+    if (next === 'pick' && !selectedRegion()) next = state.colorRegions.length > 0 ? 'edit' : 'draw';
     state.regionMode = next;
     for (const entry of regionOverlayEntries()) entry.overlay.setMode(next);
     btnRegionPick?.classList.toggle('active', next !== 'off');
+    btnRegionPickColor?.classList.toggle('active', next === 'pick');
+    btnRegionDrawNew?.classList.toggle('active', next === 'draw');
     regionBanner?.classList.toggle('active', next !== 'off');
     previewRegionBanner?.classList.toggle('active', next !== 'off' && Boolean(previewSheetLayout()));
     videoViewport?.classList.toggle('erase-painting', next !== 'off' || Boolean(state.eraseTool));
@@ -4449,13 +4456,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // that protects what is outside it. Say so: the opposite reading is the
     // natural one, and it is the one that makes the tool look broken.
     const videoText = state.regionMode === 'draw'
-      ? 'Kéo từ tâm chi tiết cần xoá · Shift = tròn đều · Vùng vẽ ở đây áp cho MỌI frame'
+      ? 'Bước 1 — Kéo từ tâm chi tiết cần xoá · Shift = tròn đều · Vùng vẽ ở đây áp cho MỌI frame'
       : (state.regionMode === 'pick'
-        ? 'Click vào màu cần xoá BÊN TRONG vòng tròn · chỉ vùng này bị ảnh hưởng · Esc thoát'
-        : 'Kéo ruột để dời · kéo vành để đổi bán kính · Delete xoá vùng · Esc thoát');
+        ? 'Bước 2 — Click vào màu cần xoá BÊN TRONG vòng tròn · chỉ vùng này bị ảnh hưởng · Esc thoát'
+        : 'Kéo ruột để dời · kéo vành để đổi bán kính · Bấm "Pick màu trong vùng" để chọn màu · Delete xoá vùng · Esc thoát');
     const scope = state.regionScope === 'frame' ? 'chỉ ô này' : 'mọi frame';
     const previewText = state.regionMode === 'draw'
-      ? `Kéo để vẽ vùng (${scope}) · Shift đảo phạm vi · Kéo chuột giữa/phải để pan`
+      ? `Bước 1 — Kéo để vẽ vùng (${scope}) · Shift đảo phạm vi · Kéo chuột giữa/phải để pan`
       : videoText;
     if (regionBannerText) regionBannerText.textContent = videoText;
     if (previewRegionBannerText) previewRegionBannerText.textContent = previewText;
@@ -4474,10 +4481,13 @@ document.addEventListener('DOMContentLoaded', () => {
     updateVideoPlayPauseBtn();
     // A circle cannot be aimed at cells flipping past twelve times a second.
     stopAnimationPreview();
-    setRegionMode(state.colorRegions.length > 0 && state.selectedRegionId ? 'edit' : 'draw');
+    // Always step 1. The tool is two ordered steps — draw the circle, then pick
+    // the colour inside it — and landing in 'edit' would skip straight past the
+    // first one for anyone who already has a region.
+    setRegionMode('draw');
     lucide.createIcons({ root: regionBanner });
     if (previewRegionBanner) lucide.createIcons({ root: previewRegionBanner });
-    showToast('Khoanh vòng tròn quanh chi tiết, rồi pick màu cần xoá bên trong nó. Vẽ trên Source video = mọi frame; vẽ trên Preview = theo Phạm vi.', 'info');
+    showToast('Bước 1: khoanh vòng tròn quanh chi tiết. Bước 2: bấm "Pick màu trong vùng" rồi click vào màu cần xoá bên trong vòng. Vẽ trên Source video = mọi frame; vẽ trên Preview = theo Phạm vi.', 'info');
   }
 
   function deactivateRegionTool() {
@@ -4511,10 +4521,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!region) return;
     state.colorRegions.push(region);
     state.selectedRegionId = region.id;
-    // Straight into picking: a region with no colour does nothing at all, and a
-    // second button to press here is a second button to forget.
-    setRegionMode('pick');
+    // Step 1 is done; step 2 is a deliberate press. The circle is almost never
+    // where the user wants it on the first drag, so they get to move and resize
+    // it before a colour is committed to it.
+    setRegionMode('edit');
     renderRegionUI();
+    showToast('Đã có vòng tròn. Chỉnh vị trí/bán kính nếu cần, rồi bấm "Pick màu trong vùng".', 'info');
     saveClipStateDebounced();
     if (event) event.preventDefault?.();
   }
@@ -4660,6 +4672,8 @@ document.addEventListener('DOMContentLoaded', () => {
       [numRegionSoftness, region.softness], [numRegionDespill, region.despill]]) {
       if (numberEl && document.activeElement !== numberEl) numberEl.value = value.toFixed(2);
     }
+    btnRegionPickColor?.classList.toggle('active', state.regionMode === 'pick');
+    btnRegionDrawNew?.classList.toggle('active', state.regionMode === 'draw');
     if (regionLabel) {
       const radiusPx = Math.round(region.rx * state.videoWidth);
       regionLabel.textContent = `${region.colors[0]?.hex || 'chưa pick'} · r=${radiusPx}px · ${region.frame === null ? 'mọi frame' : `frame #${region.frame + 1}`}`;
@@ -4678,6 +4692,16 @@ document.addEventListener('DOMContentLoaded', () => {
     else activateRegionTool();
   });
   btnCancelRegionTool?.addEventListener('click', deactivateRegionTool);
+  btnRegionPickColor?.addEventListener('click', () => {
+    if (!selectedRegion()) return;
+    setRegionMode('pick');
+    renderRegionUI();
+  });
+  btnRegionDrawNew?.addEventListener('click', () => {
+    if (!regionToolArmed()) activateRegionTool();
+    else setRegionMode('draw');
+    renderRegionUI();
+  });
   btnCancelPreviewRegion?.addEventListener('click', deactivateRegionTool);
 
   btnRegionScopeFrame?.addEventListener('click', () => {

@@ -84,6 +84,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnRegionPick = byId('btnSpriteRegionPick');
   const regionControls = byId('spriteRegionControls');
   const regionLabel = byId('spriteRegionLabel');
+  const btnRegionPickColor = byId('btnSpriteRegionPickColor');
+  const btnRegionDrawNew = byId('btnSpriteRegionDrawNew');
   const regionTolerance = byId('spriteRegionTolerance');
   const regionSoftness = byId('spriteRegionSoftness');
   const regionDespill = byId('spriteRegionDespill');
@@ -1059,8 +1061,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function setRegionMode(mode) {
-    const next = ['draw', 'pick', 'edit'].includes(mode) ? mode : 'off';
+    let next = ['draw', 'pick', 'edit'].includes(mode) ? mode : 'off';
     if (next !== 'off' && !state.original) return;
+    // Step 2 has no meaning without step 1: there is no circle to put the colour
+    // in, so a click would sample the sheet and silently do nothing.
+    if (next === 'pick' && !selectedRegion()) next = state.colorRegions.length > 0 ? 'edit' : 'draw';
     state.regionMode = next;
     state.regionPicking = next === 'pick';
     if (next !== 'off') deactivatePicker();
@@ -1070,6 +1075,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     for (const entry of regionOverlayEntries()) entry.overlay.setMode(next === 'off' ? 'off' : next);
     btnRegionPick?.classList.toggle('active', next !== 'off');
+    btnRegionPickColor?.classList.toggle('active', next === 'pick');
+    btnRegionDrawNew?.classList.toggle('active', next === 'draw');
     updateRegionBanner();
     syncRegionOverlays();
   }
@@ -1082,10 +1089,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // mask that protects what is outside it. Say so, because the opposite
     // reading is the natural one.
     const text = state.regionMode === 'draw'
-      ? 'Kéo từ tâm chi tiết cần xoá · Shift = tròn đều · Vùng tròn là phạm vi ĐƯỢC PHÉP xoá'
+      ? 'Bước 1 — Kéo từ tâm chi tiết cần xoá · Shift = tròn đều · Vùng tròn là phạm vi ĐƯỢC PHÉP xoá'
       : (state.regionMode === 'pick'
-        ? 'Click vào màu cần xoá BÊN TRONG vùng · chỉ vùng này bị ảnh hưởng · Esc thoát'
-        : 'Kéo ruột để dời · kéo vành để đổi bán kính · Delete xoá vùng · Esc thoát');
+        ? 'Bước 2 — Click vào màu cần xoá BÊN TRONG vùng · chỉ vùng này bị ảnh hưởng · Esc thoát'
+        : 'Kéo ruột để dời · kéo vành để đổi bán kính · Bấm "Pick màu trong vùng" để chọn màu · Delete xoá vùng · Esc thoát');
     if (regionBannerText) regionBannerText.textContent = text;
     if (regionBannerResultText) regionBannerResultText.textContent = text;
   }
@@ -1114,9 +1121,11 @@ document.addEventListener('DOMContentLoaded', () => {
     state.selectedRegionId = region.id;
     renderColors();
     renderRegionControls();
-    // Straight into picking: a region with no colour does nothing, so making
-    // the user press a second button first would only be a step to forget.
-    setRegionMode('pick');
+    // Step 1 is done; step 2 is a deliberate press. The circle is almost never
+    // where the user wants it on the first drag, so they get to move and resize
+    // it before a colour is committed to it.
+    setRegionMode('edit');
+    showToast('Đã có vòng tròn. Chỉnh vị trí/bán kính nếu cần, rồi bấm "Pick màu trong vùng".', 'info');
   }
 
   function selectRegion(id, { render = true } = {}) {
@@ -1224,6 +1233,13 @@ document.addEventListener('DOMContentLoaded', () => {
   btnRegionPick?.addEventListener('click', () => {
     setRegionMode(state.regionMode === 'off' ? 'draw' : 'off');
   });
+
+  btnRegionPickColor?.addEventListener('click', () => {
+    if (!selectedRegion()) return;
+    setRegionMode('pick');
+  });
+
+  btnRegionDrawNew?.addEventListener('click', () => setRegionMode('draw'));
 
   [[regionOverlayOriginal, 'original'], [regionOverlayResult, 'result']].forEach(([canvas, surface]) => {
     canvas.addEventListener('pointermove', (event) => {

@@ -1693,6 +1693,21 @@ body.viewport-resizing {
   border-color: rgba(56, 189, 248, 0.45);
 }
 
+/* Step 1 draw, step 2 pick: the two halves of the tool are separate presses so
+   a circle can be positioned and resized before a colour is committed to it. */
+.region-step-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.region-step-btn.active {
+  border-color: rgba(56, 189, 248, 0.75);
+  color: #bae6fd;
+  background: rgba(56, 189, 248, 0.16);
+}
+
 .region-tool-row {
   display: flex;
   align-items: center;

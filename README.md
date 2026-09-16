@@ -105,8 +105,9 @@ Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http:
    - Nếu sprite sheet đã generate, nét vẽ mới được áp ngay vào preview; với video quá lớn app sẽ nhắc nhấn **Generate** lại.
 
 5. **Xoá một màu chỉ ở một chi tiết bằng Vùng tròn + Pick màu:**
-   - Nhấn **Vùng tròn + Pick màu** trong panel chroma key, rồi kéo từ **tâm** chi tiết cần xoá ra ngoài. Giữ **Shift** để được vòng tròn đều.
-   - Vẽ xong, con trỏ chuyển sang chế độ pick: bấm vào **màu cần xoá bên trong vòng tròn**. Vòng tròn là *phạm vi được phép xoá*, không phải vùng được bảo vệ.
+   - **Bước 1 — vẽ vòng tròn:** nhấn **Vùng tròn + Pick màu** trong panel chroma key, rồi kéo từ **tâm** chi tiết cần xoá ra ngoài. Giữ **Shift** để được vòng tròn đều. Kéo ruột để dời, kéo vành để đổi bán kính cho tới khi vừa ý.
+   - **Bước 2 — pick màu:** bấm **Pick màu trong vùng**, rồi click vào **màu cần xoá bên trong vòng tròn**. Vòng tròn là *phạm vi được phép xoá*, không phải vùng được bảo vệ. Muốn thêm vòng nữa thì bấm **Vẽ vùng mới**.
+   - Vòng tròn chỉ hiện khi tool đang bật; thoát tool (**Esc** hoặc **✕ Thoát**) là nét đứt biến mất khỏi Source video lẫn khung Preview.
    - `Tolerance` quyết định dải màu được tính là trùng, `Softness` làm mềm vành vòng tròn, `Despill` khử màu nền còn dính lại, `Chỉ vùng liền kề` giới hạn ở đúng mảng màu liền với điểm bạn bấm.
    - Vẽ trên **Source Video** ⇒ áp cho **mọi frame**. Vẽ thẳng lên **một ô Preview** ⇒ mặc định chỉ ô đó; hàng `Vẽ trên Preview:` đổi mặc định và giữ **Shift** lúc bắt đầu kéo để đảo phạm vi.
    - Kéo ruột vòng tròn để dời, kéo vành để đổi bán kính, **Delete** để xoá vùng, **Esc** để thoát. Khi tool đang bật, pan khung Preview bằng chuột giữa hoặc chuột phải.

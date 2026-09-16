@@ -168,7 +168,10 @@ export function createRegionOverlay(options) {
   function render() {
     if (canvas.width < 1 || canvas.height < 1) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (mode === 'off' && getRegions().length === 0) return;
+    // The rings belong to the tool, not to the picture. With the tool off they
+    // are cleared away completely, so nothing of the editing UI is left lying on
+    // top of the sprite sheet the user is judging.
+    if (mode === 'off') return;
 
     const selectedId = getSelectedId();
     for (const region of getRegions()) {
