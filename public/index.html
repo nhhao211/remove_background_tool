@@ -40,6 +40,10 @@
         <i data-lucide="panel-top-open" style="width: 15px; height: 15px;"></i>
         <span>Reframe 16:9</span>
       </button>
+      <button id="tabSpriteTransform" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="spriteTransformWorkspace">
+        <i data-lucide="move" style="width: 15px; height: 15px;"></i>
+        <span>Sprite Transform</span>
+      </button>
     </nav>
     <div id="videoHeaderActions" class="header-actions">
       <button id="btnLoadDemo" class="sample-btn" title="Load sample video with audio">
@@ -379,6 +383,11 @@
             <span>Move to Clean Sprite Sheet</span>
           </button>
 
+          <button id="btnMoveToTransform" class="btn-secondary" type="button" disabled title="Chuyển sprite sheet sang Transform để scale & căn chỉnh toạ độ">
+            <i data-lucide="move" style="width: 15px; height: 15px; color: #eab308;"></i>
+            <span>Transform & Scale</span>
+          </button>
+
           <!-- Download Button with Dropdown -->
           <div class="download-dropdown">
             <button id="btnDownloadMain" class="btn-primary-green">
@@ -403,6 +412,10 @@
               <button class="dropdown-item" id="btnDropdownMoveToCleaner">
                 <i data-lucide="wand-sparkles" style="width: 15px; height: 15px; color: #a78bfa;"></i>
                 <span>Move to Clean Sprite Sheet</span>
+              </button>
+              <button class="dropdown-item" id="btnDropdownMoveToTransform">
+                <i data-lucide="move" style="width: 15px; height: 15px; color: #eab308;"></i>
+                <span>Move to Sprite Transform</span>
               </button>
             </div>
           </div>
@@ -1429,6 +1442,10 @@
             <span>Download</span>
           </button>
         </div>
+        <button id="btnCleanerSendToTransform" class="btn-secondary" type="button" disabled style="width: 100%; margin-top: 6px; display: flex; align-items: center; justify-content: center; gap: 6px;" title="Chuyển kết quả sang Sprite Transform để scale & căn toạ độ">
+          <i data-lucide="move" style="width: 15px; height: 15px; color: #eab308;"></i>
+          <span>Send to Sprite Transform</span>
+        </button>
       </div>
     </aside>
 
@@ -1617,6 +1634,322 @@
         </article>
       </div>
     </section>
+  </main>
+
+  <!-- Sprite Transform & Scaler Workspace -->
+  <main id="spriteTransformWorkspace" class="transform-workspace workspace-panel" role="tabpanel" aria-labelledby="tabSpriteTransform" hidden>
+    <!-- Dropzone khi chưa có ảnh -->
+    <div id="transformEmptyDropZone" class="transform-empty-dropzone">
+      <input id="transformImageInput" type="file" accept="image/png,image/webp,image/jpeg,.png,.webp,.jpg,.jpeg" hidden>
+      <div class="transform-drop-content">
+        <i data-lucide="upload-cloud" style="width: 52px; height: 52px; color: #eab308;"></i>
+        <h3 id="transformDropTitle">Kéo thả Sprite Sheet vào đây hoặc Chọn tệp</h3>
+        <p id="transformDropHint">Hỗ trợ PNG trong suốt, WebP. Dạng lưới chuẩn 4 cột × 6 hàng (24 frames).</p>
+        <div class="transform-drop-row">
+          <label>Cột (Cols): <input id="transformInitCols" class="form-input compact-number" type="number" min="1" max="100" value="4"></label>
+          <label>Hàng (Rows): <input id="transformInitRows" class="form-input compact-number" type="number" min="1" max="100" value="6"></label>
+          <button id="btnTransformBrowse" class="btn-primary-yellow" type="button">
+            <i data-lucide="folder-open" style="width: 15px; height: 15px;"></i>
+            <span>Chọn file Sprite Sheet</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Giao diện Editor 3 cột + Footer theo đúng thiết kế tham khảo -->
+    <div id="transformMainEditor" class="transform-main-editor" style="display: none;">
+      <!-- Cột trái: Frames filmstrip -->
+      <aside class="transform-left-panel">
+        <div class="transform-panel-header">
+          <span class="transform-panel-title">FRAMES</span>
+          <span id="transformFrameCounter" class="transform-frame-counter">1/24</span>
+        </div>
+        <div id="transformFramesList" class="transform-frames-list">
+          <!-- Render động danh sách frame dạng lưới 2 cột -->
+        </div>
+      </aside>
+
+      <!-- Cột giữa: Canvas Stage -->
+      <section class="transform-center-panel">
+        <!-- Top Mode / Toolbar -->
+        <div class="transform-top-toolbar">
+          <div class="transform-mode-group">
+            <button id="btnTransformModeFrame" class="transform-mode-btn" type="button" data-mode="frame">
+              <i data-lucide="image" style="width: 14px; height: 14px;"></i>
+              <span>Frame</span>
+            </button>
+            <button id="btnTransformModeAnimate" class="transform-mode-btn active" type="button" data-mode="animate">
+              <i data-lucide="film" style="width: 14px; height: 14px;"></i>
+              <span>Animate</span>
+            </button>
+            <button id="btnTransformModeSheet" class="transform-mode-btn" type="button" data-mode="sheet">
+              <i data-lucide="grid" style="width: 14px; height: 14px;"></i>
+              <span>Sheet</span>
+            </button>
+          </div>
+
+          <div class="transform-toolbar-divider"></div>
+
+          <div class="transform-toolbar-controls">
+            <button id="btnTransformPlay" class="transform-icon-btn" type="button" title="Play / Pause Animation">
+              <i data-lucide="play" id="iconTransformPlay" style="width: 15px; height: 15px;"></i>
+            </button>
+            <div class="transform-bg-selector">
+              <span class="transform-control-label">BACKGROUND</span>
+              <select id="transformBgSelect" class="form-input compact-select">
+                <option value="checker" selected>Checker</option>
+                <option value="black">Black</option>
+                <option value="white">White</option>
+                <option value="green">Green</option>
+              </select>
+            </div>
+            <button id="btnTransformToggleGrid" class="transform-tool-btn active" type="button">
+              <i data-lucide="grid" style="width: 14px; height: 14px;"></i>
+              <span>Grid</span>
+            </button>
+            <button id="btnTransformReplaceSheet" class="transform-tool-btn" type="button" title="Tải sprite sheet khác">
+              <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i>
+              <span>Đổi ảnh</span>
+            </button>
+            <div class="transform-grid-inputs-bar" title="Cấu hình lưới đọc Sprite Sheet (Mặc định 4 Cột × 6 Hàng)">
+              <label style="font-size: 0.72rem; color: #94a3b8; display: flex; align-items: center; gap: 4px;">
+                Cols <input id="transformEditCols" class="form-input compact-number" type="number" min="1" max="100" value="4" style="width: 44px; text-align: center;">
+              </label>
+              <span style="color: #475569; font-size: 0.72rem;">×</span>
+              <label style="font-size: 0.72rem; color: #94a3b8; display: flex; align-items: center; gap: 4px;">
+                Rows <input id="transformEditRows" class="form-input compact-number" type="number" min="1" max="100" value="6" style="width: 44px; text-align: center;">
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage Canvas Viewport -->
+        <div id="transformStage" class="transform-stage-viewport checkerboard-bg">
+          <!-- Clipping warning badge -->
+          <div id="transformClippedBadge" class="transform-clipped-badge" style="display: none;">
+            <i data-lucide="alert-triangle" style="width: 14px; height: 14px;"></i>
+            <span>Content is clipped</span>
+          </div>
+
+          <!-- Inner Stage with Pan/Zoom transforms -->
+          <div id="transformStageInner" class="transform-stage-inner">
+            <div id="transformCellBox" class="transform-cell-box">
+              <canvas id="transformCanvas" class="transform-canvas"></canvas>
+              <canvas id="transformOverlayCanvas" class="transform-overlay-canvas"></canvas>
+            </div>
+          </div>
+
+          <!-- Badge Drag to position -->
+          <div id="transformDragBadge" class="transform-drag-badge">
+            <i data-lucide="move" style="width: 14px; height: 14px;"></i>
+            <span>Drag to position</span>
+          </div>
+        </div>
+
+        <!-- Timeline / Scrub bar dưới canvas -->
+        <div class="transform-timeline-bar">
+          <button id="btnTransformPrevFrame" class="btn-ctrl" type="button" title="Previous frame">❮</button>
+          <span class="transform-timeline-label">
+            Frame <strong id="transformCurrentFrameLabel">1</strong> of <span id="transformTotalFramesLabel">24</span>
+          </span>
+          <button id="btnTransformNextFrame" class="btn-ctrl" type="button" title="Next frame">❯</button>
+          <div class="transform-fps-box">
+            <span>FPS</span>
+            <input id="transformFps" class="form-input compact-number" type="number" min="1" max="60" value="12">
+          </div>
+        </div>
+      </section>
+
+      <!-- Cột phải: Sidebar Controls -->
+      <aside id="transformSidebar" class="transform-sidebar">
+        <div class="transform-sidebar-header">
+          <div class="transform-sidebar-subtitle">APPLY TO ALL FRAMES</div>
+          <div class="transform-sidebar-title-row">
+            <h2>Transform</h2>
+            <button id="btnTransformResetAll" class="transform-reset-btn" type="button" title="Reset all transform values">
+              <i data-lucide="rotate-ccw" style="width: 15px; height: 15px;"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="transform-sidebar-scroll">
+          <!-- SCALE Section -->
+          <div class="transform-section">
+            <div class="transform-section-title">SCALE</div>
+            <!-- Presets -->
+            <div class="transform-preset-row">
+              <button class="transform-preset-btn" type="button" data-scale="0.5">50%</button>
+              <button class="transform-preset-btn" type="button" data-scale="0.75">75%</button>
+              <button class="transform-preset-btn" type="button" data-scale="1.0">100%</button>
+              <button class="transform-preset-btn" type="button" data-scale="1.25">125%</button>
+              <button class="transform-preset-btn" type="button" data-scale="1.5">150%</button>
+            </div>
+
+            <!-- Scale X Slider + Input -->
+            <div class="transform-control-row">
+              <label for="transformScaleX">Scale X</label>
+              <input id="transformScaleX" class="transform-range" type="range" min="10" max="400" value="100">
+              <div class="transform-input-unit">
+                <input id="transformScaleXInput" class="form-input compact-number" type="number" min="10" max="400" value="100">
+                <span>%</span>
+              </div>
+            </div>
+
+            <!-- Scale Y Slider + Input (hiện khi unlinked) -->
+            <div id="transformScaleYRow" class="transform-control-row" style="display: none;">
+              <label for="transformScaleY">Scale Y</label>
+              <input id="transformScaleY" class="transform-range" type="range" min="10" max="400" value="100">
+              <div class="transform-input-unit">
+                <input id="transformScaleYInput" class="form-input compact-number" type="number" min="10" max="400" value="100">
+                <span>%</span>
+              </div>
+            </div>
+
+            <!-- Link Proportions Button -->
+            <button id="btnTransformLinkProportions" class="transform-link-btn active" type="button">
+              <i data-lucide="link" id="iconTransformLink" style="width: 14px; height: 14px;"></i>
+              <span id="lblTransformLink">Proportions linked</span>
+            </button>
+
+            <!-- Match Frame 1 Height Checkbox -->
+            <div class="transform-checkbox-block">
+              <label class="checkbox-row">
+                <input id="transformMatchHeight" type="checkbox">
+                <div class="checkbox-label-text">
+                  <strong>Match Frame 1 height</strong>
+                  <span>Scale each character proportionally to Frame 1</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- POSITION Section -->
+          <div class="transform-section">
+            <div class="transform-section-title">POSITION</div>
+            <div class="transform-offset-grid">
+              <div class="transform-offset-field">
+                <label for="transformOffsetX">X offset</label>
+                <div class="transform-input-unit">
+                  <input id="transformOffsetX" class="form-input compact-number" type="number" value="0">
+                  <span>px</span>
+                </div>
+              </div>
+              <div class="transform-offset-field">
+                <label for="transformOffsetY">Y offset</label>
+                <div class="transform-input-unit">
+                  <input id="transformOffsetY" class="form-input compact-number" type="number" value="0">
+                  <span>px</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- D-pad & 3x3 Anchor Grid Side by Side -->
+            <div class="transform-pos-tools-row">
+              <!-- D-pad 4 directions -->
+              <div class="transform-dpad">
+                <button id="btnDpadUp" class="dpad-btn dpad-up" type="button" title="Move Up">↑</button>
+                <div class="dpad-middle-row">
+                  <button id="btnDpadLeft" class="dpad-btn dpad-left" type="button" title="Move Left">←</button>
+                  <button id="btnDpadCenter" class="dpad-btn dpad-center" type="button" title="Reset Offset">✥</button>
+                  <button id="btnDpadRight" class="dpad-btn dpad-right" type="button" title="Move Right">→</button>
+                </div>
+                <button id="btnDpadDown" class="dpad-btn dpad-down" type="button" title="Move Down">↓</button>
+              </div>
+
+              <!-- 3x3 Anchor Grid -->
+              <div class="transform-anchor-grid" title="3×3 Anchor Alignment Points">
+                <button class="anchor-btn" type="button" data-anchor="top-left" title="Top-Left">●</button>
+                <button class="anchor-btn" type="button" data-anchor="top-center" title="Top-Center">●</button>
+                <button class="anchor-btn" type="button" data-anchor="top-right" title="Top-Right">●</button>
+                <button class="anchor-btn" type="button" data-anchor="center-left" title="Center-Left">●</button>
+                <button class="anchor-btn active" type="button" data-anchor="center" title="Center">●</button>
+                <button class="anchor-btn" type="button" data-anchor="center-right" title="Center-Right">●</button>
+                <button class="anchor-btn" type="button" data-anchor="bottom-left" title="Bottom-Left">●</button>
+                <button class="anchor-btn" type="button" data-anchor="bottom-center" title="Bottom-Center">●</button>
+                <button class="anchor-btn" type="button" data-anchor="bottom-right" title="Bottom-Right">●</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- CIRCLE CROP Section -->
+          <div class="transform-section">
+            <div class="transform-section-title">CIRCLE CROP</div>
+            <div class="transform-checkbox-block">
+              <label class="checkbox-row">
+                <input id="transformCircleCropEnable" type="checkbox">
+                <div class="checkbox-label-text">
+                  <strong>Crop from frame center</strong>
+                  <span>Outside becomes transparent</span>
+                </div>
+              </label>
+            </div>
+
+            <div id="transformCropControls" class="transform-sub-controls" style="display: none;">
+              <div class="transform-control-row">
+                <label for="transformCropDiameter">Diameter</label>
+                <input id="transformCropDiameter" class="transform-range" type="range" min="10" max="4096" value="1280">
+                <div class="transform-input-unit">
+                  <input id="transformCropDiameterInput" class="form-input compact-number" type="number" min="10" max="4096" value="1280">
+                  <span>px</span>
+                </div>
+              </div>
+
+              <!-- Crop Diameter Presets -->
+              <div class="transform-preset-row">
+                <button class="transform-crop-preset" type="button" data-percent="0.25">25%</button>
+                <button class="transform-crop-preset" type="button" data-percent="0.5">50%</button>
+                <button class="transform-crop-preset" type="button" data-percent="0.75">75%</button>
+                <button class="transform-crop-preset active" type="button" data-percent="1.0">100%</button>
+              </div>
+
+              <div class="transform-control-row" style="margin-top: 8px;">
+                <label for="transformCropFade">Fade starts</label>
+                <input id="transformCropFade" class="transform-range" type="range" min="0" max="100" value="100">
+                <div class="transform-input-unit">
+                  <input id="transformCropFadeInput" class="form-input compact-number" type="number" min="0" max="100" value="100">
+                  <span>%</span>
+                </div>
+              </div>
+              <span class="transform-subtext">Hard edge · lower the value to add a feathered fade</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Bottom Footer Bar -->
+    <footer id="transformFooterBar" class="transform-footer-bar" style="display: none;">
+      <div class="transform-footer-left">
+        <span class="transform-footer-label">OUTPUT FRAME</span>
+        <span class="transform-dim-label">W</span>
+        <input id="transformCellWidth" class="form-input compact-number" type="number" min="16" max="4096" value="1280">
+        <span>px</span>
+        <span class="transform-dim-cross">×</span>
+        <span class="transform-dim-label">H</span>
+        <input id="transformCellHeight" class="form-input compact-number" type="number" min="16" max="4096" value="1620">
+        <span>px</span>
+        <button id="btnTransformUseSourceCellSize" class="transform-secondary-btn" type="button">Use source cell size</button>
+        <label class="checkbox-row compact-checkbox">
+          <input id="transformSmooth" type="checkbox" checked>
+          <span>Smooth</span>
+        </label>
+      </div>
+
+      <div class="transform-footer-center">
+        <span id="transformStatusNotice" class="transform-status-notice"></span>
+      </div>
+
+      <div class="transform-footer-right">
+        <select id="transformOutputFormat" class="form-input compact-select">
+          <option value="webp" selected>WebP</option>
+          <option value="png">PNG</option>
+        </select>
+        <button id="btnTransformDownload" class="btn-primary-yellow" type="button">
+          <i data-lucide="download" style="width: 16px; height: 16px;"></i>
+          <span id="lblTransformDownload">Download WebP</span>
+        </button>
+      </div>
+    </footer>
   </main>
 
   <!-- Auto Loop Seeker & Seam Inspector Modal -->
@@ -1816,6 +2149,7 @@
   <script type="module" src="js/app.js"></script>
   <script type="module" src="js/sprite-remover.js"></script>
   <script type="module" src="js/sprite-reframe.js"></script>
+  <script type="module" src="js/sprite-transform.js"></script>
   <script>
     lucide.createIcons();
   </script>

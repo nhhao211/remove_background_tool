@@ -151,6 +151,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnMoveToCleaner = document.getElementById('btnMoveToCleaner');
   const btnPreviewMoveToCleaner = document.getElementById('btnPreviewMoveToCleaner');
   const btnDropdownMoveToCleaner = document.getElementById('btnDropdownMoveToCleaner');
+  const btnMoveToTransform = document.getElementById('btnMoveToTransform');
+  const btnDropdownMoveToTransform = document.getElementById('btnDropdownMoveToTransform');
   const lblDownloadBtn = document.getElementById('lblDownloadBtn');
   const lblSpriteOnly = document.getElementById('lblSpriteOnly');
 
@@ -6463,7 +6465,7 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadBundle();
   });
 
-  // 4. Move to Clean Sprite Sheet
+  // 4. Move to Clean Sprite Sheet & Sprite Transform
   btnMoveToCleaner?.addEventListener('click', moveToSpriteCleaner);
   btnPreviewMoveToCleaner?.addEventListener('click', moveToSpriteCleaner);
   btnDropdownMoveToCleaner?.addEventListener('click', () => {
@@ -6471,10 +6473,31 @@ document.addEventListener('DOMContentLoaded', () => {
     moveToSpriteCleaner();
   });
 
+  btnMoveToTransform?.addEventListener('click', moveToSpriteTransform);
+  btnDropdownMoveToTransform?.addEventListener('click', () => {
+    downloadDropdownMenu?.classList.remove('show');
+    moveToSpriteTransform();
+  });
+
   function updateMoveToCleanerButtons() {
     const hasSheet = Boolean(state.fullSheetCanvas);
     if (btnMoveToCleaner) btnMoveToCleaner.disabled = !hasSheet;
     if (btnPreviewMoveToCleaner) btnPreviewMoveToCleaner.disabled = !hasSheet;
+    if (btnMoveToTransform) btnMoveToTransform.disabled = !hasSheet;
+  }
+
+  function moveToSpriteTransform() {
+    if (!state.fullSheetCanvas) {
+      showToast('Please generate the sprite sheet first', 'error');
+      return;
+    }
+    const baseName = (inputDownloadName.value.trim() || 'spritesheet').replace(/[^a-zA-Z0-9_-]/g, '_');
+    window.openInSpriteTransform?.({
+      canvas: state.fullSheetCanvas,
+      rows: Number(inputRows.value) || 4,
+      cols: Number(inputCols.value) || 6,
+      fileName: baseName,
+    });
   }
 
   function moveToSpriteCleaner() {

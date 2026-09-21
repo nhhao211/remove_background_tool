@@ -14,9 +14,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabVideo = byId('tabVideoWorkspace');
   const tabCleaner = byId('tabSpriteCleaner');
   const tabReframe = byId('tabSpriteReframe');
+  const tabTransform = byId('tabSpriteTransform');
   const videoWorkspace = byId('videoWorkspace');
   const cleanerWorkspace = byId('spriteCleanerWorkspace');
   const reframeWorkspace = byId('spriteReframeWorkspace');
+  const transformWorkspace = byId('spriteTransformWorkspace');
   const videoHeaderActions = byId('videoHeaderActions');
   const fullPageDropOverlay = byId('fullPageDropOverlay');
   const fullPageDropTitle = byId('fullPageDropTitle');
@@ -64,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const downloadName = byId('spriteDownloadName');
   const outputFormat = byId('spriteOutputFormat');
   const btnDownload = byId('btnSpriteDownload');
+  const btnSendToTransform = byId('btnCleanerSendToTransform');
   const progress = byId('spriteProcessProgress');
   const btnZoomOut = byId('btnCleanerZoomOut');
   const btnZoomIn = byId('btnCleanerZoomIn');
@@ -159,24 +162,32 @@ document.addEventListener('DOMContentLoaded', () => {
   function setWorkspace(name, { focus = false } = {}) {
     const cleanerActive = name === 'sprite-cleaner';
     const reframeActive = name === 'sprite-reframe';
-    const activeName = cleanerActive ? 'sprite-cleaner' : reframeActive ? 'sprite-reframe' : 'video';
+    const transformActive = name === 'sprite-transform';
+    const activeName = cleanerActive ? 'sprite-cleaner' : reframeActive ? 'sprite-reframe' : transformActive ? 'sprite-transform' : 'video';
     document.body.dataset.activeWorkspace = activeName;
     videoWorkspace.hidden = activeName !== 'video';
     cleanerWorkspace.hidden = !cleanerActive;
     reframeWorkspace.hidden = !reframeActive;
+    if (transformWorkspace) transformWorkspace.hidden = !transformActive;
     videoHeaderActions.hidden = activeName !== 'video';
     tabVideo.classList.toggle('active', activeName === 'video');
     tabCleaner.classList.toggle('active', cleanerActive);
     tabReframe.classList.toggle('active', reframeActive);
+    if (tabTransform) tabTransform.classList.toggle('active', transformActive);
     tabVideo.setAttribute('aria-selected', String(activeName === 'video'));
     tabCleaner.setAttribute('aria-selected', String(cleanerActive));
     tabReframe.setAttribute('aria-selected', String(reframeActive));
+    if (tabTransform) tabTransform.setAttribute('aria-selected', String(transformActive));
     tabVideo.tabIndex = activeName === 'video' ? 0 : -1;
     tabCleaner.tabIndex = cleanerActive ? 0 : -1;
     tabReframe.tabIndex = reframeActive ? 0 : -1;
+    if (tabTransform) tabTransform.tabIndex = transformActive ? 0 : -1;
     if (activeName === 'video') {
       fullPageDropTitle.textContent = 'Thả file Video vào đây';
       fullPageDropHint.textContent = 'Hỗ trợ các định dạng .mp4, .webm, .mov, .avi, .mkv';
+    } else if (activeName === 'sprite-transform') {
+      fullPageDropTitle.textContent = 'Thả Sprite Sheet vào đây để Transform & Scale';
+      fullPageDropHint.textContent = 'Hỗ trợ ảnh tĩnh .png, .webp';
     } else {
       fullPageDropTitle.textContent = reframeActive ? 'Thả Sprite Sheet 4×6 vào đây' : 'Thả Sprite Sheet vào đây';
       fullPageDropHint.textContent = 'Hỗ trợ ảnh tĩnh .png, .webp, .jpg, .jpeg';
@@ -188,15 +199,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (cleanerActive && state.original) requestAnimationFrame(fitToView);
     window.dispatchEvent(new CustomEvent('workspacechange', { detail: { workspace: activeName } }));
     if (focus) {
-      const tabs = { video: tabVideo, 'sprite-cleaner': tabCleaner, 'sprite-reframe': tabReframe };
-      tabs[activeName].focus();
+      const tabs = { video: tabVideo, 'sprite-cleaner': tabCleaner, 'sprite-reframe': tabReframe, 'sprite-transform': tabTransform };
+      tabs[activeName]?.focus();
     }
   }
+
+  window.switchStudioWorkspace = setWorkspace;
 
   tabVideo.addEventListener('click', () => setWorkspace('video'));
   tabCleaner.addEventListener('click', () => setWorkspace('sprite-cleaner'));
   tabReframe.addEventListener('click', () => setWorkspace('sprite-reframe'));
-  [tabVideo, tabCleaner, tabReframe].forEach((tab, index, tabs) => {
+  if (tabTransform) tabTransform.addEventListener('click', () => setWorkspace('sprite-transform'));
+  const allWorkspaceTabs = [tabVideo, tabCleaner, tabReframe, tabTransform].filter(Boolean);
+  allWorkspaceTabs.forEach((tab, index, tabs) => {
     tab.addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
@@ -204,7 +219,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (event.key === 'Home') nextIndex = 0;
       else if (event.key === 'End') nextIndex = tabs.length - 1;
       else nextIndex = (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-      const nextName = tabs[nextIndex] === tabCleaner ? 'sprite-cleaner' : tabs[nextIndex] === tabReframe ? 'sprite-reframe' : 'video';
+      const targetTab = tabs[nextIndex];
+      const nextName = targetTab === tabCleaner ? 'sprite-cleaner' : targetTab === tabReframe ? 'sprite-reframe' : targetTab === tabTransform ? 'sprite-transform' : 'video';
       setWorkspace(nextName, { focus: true });
     });
   });
@@ -443,7 +459,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function setControlsEnabled(enabled) {
-    [btnAuto, btnApply, btnReset, btnPick, btnPickLower, btnRegionPick, adjustSplit, btnAddColor, btnDownload, btnZoomOut, btnZoomIn, btnZoomFit, btnPreviewMode, previewFps]
+    [btnAuto, btnApply, btnReset, btnPick, btnPickLower, btnRegionPick, adjustSplit, btnAddColor, btnDownload, btnSendToTransform, btnZoomOut, btnZoomIn, btnZoomFit, btnPreviewMode, previewFps]
+      .filter(Boolean)
       .forEach((button) => { button.disabled = !enabled; });
     btnPreviewPlay.disabled = !enabled || state.previewMode !== 'anim' || !perCell.checked;
   }
@@ -1367,6 +1384,20 @@ document.addEventListener('DOMContentLoaded', () => {
   btnAddColor.addEventListener('click', () => addManualColor(colorFromHex(manualColor.value)));
   btnClearColors.addEventListener('click', resetResult);
   btnDownload.addEventListener('click', downloadResult);
+  if (btnSendToTransform) {
+    btnSendToTransform.addEventListener('click', () => {
+      const targetCanvas = state.resultCanvas || state.original;
+      if (!targetCanvas) return;
+      const r = Math.max(1, parseInt(rows.value, 10) || 4);
+      const c = Math.max(1, parseInt(cols.value, 10) || 6);
+      window.openInSpriteTransform?.({
+        canvas: targetCanvas,
+        rows: r,
+        cols: c,
+        fileName: state.fileName ? state.fileName.replace(/\.[^/.]+$/, '') : 'clean_sprite',
+      });
+    });
+  }
   perCell.addEventListener('change', () => {
     rows.disabled = !perCell.checked;
     cols.disabled = !perCell.checked;
