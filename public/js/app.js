@@ -9,6 +9,19 @@ import { applyEraseMask } from './erase-mask.js';
 import { eraseStrokePlan, strokesForFrame, isGlobalStroke, resolveStrokeFrame } from './erase-frames.js';
 import { applyRegionKeys, normalizeRegion, normalizeRegions, regionIsActive } from './region-key.js';
 import { createRegionOverlay } from './region-overlay.js';
+import {
+  PANEL_GROUPS,
+  PANEL_DEFS,
+  PANEL_STORAGE_KEY,
+  parseVisibility,
+  serializeVisibility,
+  countHidden,
+  isPanelVisible,
+  setPanelVisible,
+  setGroupVisible,
+  allVisible,
+  minimalVisibility
+} from './panel-visibility.js';
 import { mapPreviewPointToSource, cellBrushScale, normalizeSheetLayout, cellSourceOrigin } from './preview-erase-map.js';
 import { applyColorReplacement } from './color-replace.js';
 import { applyAlphaBleed } from './alpha-bleed.js';
@@ -332,6 +345,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Auto Loop Seeker & Seam Inspector Modal DOM Elements
   const modalLoopFinder = document.getElementById('modalLoopFinder');
+  const modalPanelSettings = document.getElementById('modalPanelSettings');
+  const btnOpenPanelSettings = document.getElementById('btnOpenPanelSettings');
+  const btnClosePanelSettings = document.getElementById('btnClosePanelSettings');
+  const panelSettingsList = document.getElementById('panelSettingsList');
+  const panelSettingsSearch = document.getElementById('panelSettingsSearch');
+  const panelSettingsCount = document.getElementById('panelSettingsCount');
+  const panelSettingsBadge = document.getElementById('panelSettingsBadge');
+  const btnPanelSettingsShowAll = document.getElementById('btnPanelSettingsShowAll');
+  const btnPanelSettingsMinimal = document.getElementById('btnPanelSettingsMinimal');
   const btnCloseLoopModal = document.getElementById('btnCloseLoopModal');
   const selectLoopScope = document.getElementById('selectLoopScope');
   const selectLoopSpeed = document.getElementById('selectLoopSpeed');
@@ -890,6 +912,199 @@ document.addEventListener('DOMContentLoaded', () => {
     storageKey: STORAGE_KEY_LOOP_COLLAPSE,
     defaultExpanded: true
   });
+
+
+  // === PANEL VISIBILITY (Video → Sprite) ===
+  // Users who never touch Subject Color Replace should not have to scroll past
+  // it. This hides the panel's DOM and nothing else: the values it holds stay in
+  // state and keep feeding the pipeline exactly as before, so a hidden panel
+  // never changes a single exported pixel. The one thing hiding does do is turn
+  // off a tool the panel had armed — an invisible active Erase Brush that still
+  // paints on click would be a trap.
+  let panelVisibility = allVisible();
+
+  function loadPanelVisibility() {
+    try {
+      return parseVisibility(localStorage.getItem(PANEL_STORAGE_KEY));
+    } catch (_) {
+      return allVisible();
+    }
+  }
+
+  function savePanelVisibility() {
+    try {
+      localStorage.setItem(PANEL_STORAGE_KEY, serializeVisibility(panelVisibility));
+    } catch (_) { /* storage is optional */ }
+  }
+
+  const PANEL_DEACTIVATORS = {
+    watermark: () => { if (state.isWatermarkSelectActive) deactivateWatermarkSelect(); },
+    protectionBrush: () => { if (state.protectionTool) deactivateProtectionBrush(); },
+    eraseBrush: () => { if (state.eraseTool) deactivateEraseBrush(); },
+    colorTools: () => {
+      if (state.isEyedropperActive) deactivateEyedropper();
+      if (state.regionMode && state.regionMode !== 'off') deactivateRegionTool();
+    }
+  };
+
+  function applyPanelVisibility({ deactivate = false } = {}) {
+    for (const panel of PANEL_DEFS) {
+      const visible = isPanelVisible(panelVisibility, panel.id);
+      for (const elementId of panel.elements) {
+        document.getElementById(elementId)?.classList.toggle('panel-hidden', !visible);
+      }
+      if (!visible && deactivate && panel.deactivate) {
+        PANEL_DEACTIVATORS[panel.deactivate]?.();
+      }
+    }
+    updatePanelVisibilityBadge();
+  }
+
+  function updatePanelVisibilityBadge() {
+    const hidden = countHidden(panelVisibility);
+    if (panelSettingsBadge) {
+      panelSettingsBadge.hidden = hidden === 0;
+      panelSettingsBadge.textContent = String(hidden);
+    }
+    if (btnOpenPanelSettings) {
+      btnOpenPanelSettings.title = hidden === 0
+        ? 'Settings — bật / tắt các khung chức năng hiển thị trên màn hình này'
+        : `Settings — đang ẩn ${hidden} khung chức năng, bấm để chỉnh`;
+    }
+    if (panelSettingsCount) {
+      panelSettingsCount.textContent = hidden === 0
+        ? 'Đang hiện tất cả'
+        : `Đang ẩn ${hidden}/${PANEL_DEFS.length}`;
+    }
+  }
+
+  function renderPanelSettingsList() {
+    if (!panelSettingsList) return;
+    const query = (panelSettingsSearch?.value || '').trim().toLowerCase();
+    const matches = (panel) => !query
+      || panel.label.toLowerCase().includes(query)
+      || (panel.hint || '').toLowerCase().includes(query);
+
+    panelSettingsList.innerHTML = '';
+    let shown = 0;
+
+    for (const group of PANEL_GROUPS) {
+      const panels = group.panels.filter(matches);
+      if (panels.length === 0) continue;
+      shown += panels.length;
+
+      const groupEl = document.createElement('div');
+      groupEl.className = 'panel-settings-group';
+
+      const head = document.createElement('div');
+      head.className = 'panel-settings-group-head';
+      const name = document.createElement('div');
+      name.className = 'panel-settings-group-name';
+      name.innerHTML = `<span></span><span class="hint"></span>`;
+      name.firstChild.textContent = group.label;
+      name.lastChild.textContent = group.hint;
+      head.appendChild(name);
+
+      const actions = document.createElement('div');
+      actions.className = 'panel-settings-group-actions';
+      for (const [label, visible] of [['Hiện hết', true], ['Ẩn hết', false]]) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'time-btn';
+        btn.textContent = label;
+        btn.addEventListener('click', () => {
+          panelVisibility = setGroupVisible(panelVisibility, group.key, visible);
+          commitPanelVisibility();
+        });
+        actions.appendChild(btn);
+      }
+      head.appendChild(actions);
+      groupEl.appendChild(head);
+
+      const items = document.createElement('div');
+      items.className = 'panel-settings-items';
+      for (const panel of panels) {
+        const visible = isPanelVisible(panelVisibility, panel.id);
+        const item = document.createElement('label');
+        item.className = 'panel-settings-item' + (visible ? '' : ' is-off');
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = visible;
+        box.addEventListener('change', () => {
+          panelVisibility = setPanelVisible(panelVisibility, panel.id, box.checked);
+          // Re-rendering the whole list here would yank the checkbox out from
+          // under the pointer, so this one row updates itself in place.
+          item.classList.toggle('is-off', !box.checked);
+          commitPanelVisibility({ rerender: false });
+        });
+
+        const text = document.createElement('div');
+        text.className = 'panel-settings-item-text';
+        const labelEl = document.createElement('span');
+        labelEl.className = 'panel-settings-item-label';
+        labelEl.textContent = panel.label;
+        const hintEl = document.createElement('span');
+        hintEl.className = 'panel-settings-item-hint';
+        hintEl.textContent = panel.hint || '';
+        text.appendChild(labelEl);
+        text.appendChild(hintEl);
+
+        item.appendChild(box);
+        item.appendChild(text);
+        items.appendChild(item);
+      }
+      groupEl.appendChild(items);
+      panelSettingsList.appendChild(groupEl);
+    }
+
+    if (shown === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'panel-settings-empty';
+      empty.textContent = 'Không có khung nào khớp từ khóa.';
+      panelSettingsList.appendChild(empty);
+    }
+  }
+
+  function commitPanelVisibility({ rerender = true } = {}) {
+    savePanelVisibility();
+    applyPanelVisibility({ deactivate: true });
+    if (rerender) renderPanelSettingsList();
+  }
+
+  function openPanelSettings() {
+    if (!modalPanelSettings) return;
+    renderPanelSettingsList();
+    modalPanelSettings.style.display = 'flex';
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      lucide.createIcons({ root: modalPanelSettings });
+    }
+    panelSettingsSearch?.focus();
+  }
+
+  function closePanelSettings() {
+    if (modalPanelSettings) modalPanelSettings.style.display = 'none';
+  }
+
+  btnOpenPanelSettings?.addEventListener('click', openPanelSettings);
+  btnClosePanelSettings?.addEventListener('click', closePanelSettings);
+  modalPanelSettings?.addEventListener('click', (e) => {
+    if (e.target === modalPanelSettings) closePanelSettings();
+  });
+  panelSettingsSearch?.addEventListener('input', renderPanelSettingsList);
+  btnPanelSettingsShowAll?.addEventListener('click', () => {
+    panelVisibility = allVisible();
+    commitPanelVisibility();
+    showToast('Đã hiện lại tất cả khung chức năng', 'success');
+  });
+  btnPanelSettingsMinimal?.addEventListener('click', () => {
+    panelVisibility = minimalVisibility();
+    commitPanelVisibility();
+    showToast('Đã thu gọn về các khung cốt lõi', 'info');
+  });
+
+  panelVisibility = loadPanelVisibility();
+  applyPanelVisibility();
 
   // === SLIDER & NUMBER INPUT TWO-WAY SYNC ===
   function syncSliderAndNumber(sliderEl, numberEl, { decimals = 2, onChange } = {}) {
@@ -4895,7 +5110,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modalLoopFinder && modalLoopFinder.style.display !== 'none') {
+    if (e.key === 'Escape' && modalPanelSettings && modalPanelSettings.style.display !== 'none') {
+      closePanelSettings();
+    } else if (e.key === 'Escape' && modalLoopFinder && modalLoopFinder.style.display !== 'none') {
       closeLoopModal();
     } else if (e.key === 'Escape' && state.isEyedropperActive) {
       deactivateEyedropper();

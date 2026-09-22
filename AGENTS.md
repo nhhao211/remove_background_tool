@@ -33,6 +33,7 @@
   - `public/js/edge-refine.js`: Edge Refine — pass sau keyer, ước lượng lại alpha và màu của dải viền từ ảnh gốc (unmix F/B, fallback color-difference, làm mịn, khử màu nền). Nằm **ngoài** `keyer/` giống `erase-mask.js` để không đụng baseline/whitelist. Thuần tuý, test bằng `test/edge-refine.test.mjs`.
   - `public/js/sidebar-sections.js`: gấp/mở các `.cleaner-control-section` ở sidebar của Clean Sprite Sheet và Sprite Reframer. Markup chỉ cần tiêu đề `.cleaner-section-title`; phần thân được bọc vào `.cleaner-section-body` ngay lúc init nên thêm section mới không phải thêm div. Mặc định gấp đặt bằng `data-collapsed="true"`, khoá nhớ trạng thái lấy từ `data-section-key`, lưu ở `localStorage`. Khác với `.collapsible-section` trong `app.js`: bên đó mỗi section có markup và id riêng, bên này các section đồng dạng nên xử lý bằng một vòng lặp.
   - `public/js/sprite-transform-math.js`: lõi toán học thuần túy của tab Sprite Transform (tính bounding box, anchor pivot 3x3, scale X/Y, offset X/Y, match Frame 1 height, phát hiện clipping và circle crop params). Thuần túy, không dùng DOM, test bằng `test/sprite-transform-math.test.mjs`.
+  - `public/js/panel-visibility.js`: registry của các khung chức năng bật/tắt được ở tab Video → Sprite (id panel → danh sách id phần tử DOM), cộng phần đọc/ghi/chuẩn hoá trạng thái. Thuần tuý, không dùng DOM; phần wiring (dialog, hook tắt công cụ) nằm ở `app.js`. Test bằng `test/panel-visibility.test.mjs` — test này đọc `public/index.html` để chứng minh mọi id trong registry thật sự tồn tại trong markup.
   - `public/js/sprite-transform.js`: controller UI của tab Sprite Transform (lưới 4 cột 6 hàng, stage canvas tương tác kéo thả toạ độ trực tiếp, preview animation, 3 view modes, circle crop, export PNG/WebP).
   - `public/css/style.css`: giao diện và trạng thái tương tác.
   - `public/samples/sample_blue_flower.mp4`: video demo được tự động load khi mở app.
@@ -214,6 +215,19 @@ Giải quyết đúng một chuyện mà pick màu toàn ảnh không làm đư�
 - Khi tạo bundle lỗi, frontend fallback sang download sprite sheet và audio riêng.
 - Menu download tự đóng khi click bên ngoài.
 
+### 9b. Dialog `Settings` (bật/tắt panel của tab Video → Sprite)
+
+Màn hình Video → Sprite có hơn 20 khung điều khiển; phần lớn người dùng chỉ đụng vài cái. Nút `Settings` ở header mở một dialog cho tắt bớt những khung không dùng.
+
+- **Chỉ là chuyện hiển thị.** Khung bị ẩn vẫn giữ nguyên giá trị trong state và vẫn được pipeline đọc như cũ: ẩn `Subject Color Replace` **không** tắt việc thay màu, ẩn `Erase Brush` **không** xoá các nét đã bôi. Output không đổi một byte nào. Muốn tắt tác dụng thì vẫn phải đặt giá trị về mặc định như trước giờ.
+- **Ẩn thì tắt công cụ.** Trường `deactivate` của panel trỏ tới một hook trong `PANEL_DEACTIVATORS` ở `app.js` (`watermark`, `protectionBrush`, `eraseBrush`, `colorTools`). Một Bút Xóa đang bật mà panel của nó biến mất là cái bẫy: người dùng click lên video và mất pixel, không hiểu vì sao. Hook chỉ chạy khi người dùng tự tắt panel, **không** chạy ở lần áp dụng lúc load.
+- Registry nằm ở `panel-visibility.js`, chia hai nhóm theo đúng hai panel trên màn hình: `sprite` (cột sidebar trái) và `chroma` (panel chroma key phía dưới). Một panel ánh xạ tới **nhiều** phần tử DOM (`elements`) — ví dụ `crop` gom 4 ô crop — nên không phải bọc thêm div và không đụng vào layout grid.
+- Ẩn bằng class `.panel-hidden` (`display: none !important`, cần `!important` để thắng `style="display: ..."` inline mà vài group đang mang).
+- **Lưu danh sách id bị ẩn**, không lưu map đầy đủ (`localStorage`, khoá `video-editor:panels:hidden`). Nhờ vậy một panel thêm về sau mặc định **hiện** với người đã lưu layout — mặc định duy nhất hợp lý cho một control họ chưa từng thấy. `parseVisibility()` nuốt mọi thứ localStorage có thể trả về (null, JSON hỏng, map kiểu cũ, id không còn tồn tại) và suy biến thành "hiện tất cả" thay vì throw.
+- Hai preset: `Hiện tất cả` và `Gọn tối đa` (`MINIMAL_PANEL_IDS` — chỉ giữ Frames, lưới, crop, resolution, chroma key, Similarity). Mỗi nhóm còn có `Hiện hết` / `Ẩn hết` riêng, và có ô tìm kiếm lọc theo tên/mô tả.
+- Badge tím trên nút header đếm số khung đang ẩn, để không ai ngồi tìm một panel mình đã tự ẩn tháng trước.
+- Thêm một panel mới: thêm `id` vào markup, thêm một entry vào `PANEL_GROUPS`. Test tự chặn id gõ sai hoặc một phần tử bị hai panel cùng nhận.
+
 ### 10. Clean Sprite Sheet
 
 Tab riêng làm sạch sprite sheet tĩnh (PNG/WebP/JPEG), toàn bộ ở `public/js/sprite-remover.js`. Pipeline:
@@ -287,5 +301,7 @@ Trả JSON `{ status: "ok", uptime }`.
 - `applyRegionKeys()` không bao giờ tăng alpha và không đọc/ghi ngoài bounding box của vùng.
 - `frame`/`frameTime` của vùng (và của nét Bút Xóa) thiếu thì phải là `null`, không phải `0` — `Number(null) === 0` sẽ biến mọi binding global thành frame 0. Xem ghi chú ở `stroke-mask.js` và `erase-frames.js`.
 - Clean Sprite Sheet: giữ Edge Refine ngoài `public/js/keyer/`; tắt Edge Refine phải cho output byte-identical với keyer; refine không được tăng alpha hay đổi pixel lõi. Key `edge` không được tham gia BFS chính và không tạo seed point. Không đổi `test/keyer/baseline/`.
+- Dialog `Settings` chỉ được ẩn DOM, không được gate pipeline: ẩn một panel phải cho output **giống hệt từng byte**. Panel nào bật được công cụ thì phải khai `deactivate` để công cụ bị tắt khi panel bị ẩn.
+- Thêm panel mới vào registry thì thêm `id` vào `public/index.html` trước — `test/panel-visibility.test.mjs` đọc markup và fail nếu id không tồn tại.
 - Không coi `Split`, `Duplicate`, `Delete` là hệ thống timeline nhiều clip: hiện chúng chỉ thao tác trên `trimStart`/`trimEnd` và state backup.
 - Sau thay đổi lớn, chạy kiểm tra cú pháp, khởi động server, kiểm tra `/api/health`, rồi thử flow demo: load video → trim → generate → preview → download.

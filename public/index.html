@@ -54,6 +54,11 @@
         <i data-lucide="grid" style="width: 16px; height: 16px;"></i>
         <span>Grid / Dark BG</span>
       </button>
+      <button id="btnOpenPanelSettings" class="sample-btn" type="button" title="Settings — bật / tắt các khung chức năng hiển thị trên màn hình này">
+        <i data-lucide="sliders-horizontal" style="width: 16px; height: 16px;"></i>
+        <span>Settings</span>
+        <span id="panelSettingsBadge" class="panel-settings-badge" hidden>0</span>
+      </button>
     </div>
   </header>
 
@@ -457,14 +462,14 @@
       <!-- Settings Sidebar Body -->
       <div id="settingsBody" class="settings-body">
         <div class="settings-grid settings-sidebar-grid">
-            <div class="form-group">
+            <div class="form-group" id="panelFrames">
               <label class="form-label" for="inputFrames">
                 <span>Frames</span>
               </label>
               <input type="number" id="inputFrames" class="form-input compact-number" min="1" max="500" value="24">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelKeepSourceSize">
               <label class="form-label">Original resolution</label>
               <label class="checkbox-row">
                 <input type="checkbox" id="chkKeepSourceSize" checked>
@@ -472,21 +477,21 @@
               </label>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelRows">
               <label class="form-label" for="inputRows">
                 <span>Rows</span>
               </label>
               <input type="number" id="inputRows" class="form-input compact-number" min="1" max="100" value="6">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelCols">
               <label class="form-label" for="inputCols">
                 <span>Cols</span>
               </label>
               <input type="number" id="inputCols" class="form-input compact-number" min="1" max="100" value="4">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelCellNative">
               <label class="form-label" for="inputCellNative">
                 <span>Cell (native)</span>
                 <span id="cellSizeHint" class="hint">1920×1080</span>
@@ -494,27 +499,27 @@
               <input type="number" id="inputCellNative" class="form-input compact-number" min="16" max="4096" value="512">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelCropTop">
               <label class="form-label" for="inputCropTop">Crop top (px)</label>
               <input type="number" id="inputCropTop" class="form-input compact-number" min="0" value="0">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelCropBottom">
               <label class="form-label" for="inputCropBottom">Crop bottom (px)</label>
               <input type="number" id="inputCropBottom" class="form-input compact-number" min="0" value="0">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelCropLeft">
               <label class="form-label" for="inputCropLeft">Crop left (px)</label>
               <input type="number" id="inputCropLeft" class="form-input compact-number" min="0" value="0">
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelCropRight">
               <label class="form-label" for="inputCropRight">Crop right (px)</label>
               <input type="number" id="inputCropRight" class="form-input compact-number" min="0" value="0">
             </div>
 
-            <div class="form-group watermark-tool-group">
+            <div class="form-group watermark-tool-group" id="groupWatermarkEraser">
               <label class="form-label">
                 <span>Watermark eraser</span>
                 <span id="watermarkStatus" class="hint">No area selected</span>
@@ -683,7 +688,7 @@
               </div>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelDownloadName">
               <label class="form-label" for="inputDownloadName">
                 <span>Download name</span>
               </label>
@@ -691,7 +696,7 @@
             </div>
 
             <!-- Video Speed + Preview FPS -->
-            <div class="form-group">
+            <div class="form-group" id="panelVideoSpeed">
               <label class="form-label" for="inputSpeedCustomSettings">
                 <span>Video Speed</span>
               </label>
@@ -703,7 +708,7 @@
               </div>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" id="panelPreviewFps">
               <label class="form-label" for="inputFps">
                 <span>Preview FPS</span>
               </label>
@@ -720,7 +725,7 @@
     <section class="settings-card chroma-card">
       <div class="settings-body chroma-body">
         <div class="settings-grid chroma-grid">
-          <div class="form-group">
+          <div class="form-group" id="panelSimilarity">
             <label class="form-label" for="sliderSimilarity">
               <span>Similarity (Color Tolerance)</span>
               <span class="hint">Higher = removes more background shades</span>
@@ -732,7 +737,7 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" id="panelBlend">
             <label class="form-label" for="sliderBlend">
               <span>Blend (Edge Feathering)</span>
               <span class="hint">Smooths alpha transitions</span>
@@ -744,7 +749,7 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" id="panelSpill">
             <label class="form-label" for="sliderSpill">
               <span>Spill Suppression</span>
               <span class="hint">Removes colored halos from character edges</span>
@@ -756,7 +761,7 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" id="panelSubjectProtection">
             <label class="form-label" for="sliderSubjectProtection">
               <span>Subject Color Protection</span>
               <span class="hint">Preserves subject colors close to the key</span>
@@ -768,7 +773,7 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" id="panelEdgeCleanup">
             <label class="form-label" for="sliderEdgeCleanup">
               <span>Edge Cleanup (px)</span>
               <span class="hint">Erodes 0–3 px of colored fringe after keying</span>
@@ -780,7 +785,7 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" id="panelChromaSmooth">
             <label class="form-label" for="sliderChromaSmooth">
               <span>Chroma Smoothing</span>
               <span class="hint">Làm mịn các lỗi lấy mẫu 4:2:0 từ video; màu chủ thể không bị ảnh hưởng</span>
@@ -1097,7 +1102,7 @@
           </div>
 
           <!-- Chroma Key / Green Screen Removal Options -->
-          <div class="form-group chroma-key-group">
+          <div class="form-group chroma-key-group" id="groupChromaKey">
             <label class="form-label">
               <span>Green screen / Chroma key</span>
               <span class="hint">Multi-color background removal</span>
@@ -2138,6 +2143,44 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel Visibility Settings Dialog (Video → Sprite) -->
+  <div id="modalPanelSettings" class="loop-modal-backdrop panel-settings-backdrop" style="display: none;">
+    <div class="loop-modal-container panel-settings-container" role="dialog" aria-labelledby="panelSettingsTitle" aria-modal="true">
+      <div class="loop-modal-header">
+        <div class="loop-modal-title" id="panelSettingsTitle">
+          <i data-lucide="sliders-horizontal" style="width: 20px; height: 20px; color: #a78bfa;"></i>
+          <span>Settings</span>
+          <span id="panelSettingsCount" class="brand-badge" style="font-size: 0.68rem; padding: 2px 6px;">Đang hiện tất cả</span>
+        </div>
+        <button id="btnClosePanelSettings" class="btn-ctrl" type="button" title="Đóng (Esc)">✕</button>
+      </div>
+
+      <div class="loop-modal-body panel-settings-body">
+        <p class="panel-settings-help">
+          Tắt bớt các khung không dùng để gọn màn hình <strong>Video → Sprite</strong>. Đây chỉ là chuyện hiển thị:
+          khung bị ẩn vẫn giữ nguyên giá trị đang đặt và pipeline xuất ra <em>không đổi một byte nào</em>.
+          Một khung đang bật công cụ (Bút Xóa, Protect Brush, Pick màu) sẽ được tắt công cụ trước khi ẩn.
+        </p>
+
+        <div class="panel-settings-toolbar">
+          <input type="search" id="panelSettingsSearch" class="form-input panel-settings-search" placeholder="Tìm khung chức năng…" aria-label="Tìm khung chức năng">
+          <div class="panel-settings-toolbar-actions">
+            <button id="btnPanelSettingsShowAll" class="time-btn" type="button">
+              <i data-lucide="eye" style="width: 12px; height: 12px;"></i>
+              <span>Hiện tất cả</span>
+            </button>
+            <button id="btnPanelSettingsMinimal" class="time-btn" type="button" title="Chỉ giữ các khung cốt lõi: Frames, lưới, crop, chroma key">
+              <i data-lucide="minimize-2" style="width: 12px; height: 12px;"></i>
+              <span>Gọn tối đa</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="panelSettingsList" class="panel-settings-groups"></div>
       </div>
     </div>
   </div>
