@@ -24,6 +24,7 @@ import {
 } from './panel-visibility.js';
 import { mapPreviewPointToSource, cellBrushScale, normalizeSheetLayout, cellSourceOrigin } from './preview-erase-map.js';
 import { applyColorReplacement } from './color-replace.js';
+import { applySubjectGuard, luminanceWeightFor, SUBJECT_GUARD_DEFAULTS } from './subject-guard.js';
 import { applyAlphaBleed } from './alpha-bleed.js';
 import { applyColorGrade, isColorGradeIdentity, COLOR_GRADE_DEFAULTS } from './color-grade.js';
 import { applySharpen, isSharpenIdentity, SHARPEN_DEFAULTS } from './sharpen.js';
@@ -237,6 +238,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const sliderChromaSmooth = document.getElementById('sliderChromaSmooth');
   const numChromaSmooth = document.getElementById('numChromaSmooth');
   const lblChromaSmoothVal = document.getElementById('lblChromaSmoothVal');
+  const chkSubjectGuard = document.getElementById('chkSubjectGuard');
+  const sliderSubjectGuardStrength = document.getElementById('sliderSubjectGuardStrength');
+  const numSubjectGuardStrength = document.getElementById('numSubjectGuardStrength');
+  const sliderSubjectGuardLeak = document.getElementById('sliderSubjectGuardLeak');
+  const numSubjectGuardLeak = document.getElementById('numSubjectGuardLeak');
   const headerProtectionBrush = document.getElementById('headerProtectionBrush');
   const bodyProtectionBrush = document.getElementById('bodyProtectionBrush');
   const lblCollapseProtectionBrush = document.getElementById('lblCollapseProtectionBrush');
@@ -432,6 +438,8 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputFps', 'btnAutoFps',
       // Chroma Key Settings
       'sliderSimilarity', 'numSimilarity', 'sliderBlend', 'numBlend', 'sliderSpill', 'numSpill', 'sliderSubjectProtection', 'numSubjectProtection', 'sliderEdgeCleanup', 'numEdgeCleanup',
+      'chkChromaSmooth', 'sliderChromaSmooth', 'numChromaSmooth',
+      'chkSubjectGuard', 'sliderSubjectGuardStrength', 'numSubjectGuardStrength', 'sliderSubjectGuardLeak', 'numSubjectGuardLeak',
       'headerProtectionBrush', 'btnProtectionBrush', 'btnProtectionEraser', 'btnProtectionUndo', 'btnProtectionRedo', 'btnProtectionClear',
       'chkShowProtectionMask', 'sliderProtectionSize', 'numProtectionSize', 'sliderProtectionStrength', 'numProtectionStrength', 'sliderProtectionHardness', 'numProtectionHardness', 'selectProtectionPreset',
       'headerEraseBrush', 'btnEraseBrush', 'btnEraseRestore', 'btnEraseUndo', 'btnEraseRedo', 'btnEraseClear',
@@ -643,6 +651,9 @@ document.addEventListener('DOMContentLoaded', () => {
       chromaEdgeCleanup: parseInt(sliderEdgeCleanup.value, 10),
       chromaSmoothEnabled: chkChromaSmooth.checked,
       chromaSmoothRadius: parseInt(sliderChromaSmooth.value, 10),
+      subjectGuardEnabled: chkSubjectGuard.checked,
+      subjectGuardStrength: parseFloat(sliderSubjectGuardStrength.value),
+      subjectGuardLeak: parseInt(sliderSubjectGuardLeak.value, 10),
       protectionStrokes: normalizeStrokes(state.protectionStrokes),
       protectionBrushSize: parseInt(sliderProtectionSize.value, 10),
       protectionBrushStrength: parseFloat(sliderProtectionStrength.value),
@@ -720,6 +731,34 @@ document.addEventListener('DOMContentLoaded', () => {
       keyColors: state.keyColors,
       ...overrides
     };
+  }
+
+  /**
+   * Subject Guard options for the current UI, or null when it has nothing to
+   * do: switched off, keying off, or no key colour to measure against.
+   */
+  function buildSubjectGuardOptions() {
+    if (!chkSubjectGuard.checked || !chkTransparentFormat.checked || !state.keyColors.length) return null;
+    return {
+      keyColors: state.keyColors,
+      strength: U.clampNumber(sliderSubjectGuardStrength.value, 0, 1, SUBJECT_GUARD_DEFAULTS.strength),
+      leakGuard: Math.round(U.clampNumber(sliderSubjectGuardLeak.value, 0, 3, SUBJECT_GUARD_DEFAULTS.leakGuard)),
+      // Same luma weighting the keyer used, so "close to the key" means the
+      // same thing to both passes.
+      luminanceWeight: luminanceWeightFor(U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50))
+    };
+  }
+
+  /**
+   * runKeyer + Subject Guard. The video keyer returns a new ImageData, so the
+   * frame passed in is still the untouched source the guard restores from.
+   */
+  function keyFrameGuarded(imageData, chromaOptions, guardOptions = buildSubjectGuardOptions()) {
+    const result = runKeyer(imageData, chromaOptions);
+    if (guardOptions && result.imageData !== imageData) {
+      applySubjectGuard(result.imageData, imageData, guardOptions);
+    }
+    return result;
   }
 
   function buildColorGradeOptions() {
@@ -1466,6 +1505,11 @@ document.addEventListener('DOMContentLoaded', () => {
     sliderEdgeCleanup.value = String(Math.round(U.clampNumber(saved?.chromaEdgeCleanup, 0, 3, 0)));
     chkChromaSmooth.checked = saved?.chromaSmoothEnabled !== false;
     sliderChromaSmooth.value = String(Math.round(U.clampNumber(saved?.chromaSmoothRadius, 1, 2, 1)));
+    // Clips saved before Subject Guard existed have none of these fields and
+    // get it switched on at the defaults, like a fresh clip.
+    chkSubjectGuard.checked = saved?.subjectGuardEnabled !== false;
+    sliderSubjectGuardStrength.value = String(U.clampNumber(saved?.subjectGuardStrength, 0, 1, SUBJECT_GUARD_DEFAULTS.strength));
+    sliderSubjectGuardLeak.value = String(Math.round(U.clampNumber(saved?.subjectGuardLeak, 0, 3, SUBJECT_GUARD_DEFAULTS.leakGuard)));
     updateChromaSliderLabels();
 
     chkEnableColorGrade.checked = saved?.colorGradeEnabled === true;
@@ -2772,7 +2816,8 @@ document.addEventListener('DOMContentLoaded', () => {
     tempCtx.drawImage(video, 0, 0, fullW, fullH);
 
     let imgData = tempCtx.getImageData(0, 0, fullW, fullH);
-    const keyResult = runKeyer(imgData, buildChromaOptions());
+    // Guarded like Generate, so the detected bounds are the ones Generate uses.
+    const keyResult = keyFrameGuarded(imgData, buildChromaOptions());
     imgData = keyResult.imageData;
 
     const bounds = detectSubjectBounds(imgData, {
@@ -5857,6 +5902,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (numSubjectProtection && document.activeElement !== numSubjectProtection) numSubjectProtection.value = prot;
     if (numEdgeCleanup && document.activeElement !== numEdgeCleanup) numEdgeCleanup.value = cleanup;
     if (numChromaSmooth && document.activeElement !== numChromaSmooth) numChromaSmooth.value = chromaSmooth;
+    if (numSubjectGuardStrength && document.activeElement !== numSubjectGuardStrength) {
+      numSubjectGuardStrength.value = parseFloat(sliderSubjectGuardStrength.value).toFixed(2);
+    }
+    if (numSubjectGuardLeak && document.activeElement !== numSubjectGuardLeak) {
+      numSubjectGuardLeak.value = String(parseInt(sliderSubjectGuardLeak.value, 10) || 0);
+    }
+    // Sliders of a switched-off guard would read as if they still did something.
+    sliderSubjectGuardStrength.disabled = !chkSubjectGuard.checked;
+    numSubjectGuardStrength.disabled = !chkSubjectGuard.checked;
+    sliderSubjectGuardLeak.disabled = !chkSubjectGuard.checked;
+    numSubjectGuardLeak.disabled = !chkSubjectGuard.checked;
 
     lblSimilarityVal.textContent = sim;
     lblBlendVal.textContent = blend;
@@ -5874,6 +5930,9 @@ document.addEventListener('DOMContentLoaded', () => {
   syncSliderAndNumber(sliderEdgeCleanup, numEdgeCleanup, { decimals: 0, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
   syncSliderAndNumber(sliderChromaSmooth, numChromaSmooth, { decimals: 0, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
   chkChromaSmooth.addEventListener('change', () => { updateChromaSliderLabels(); saveClipStateDebounced(); });
+  syncSliderAndNumber(sliderSubjectGuardStrength, numSubjectGuardStrength, { decimals: 2, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
+  syncSliderAndNumber(sliderSubjectGuardLeak, numSubjectGuardLeak, { decimals: 0, onChange: () => { updateChromaSliderLabels(); saveClipStateDebounced(); } });
+  chkSubjectGuard.addEventListener('change', () => { updateChromaSliderLabels(); saveClipStateDebounced(); });
 
   // Format toggle
   selectFormat.addEventListener('change', () => {
@@ -6018,6 +6077,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const spill = U.clampNumber(sliderSpill.value, 0, 1, 0.55);
     const subjectProtection = U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50);
     const cleanupRadius = Math.round(U.clampNumber(sliderEdgeCleanup.value, 0, 3, 0));
+    const subjectGuardOptions = buildSubjectGuardOptions();
 
     // Full video resolution canvas for 2D alignment so neither X nor Y is clipped
     const fullW = state.videoWidth;
@@ -6152,7 +6212,10 @@ document.addEventListener('DOMContentLoaded', () => {
       fullFrameCtx.drawImage(video, 0, 0, fullW, fullH);
 
       let fullImgData = fullFrameCtx.getImageData(0, 0, fullW, fullH);
-      const fullKeyResult = runKeyer(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }));
+      // Subject Guard runs right on the keyer's output, before anything paints
+      // on top of it: it compares the matte with the source frame, and color
+      // replace / grade / region / erase are edits the user asked for.
+      const fullKeyResult = keyFrameGuarded(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }), subjectGuardOptions);
       fullImgData = fullKeyResult.imageData;
       applyColorReplacement(fullImgData, colorReplaceOptions);
       // Grading is per-pixel, so it can run at full resolution with the rest of

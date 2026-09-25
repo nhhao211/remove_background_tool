@@ -2704,6 +2704,32 @@ body.viewport-resizing {
   grid-column: 1 / -1;
 }
 
+/* Two sliders in one card: it takes two columns so each slider is as long as
+   the Similarity / Blend sliders around it. */
+.subject-guard-group {
+  grid-column: span 2;
+}
+
+.subject-guard-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.subject-guard-controls > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.subject-guard-controls > label > .compact-slider-group {
+  margin-top: 0;
+}
+
 /* Collapsible sections in settings & chroma panels */
 .collapsible-section {
   transition: background-color 0.2s ease, border-color 0.2s ease, padding 0.15s ease;
@@ -3170,6 +3196,13 @@ body.viewport-resizing {
 @media (max-width: 768px) {
   .chroma-grid,
   .color-grade-controls {
+    grid-template-columns: 1fr;
+  }
+  /* `span 2` in a one-column grid would add an implicit second column. */
+  .subject-guard-group {
+    grid-column: 1 / -1;
+  }
+  .subject-guard-controls {
     grid-template-columns: 1fr;
   }
   .settings-grid {

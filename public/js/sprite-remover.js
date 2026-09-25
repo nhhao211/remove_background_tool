@@ -1,5 +1,6 @@
 import { runKeyer } from './keyer/index.js';
 import { refineEdges } from './edge-refine.js';
+import { applySubjectGuard, luminanceWeightFor } from './subject-guard.js';
 import { applyAlphaBleed } from './alpha-bleed.js';
 import { encodePNG, canEncodePNG } from './png-encoder.js';
 import { applyRegionKeys, normalizeRegion, regionIsActive } from './region-key.js';
@@ -53,6 +54,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const preserveColors = byId('spritePreserveColors');
   const protection = byId('spriteProtection');
   const cleanup = byId('spriteCleanup');
+  const subjectGuardSection = byId('spriteSubjectGuardSection');
+  const subjectGuard = byId('spriteSubjectGuard');
+  const subjectGuardStrength = byId('spriteSubjectGuardStrength');
+  const subjectGuardLeak = byId('spriteSubjectGuardLeak');
   const edgeRefineSection = byId('spriteEdgeRefineSection');
   const edgeRefine = byId('spriteEdgeRefine');
   const edgeWidth = byId('spriteEdgeWidth');
@@ -109,6 +114,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const state = {
     original: null,
     keyed: null,
+    // Keyer output after Subject Guard, cached so the guard sliders rerun only
+    // the guard and what follows it, never the flood fill.
+    guarded: null,
+    subjectGuardStats: null,
+    subjectGuardTimer: null,
     // Cached between Edge Refine and the region pass, for the same reason
     // `keyed` is cached before refine: dragging a region slider must rerun only
     // the cheapest stage, not the flood fill and not the edge unmix.
@@ -515,6 +525,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       state.keyed = null;
+      state.guarded = null;
+      state.subjectGuardStats = null;
       state.refined = null;
       state.result = cloneImageData(state.original);
       state.fileName = fileName || 'sprite_sheet.png';
@@ -608,6 +620,38 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  /**
+   * Subject Guard, between the keyer and Edge Refine: refine then works on a
+   * body that has its holes filled, instead of unmixing the rim of every hole.
+   * Off returns the keyer's own ImageData, so the output is exactly the keyer's.
+   *
+   * `minPocket: 1` — on a sheet a backdrop-coloured pocket of any size is the
+   * backdrop: pixel art has one-pixel gaps between an arm and the body, and a
+   * manual pick is meant to remove its colour everywhere. What the guard gives
+   * back here is only what is further from the key than the backdrop is.
+   */
+  function applySubjectGuardPass(keyed) {
+    state.subjectGuardStats = null;
+    if (!subjectGuard.checked || !state.original) return keyed;
+    const guarded = cloneImageData(keyed);
+    const options = {
+      keyColors: state.lastKeyColors,
+      strength: Number(subjectGuardStrength.value),
+      leakGuard: Number(subjectGuardLeak.value),
+      luminanceWeight: luminanceWeightFor(state.keyerTuning?.subjectProtection ?? Number(protection.value)),
+      seedPoints: state.seedPoints,
+      minPocket: 1
+    };
+    const cells = perCell.checked ? gridDefinition().total : 1;
+    let restoredPixels = 0;
+    for (let index = 0; index < cells; index += 1) {
+      const rect = perCell.checked ? frameRect(index) : null;
+      restoredPixels += applySubjectGuard(guarded, state.original, { ...options, rect }).restoredPixels;
+    }
+    state.subjectGuardStats = { restoredPixels };
+    return guarded;
+  }
+
   // Off returns the keyer's own ImageData, so the output is exactly the keyer's.
   function applyEdgeRefine(keyed) {
     state.edgeRefineStats = null;
@@ -686,8 +730,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function resultStatusText() {
+    const guard = state.subjectGuardStats;
+    const guarded = guard?.restoredPixels
+      ? `${state.resultStatusBase} · subject guard giữ lại ${guard.restoredPixels.toLocaleString()} px`
+      : state.resultStatusBase;
     const stats = state.edgeRefineStats;
-    const base = stats ? `${state.resultStatusBase} · edge refined (${stats.band.toLocaleString()} px)` : state.resultStatusBase;
+    const base = stats ? `${guarded} · edge refined (${stats.band.toLocaleString()} px)` : guarded;
     const region = state.regionStats;
     return region ? `${base} · ${region.count} vùng (${region.removedPixels.toLocaleString()} px)` : base;
   }
@@ -720,7 +768,8 @@ document.addEventListener('DOMContentLoaded', () => {
         feather: options.feather,
         subjectProtection: options.subjectProtection
       };
-      state.refined = applyEdgeRefine(state.keyed);
+      state.guarded = applySubjectGuardPass(state.keyed);
+      state.refined = applyEdgeRefine(state.guarded);
       recomposeResult();
       state.detectedColors = autoDetect
         ? result.keyColors.filter((color) => !state.manualColors.some((manual) => manual.hex === color.hex))
@@ -745,6 +794,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function resetResult() {
     if (!state.original) return;
     state.keyed = null;
+    state.guarded = null;
+    state.subjectGuardStats = null;
     state.refined = null;
     state.edgeRefineStats = null;
     state.result = cloneImageData(state.original);
@@ -1538,6 +1589,8 @@ document.addEventListener('DOMContentLoaded', () => {
     [spill, numSpriteSpill, byId('spriteSpillValue'), 2],
     [protection, numSpriteProtection, byId('spriteProtectionValue'), 2],
     [cleanup, numSpriteCleanup, byId('spriteCleanupValue'), 0],
+    [subjectGuardStrength, byId('numSpriteSubjectGuardStrength'), byId('spriteSubjectGuardStrengthValue'), 2],
+    [subjectGuardLeak, byId('numSpriteSubjectGuardLeak'), byId('spriteSubjectGuardLeakValue'), 0],
     [edgeWidth, byId('numSpriteEdgeWidth'), byId('spriteEdgeWidthValue'), 0],
     [edgeSmooth, byId('numSpriteEdgeSmooth'), byId('spriteEdgeSmoothValue'), 2]
   ].forEach(([input, numInput, label, decimals]) => {
@@ -1574,18 +1627,42 @@ document.addEventListener('DOMContentLoaded', () => {
     [edgeSmooth, byId('numSpriteEdgeSmooth')].forEach((control) => { control.disabled = off || edgePixelArt.checked; });
   }
 
-  // Refine only: the flood fill result in state.keyed is reused as is.
+  // Refine only: the guarded keyer result in state.guarded is reused as is.
   function scheduleEdgeRefine() {
     syncEdgeRefineControls();
     clearTimeout(state.edgeRefineTimer);
     state.edgeRefineTimer = setTimeout(() => {
-      if (!state.keyed || state.isProcessing) return;
-      state.refined = applyEdgeRefine(state.keyed);
+      if (!state.guarded || state.isProcessing) return;
+      state.refined = applyEdgeRefine(state.guarded);
       recomposeResult();
       renderPreview();
       resultStatus.textContent = resultStatusText();
     }, 80);
   }
+
+  function syncSubjectGuardControls() {
+    const off = !subjectGuard.checked;
+    [subjectGuardStrength, byId('numSpriteSubjectGuardStrength'), subjectGuardLeak, byId('numSpriteSubjectGuardLeak')]
+      .forEach((control) => { control.disabled = off; });
+  }
+
+  // Guard and what follows it; the flood fill result in state.keyed is reused.
+  function scheduleSubjectGuard() {
+    syncSubjectGuardControls();
+    clearTimeout(state.subjectGuardTimer);
+    state.subjectGuardTimer = setTimeout(() => {
+      if (!state.keyed || state.isProcessing) return;
+      state.guarded = applySubjectGuardPass(state.keyed);
+      state.refined = applyEdgeRefine(state.guarded);
+      recomposeResult();
+      renderPreview();
+      resultStatus.textContent = resultStatusText();
+    }, 80);
+  }
+
+  subjectGuardSection.addEventListener('input', scheduleSubjectGuard);
+  subjectGuardSection.addEventListener('change', scheduleSubjectGuard);
+  syncSubjectGuardControls();
 
   edgeRefineSection.addEventListener('input', scheduleEdgeRefine);
   edgeRefineSection.addEventListener('change', scheduleEdgeRefine);

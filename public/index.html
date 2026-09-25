@@ -801,6 +801,33 @@
             </div>
           </div>
 
+          <div class="form-group subject-guard-group" id="panelSubjectGuard">
+            <label class="form-label" for="chkSubjectGuard">
+              <span>Subject Guard</span>
+              <span class="hint">Giữ trọn thân chủ thể: lấp lỗ bị key thủng, trả lại màu gốc bên trong thân</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="chkSubjectGuard" checked>
+              <span>Bám sát chủ thể, không lủng lỗ giữa thân</span>
+            </label>
+            <div class="subject-guard-controls">
+              <label title="Cao hơn: trả lại cả những mảng mỏng có màu gần màu nền (tối thiểu 3 px). Thấp hơn: chỉ trả lại mảng dày.">
+                <span>Độ bám chủ thể</span>
+                <div class="slider-group compact-slider-group">
+                  <input type="range" id="sliderSubjectGuardStrength" min="0" max="1" step="0.01" value="0.50">
+                  <input type="number" id="numSubjectGuardStrength" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.50" aria-label="Subject guard strength">
+                </div>
+              </label>
+              <label title="Khe hở trên đường viền hẹp hơn 2×N+1 px không cho nền tràn vào thân. 0 = tắt.">
+                <span>Chặn rò qua khe viền (px)</span>
+                <div class="slider-group compact-slider-group">
+                  <input type="range" id="sliderSubjectGuardLeak" min="0" max="3" step="1" value="1">
+                  <input type="number" id="numSubjectGuardLeak" class="form-input slider-number-input" min="0" max="3" step="1" value="1" aria-label="Subject guard leak guard in pixels">
+                </div>
+              </label>
+            </div>
+          </div>
+
           <div class="form-group protection-brush-group collapsible-section" id="groupProtectionBrush">
             <div class="section-collapse-header" id="headerProtectionBrush" role="button" tabindex="0" aria-expanded="true" aria-controls="bodyProtectionBrush" title="Click to collapse / expand Subject Protect Brush">
               <div class="section-collapse-title">
@@ -1387,6 +1414,31 @@
           <input id="spriteCleanup" type="range" min="0" max="3" step="1" value="0">
           <input id="numSpriteCleanup" class="form-input slider-number-input" type="number" min="0" max="3" step="1" value="0" aria-label="Edge Cleanup radius in pixels">
           <span id="spriteCleanupValue" class="slider-value" style="display: none;">0 px</span>
+        </div>
+      </div>
+
+      <div id="spriteSubjectGuardSection" class="cleaner-control-section cleaner-sliders" data-section-key="subject-guard">
+        <div class="cleaner-section-title"><span>Subject Guard</span></div>
+        <label class="checkbox-row" title="Lấp lỗ bị key thủng giữa thân và giữ màu gốc bên trong chủ thể. Tắt = giữ nguyên kết quả keyer">
+          <input id="spriteSubjectGuard" type="checkbox" checked>
+          <span>
+            Bám sát chủ thể
+            <small>Không lủng lỗ giữa thân, không đổi màu chủ thể</small>
+          </span>
+        </label>
+
+        <label class="form-label" for="spriteSubjectGuardStrength" title="Cao hơn: trả lại cả những mảng mỏng có màu gần màu nền (tối thiểu 3 px). Thấp hơn: chỉ trả lại mảng dày."><span>Độ bám chủ thể</span></label>
+        <div class="slider-group">
+          <input id="spriteSubjectGuardStrength" type="range" min="0" max="1" step="0.01" value="0.50">
+          <input id="numSpriteSubjectGuardStrength" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.50" aria-label="Subject guard strength">
+          <span id="spriteSubjectGuardStrengthValue" class="slider-value" style="display: none;">0.50</span>
+        </div>
+
+        <label class="form-label" for="spriteSubjectGuardLeak" title="Khe hở trên đường viền hẹp hơn 2×N+1 px không cho nền tràn vào thân. 0 = tắt."><span>Chặn rò qua khe viền (px)</span></label>
+        <div class="slider-group">
+          <input id="spriteSubjectGuardLeak" type="range" min="0" max="3" step="1" value="1">
+          <input id="numSpriteSubjectGuardLeak" class="form-input slider-number-input" type="number" min="0" max="3" step="1" value="1" aria-label="Subject guard leak guard in pixels">
+          <span id="spriteSubjectGuardLeakValue" class="slider-value" style="display: none;">1 px</span>
         </div>
       </div>
 
