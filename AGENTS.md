@@ -67,6 +67,7 @@ npm run dev
 - Hiển thị tên file, kích thước native và thời lượng sau `loadedmetadata`.
 - Tên file được dùng để gợi ý `Download name`.
 - Tạo object URL cho file local và revoke object URL cũ khi load file mới.
+- Video bị trình duyệt coi là cross-origin (canvas "tainted" — thường do service worker của project khác trên cùng port localhost, proxy/tunnel hoặc extension) thì mọi `getImageData` trên video đều throw. Ở `loadeddata`, `recoverTaintedVideo()` thử đọc 1 pixel; nếu bị chặn thì `rehostVideoAsBlob()` nạp lại **cùng dữ liệu** dưới dạng `blob:` URL (luôn same-origin, service worker không chặn được) mà không reset clip state (`state.rehostingVideo` làm `loadedmetadata` bỏ qua), rồi vẽ lại filmstrip. Generate gọi `ensureReadableVideo()` trước tiên; vẫn không đọc được thì báo lỗi kèm cách khắc phục thay vì lỗi `getImageData` thô. Thêm chỗ đọc pixel video mới thì đừng tự tạo canvas probe dùng lại: canvas đã tainted thì tainted vĩnh viễn.
 
 ### 2. Điều khiển source video
 

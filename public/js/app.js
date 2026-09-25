@@ -590,6 +590,11 @@ document.addEventListener('DOMContentLoaded', () => {
     activeColorIndex: null,
     timelinePointerId: null,
     videoLoadToken: 0,
+    // Set while the video is swapped to a blob: URL because its pixels could
+    // not be read (see `rehostVideoAsBlob`); `loadedmetadata` must not treat
+    // that swap as a new clip.
+    rehostingVideo: false,
+    rehost: null, // { tokens, promise } of the last recovery attempt
     // Subject Alignment Vertical (X) & Horizontal (Y) Guidelines state
     guidelineEnabled: false,
     guidelineX: 0,
@@ -1260,13 +1265,15 @@ document.addEventListener('DOMContentLoaded', () => {
     state.playbackSpeed = 1;
     state.keyColors = [{ r: 0, g: 36, b: 245, hex: '#0024f5' }];
     
+    // A demo URL may have been swapped for a blob: URL by `rehostVideoAsBlob`,
+    // so the old URL is revoked whatever the new source is.
+    if (state.currentVideoUrl && state.currentVideoUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(state.currentVideoUrl);
+    }
     if (typeof source === 'string') {
       state.currentVideoUrl = source;
       video.src = source;
     } else if (source instanceof File) {
-      if (state.currentVideoUrl && state.currentVideoUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(state.currentVideoUrl);
-      }
       state.currentVideoUrl = URL.createObjectURL(source);
       video.src = state.currentVideoUrl;
     }
@@ -1285,6 +1292,147 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     showToast(`Loading video: ${fileName}`, 'info');
+  }
+
+  // === CROSS-ORIGIN (TAINTED) VIDEO RECOVERY ===
+  // Every pixel read in this app (Generate, eyedropper, filmstrip, loop finder)
+  // draws the <video> onto a canvas, which only works while the browser counts
+  // the video's data as same-origin. In the plain setup it does: the demo comes
+  // from this server and a local file from a blob: URL. Something between the
+  // page and the file can still make Chrome treat it as cross-origin — most
+  // often a service worker another project left on the same localhost port,
+  // otherwise a proxy/tunnel or a browser extension — and then every
+  // getImageData throws "The canvas has been tainted by cross-origin data".
+  // A blob: URL is always same-origin and no service worker can intercept it,
+  // so the video is re-hosted as one.
+
+  /**
+   * True when pixels drawn from the video can be read back, null when there is
+   * no frame to test yet (below HAVE_CURRENT_DATA drawImage draws nothing and
+   * cannot taint — which also happens mid-seek).
+   */
+  function canReadVideoPixels() {
+    if (video.readyState < 2) return null;
+    // A fresh canvas every time: once tainted, a canvas stays tainted.
+    const probe = document.createElement('canvas');
+    probe.width = 1;
+    probe.height = 1;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    try {
+      ctx.drawImage(video, 0, 0, 1, 1);
+      ctx.getImageData(0, 0, 1, 1);
+      return true;
+    } catch (err) {
+      if (err?.name === 'SecurityError') return false;
+      throw err;
+    }
+  }
+
+  /**
+   * Swaps the video's source for a blob: URL of the same bytes, keeping the
+   * clip state. The load token it moves to is added to `attempt.tokens`.
+   */
+  async function rehostVideoAsBlob(attempt) {
+    const loadToken = state.videoLoadToken;
+    let blob = state.currentVideoFile;
+    if (!blob) {
+      const response = await fetch(state.currentVideoUrl, { cache: 'reload' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      blob = await response.blob();
+    }
+    if (loadToken !== state.videoLoadToken) return;
+
+    const url = URL.createObjectURL(blob);
+    const previousUrl = state.currentVideoUrl;
+    const restoreTime = video.currentTime;
+    // Stops a filmstrip still being drawn from the old source; it is redrawn below.
+    state.videoLoadToken += 1;
+    attempt.tokens.add(state.videoLoadToken);
+    state.rehostingVideo = true;
+    try {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          video.removeEventListener('loadeddata', onLoaded);
+          video.removeEventListener('error', onError);
+        };
+        const onLoaded = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error('the video could not be reloaded')); };
+        video.addEventListener('loadeddata', onLoaded);
+        video.addEventListener('error', onError);
+        video.src = url;
+      });
+    } catch (err) {
+      URL.revokeObjectURL(url);
+      throw err;
+    } finally {
+      state.rehostingVideo = false;
+    }
+    state.currentVideoUrl = url;
+    if (previousUrl.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
+    video.playbackRate = state.playbackSpeed;
+    await seekVideoAsync(video, restoreTime);
+    generateFilmstrip();
+  }
+
+  /**
+   * Makes sure the video's pixels can be read, re-hosting it once per load if
+   * they cannot. Concurrent callers share the same attempt. Resolves to
+   * whether the pixels are readable afterwards.
+   */
+  async function recoverTaintedVideo() {
+    const readable = await probeVideoPixels();
+    if (readable !== false) return true;
+    if (state.rehost?.tokens.has(state.videoLoadToken)) {
+      await state.rehost.promise;
+      return canReadVideoPixels() !== false;
+    }
+    // Recorded before starting: with a local File the swap begins synchronously.
+    const attempt = { tokens: new Set([state.videoLoadToken]), promise: null };
+    state.rehost = attempt;
+    attempt.promise = rehostVideoAsBlob(attempt)
+      .catch((err) => console.warn('Re-hosting the video as a blob failed:', err))
+      .then(() => {
+        const ok = canReadVideoPixels() !== false;
+        if (ok) console.info('Video re-hosted as a blob: URL so its pixels can be read.');
+        return ok;
+      });
+    return attempt.promise;
+  }
+
+  /** `canReadVideoPixels`, waiting (up to 3 s) for a frame when there is none yet. */
+  async function probeVideoPixels() {
+    const deadline = performance.now() + 3000;
+    let readable = canReadVideoPixels();
+    while (readable === null && performance.now() < deadline) {
+      await new Promise((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          video.removeEventListener('seeked', done);
+          video.removeEventListener('canplay', done);
+          resolve();
+        };
+        const timer = setTimeout(done, 250);
+        video.addEventListener('seeked', done);
+        video.addEventListener('canplay', done);
+      });
+      readable = canReadVideoPixels();
+    }
+    return readable;
+  }
+
+  /** Throws a message the user can act on when the pixels stay unreadable. */
+  async function ensureReadableVideo() {
+    if (await recoverTaintedVideo()) return;
+    let workers = [];
+    try {
+      workers = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations() : [];
+    } catch {
+      workers = [];
+    }
+    const hint = workers.length
+      ? `a service worker is registered on ${location.origin} (this app has none — probably another project on the same port). Remove it in DevTools → Application → Service Workers, then reload.`
+      : 'open the app directly at its http://localhost URL, try a private window with extensions off, or load the file again with Browse.';
+    throw new Error(`the browser treats this video as cross-origin data, so its pixels cannot be read — ${hint}`);
   }
 
   function resetVideoViewportAspect() {
@@ -1456,6 +1604,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   video.addEventListener('loadedmetadata', () => {
+    // Same clip on a blob: URL (`rehostVideoAsBlob`): nothing to reset or restore.
+    if (state.rehostingVideo) return;
     state.videoLoaded = true;
     state.duration = video.duration || 0;
     state.videoWidth = video.videoWidth || 640;
@@ -1615,6 +1765,15 @@ document.addEventListener('DOMContentLoaded', () => {
     generateFilmstrip();
     saveClipState();
     showToast(`Video loaded (${state.videoWidth}x${state.videoHeight}, ${state.duration.toFixed(2)}s)`, 'success');
+  });
+
+  // First frame decoded: if its pixels cannot be read, re-host now so the
+  // eyedropper, filmstrip and Generate all work, not only Generate.
+  video.addEventListener('loadeddata', () => {
+    if (state.rehostingVideo || !state.videoLoaded) return;
+    recoverTaintedVideo().then((readable) => {
+      if (!readable) showToast('Video này bị trình duyệt coi là cross-origin nên không đọc được pixel — Generate sẽ báo cách khắc phục.', 'error');
+    });
   });
 
   video.addEventListener('timeupdate', () => {
@@ -1868,7 +2027,13 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.drawImage(video, dx, dy, dw, dh);
 
       const img = document.createElement('img');
-      img.src = canvas.toDataURL('image/jpeg', 0.72);
+      try {
+        img.src = canvas.toDataURL('image/jpeg', 0.72);
+      } catch (err) {
+        // Tainted video: `recoverTaintedVideo` re-hosts it and redraws the strip.
+        if (err?.name === 'SecurityError') return;
+        throw err;
+      }
       img.draggable = false;
       img.alt = `frame ${i}`;
       frames.push(img);
@@ -6025,6 +6190,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   async function generateSpriteSheet() {
+    await ensureReadableVideo();
     const totalFrames = parseInt(inputFrames.value, 10) || 24;
     const rows = parseInt(inputRows.value, 10) || 6;
     const cols = parseInt(inputCols.value, 10) || 4;
