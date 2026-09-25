@@ -5,6 +5,10 @@ import { applyAlphaBleed } from './alpha-bleed.js';
 import { encodePNG, canEncodePNG } from './png-encoder.js';
 import { applyRegionKeys, normalizeRegion, regionIsActive } from './region-key.js';
 import { createRegionOverlay } from './region-overlay.js';
+import {
+  applyRegionAcrossCells, baseRegionId, cellIndexAt, cellRects, cellShift, CELL_ID_SEP,
+  clampCentreToCell, homeCellIndex, regionCopyForCell, replicateRegion
+} from './region-cells.js';
 import { initCollapsibleSections } from './sidebar-sections.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -102,6 +106,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const regionSoftness = byId('spriteRegionSoftness');
   const regionDespill = byId('spriteRegionDespill');
   const regionConnected = byId('spriteRegionConnected');
+  const regionAllFrames = byId('spriteRegionAllFrames');
+  const regionAllFramesHint = byId('spriteRegionAllFramesHint');
   const regionOverlayOriginal = byId('spriteRegionOverlayOriginal');
   const regionOverlayResult = byId('spriteRegionOverlayResult');
   const regionBanner = byId('spriteRegionBanner');
@@ -357,12 +363,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const radiusPx = Math.round(region.rx * (state.original?.width || 0));
       const hex = region.colors[0] ? hexColor(region.colors[0]) : 'chưa pick màu';
       swatch.title = `Vùng tròn · chỉ xoá bên trong vòng tròn · r≈${radiusPx}px`
-        + (region.frame === null ? '' : ` · vẽ trên ô #${region.frame + 1}`);
+        + (region.allFrames ? ' · áp dụng cho mọi frame'
+          : (region.frame === null ? '' : ` · vẽ trên ô #${region.frame + 1}`));
       const chip = document.createElement('span');
       chip.style.background = region.colors[0] ? hexColor(region.colors[0]) : 'transparent';
       chip.style.border = '1px dashed #38bdf8';
       const label = document.createElement('small');
-      label.textContent = `◯ ${hex} · r=${radiusPx}px`;
+      label.textContent = `◯ ${hex} · r=${radiusPx}px${region.allFrames ? ' · mọi frame' : ''}`;
       swatch.append(chip, label);
       swatch.addEventListener('click', (event) => {
         if (event.target.tagName === 'BUTTON') return;
@@ -687,6 +694,11 @@ document.addEventListener('DOMContentLoaded', () => {
    * Region coordinates are absolute, normalised against the whole sheet, in
    * both preview modes. A region drawn on one cell in `Anim` therefore lands
    * on that cell and nowhere else, without needing a per-cell geometry pass.
+   *
+   * The exception is a region ticked "Áp dụng cho mọi frame" (`allFrames`):
+   * it is replicated at the same place relative to its cell in every cell of
+   * the grid, each copy fenced by its own cell (region-cells.js). Without a
+   * grid there is one cell, and such a region behaves like any other.
    * ---------------------------------------------------------------- */
 
   const activeRegions = () => state.colorRegions.filter(regionIsActive);
@@ -700,16 +712,33 @@ document.addEventListener('DOMContentLoaded', () => {
     // byte for byte, which is the invariant the whole feature rests on.
     if (regions.length === 0) return base === state.original ? cloneImageData(base) : base;
     const out = cloneImageData(base);
-    const { removedPixels } = applyRegionKeys(out, regions, {
+    const geometry = {
       sourceWidth: state.original.width,
       sourceHeight: state.original.height,
       cropX: 0,
       cropY: 0,
       cropWidth: state.original.width,
       cropHeight: state.original.height
-    });
+    };
+    const cells = sheetCells();
+    let removedPixels = 0;
+    // One region at a time, in list order, so a sheet with no `allFrames`
+    // region goes through exactly the passes it always did.
+    for (const region of regions) {
+      removedPixels += region.allFrames && cells
+        ? applyRegionAcrossCells(out, region, cells)
+        : applyRegionKeys(out, [region], geometry).removedPixels;
+    }
     state.regionStats = { removedPixels, count: regions.length };
     return out;
+  }
+
+  /** Cell rectangles of the current grid, or null when there is no grid. */
+  function sheetCells() {
+    if (!state.original) return null;
+    const grid = gridDefinition();
+    if (grid.total <= 1) return null;
+    return cellRects(state.original.width, state.original.height, grid.rows, grid.cols);
   }
 
   function recomposeResult() {
@@ -1089,21 +1118,71 @@ document.addEventListener('DOMContentLoaded', () => {
     return createRegionOverlay({
       canvas,
       ...mapping,
-      getRegions: () => state.colorRegions,
+      getRegions: surfaceRegions,
       getSelectedId: () => state.selectedRegionId,
+      // Every copy of an `allFrames` region is the region, so all of them light
+      // up when it is selected.
+      isRegionSelected: (region, selectedId) => selectedId != null && baseRegionId(region.id) === selectedId,
       getAspect: () => (state.original ? state.original.width / state.original.height : 1),
       // A region drawn on another cell does not apply here, but hiding it would
       // leave the user hunting for a region they know they made.
-      isRegionDimmed: (region) => region.frame !== null
+      isRegionDimmed: (region) => region.frame !== null && !region.allFrames
         && state.previewMode === 'anim' && perCell.checked
         && region.frame !== state.currentFrameIndex,
       onCreate: (geometry) => createRegion(geometry),
-      onChange: (id, patch) => patchRegion(id, patch),
-      onSelect: (id) => selectRegion(id, { render: false }),
-      onDelete: (id) => deleteRegion(id),
-      onPickRequest: (id, point, event) => commitRegionPick(id, event, surface),
+      onChange: (id, patch) => patchSurfaceRegion(id, patch),
+      onSelect: (id) => selectRegion(baseRegionId(id), { render: false }),
+      onDelete: (id) => deleteRegion(baseRegionId(id)),
+      onPickRequest: (id, point, event) => commitRegionPick(baseRegionId(id), event, surface),
       onEscape: () => setRegionMode('off')
     });
+  }
+
+  const animCellMode = () => state.previewMode === 'anim' && perCell.checked;
+
+  /**
+   * What the overlays draw: plain regions as they are, an `allFrames` region
+   * once per cell in Sheet mode and once — in the cell on screen — in Anim.
+   * Copies carry `id@@cell` so a drag on any of them finds its way back.
+   */
+  function surfaceRegions() {
+    const cells = sheetCells();
+    const width = state.original?.width || 1;
+    const height = state.original?.height || 1;
+    const out = [];
+    for (const region of state.colorRegions) {
+      if (!region.allFrames || !cells) {
+        out.push(region);
+      } else if (animCellMode()) {
+        out.push(regionCopyForCell(region, cells, Math.min(cells.length - 1, state.currentFrameIndex), width, height));
+      } else {
+        out.push(...replicateRegion(region, cells, width, height));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A move of a copy is a move of the region, shifted back into its home cell.
+   * The centre is then held inside that cell: past its border the home cell
+   * would change mid-drag and every copy would jump a whole frame.
+   */
+  function patchSurfaceRegion(id, patch) {
+    const baseId = baseRegionId(id);
+    const region = state.colorRegions.find((item) => item.id === baseId);
+    const cells = sheetCells();
+    if (!region || !region.allFrames || !cells || !('cx' in patch)) {
+      patchRegion(baseId, patch);
+      return;
+    }
+    const width = state.original.width;
+    const height = state.original.height;
+    const home = homeCellIndex(region, cells, width, height);
+    const suffix = typeof id === 'string' ? id.split(CELL_ID_SEP)[1] : undefined;
+    const copyCell = suffix === undefined ? home : Number(suffix);
+    const { dx, dy } = cellShift(cells, home, copyCell, width, height);
+    const centre = clampCentreToCell(patch.cx - dx, patch.cy - dy, cells, home, width, height);
+    patchRegion(baseId, { ...patch, ...centre });
   }
 
   let regionOverlaysCache = null;
@@ -1186,6 +1265,7 @@ document.addEventListener('DOMContentLoaded', () => {
       softness: Number(regionSoftness.value),
       despill: Number(regionDespill.value),
       connected: regionConnected.checked,
+      allFrames: regionAllFrames.checked,
       frame: state.previewMode === 'anim' && perCell.checked ? state.currentFrameIndex : null
     });
     if (!region) return;
@@ -1235,7 +1315,11 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderRegionControls() {
     const region = selectedRegion();
     if (regionControls) regionControls.hidden = !region;
+    // Without a grid there is one frame, so the tick is harmless but does
+    // nothing; say what it is waiting for instead of disabling it.
+    if (regionAllFramesHint) regionAllFramesHint.hidden = !state.original || gridDefinition().total > 1;
     if (!region) return;
+    regionAllFrames.checked = region.allFrames;
     regionTolerance.value = String(region.tolerance);
     regionSoftness.value = String(region.softness);
     regionDespill.value = String(region.despill);
@@ -1293,6 +1377,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     region.colors.push(color);
     region.seed = { x: sheetPoint.x / state.original.width, y: sheetPoint.y / state.original.height };
+    const cells = sheetCells();
+    if (region.allFrames && cells) {
+      // Picked on a copy: store the seed where it sits in the home cell, so
+      // every copy floods from the same spot of its own frame.
+      const home = homeCellIndex(region, cells, state.original.width, state.original.height);
+      const { dx, dy } = cellShift(cells, home, cellIndexAt(cells, sheetPoint.x, sheetPoint.y),
+        state.original.width, state.original.height);
+      region.seed = { x: region.seed.x - dx, y: region.seed.y - dy };
+    }
     state.selectedRegionId = region.id;
     setRegionMode('edit');
     renderColors();
@@ -1350,6 +1443,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!region) return;
     patchRegion(region.id, { connected: regionConnected.checked, seed: region.seed });
   });
+  regionAllFrames.addEventListener('change', () => {
+    const region = selectedRegion();
+    if (!region) return;
+    patchRegion(region.id, { allFrames: regionAllFrames.checked });
+    renderColors();
+    syncRegionOverlays();
+    if (regionAllFrames.checked && !sheetCells()) {
+      showToast('Bật "Sprite grid" và đặt Rows × Cols để vùng tròn lặp lại ở mọi frame.', 'info');
+    }
+  });
+
+  // The grid defines what "every frame" means, so changing it moves the copies.
+  function refreshRegionsForGrid() {
+    renderRegionControls();
+    if (state.colorRegions.some((region) => region.allFrames)) scheduleRegionUpdate();
+  }
 
   function sanitizeName(value) {
     return (value || 'clean_sprite_sheet').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
@@ -1457,6 +1566,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.previewMode = perCell.checked ? 'anim' : 'sheet';
     state.currentFrameIndex = 0;
     if (state.original) renderPreview({ fit: true });
+    refreshRegionsForGrid();
   });
 
   [rows, cols].forEach((input) => {
@@ -1465,6 +1575,7 @@ document.addEventListener('DOMContentLoaded', () => {
       stopPreviewAnimation();
       state.currentFrameIndex = 0;
       if (state.original) renderPreview({ fit: true });
+      refreshRegionsForGrid();
     });
   });
 
@@ -1475,7 +1586,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnPreviewMode.addEventListener('click', () => {
     stopPreviewAnimation();
-    if (!perCell.checked) {
+    const gridWasOff = !perCell.checked;
+    if (gridWasOff) {
       perCell.checked = true;
       rows.disabled = false;
       cols.disabled = false;
@@ -1483,6 +1595,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     state.previewMode = state.previewMode === 'anim' ? 'sheet' : 'anim';
     if (state.original) renderPreview({ fit: true });
+    if (gridWasOff) refreshRegionsForGrid();
   });
 
   previewFps.addEventListener('change', () => {

@@ -127,6 +127,8 @@ const ACCENT = '#38bdf8';
  * @param {(id:string) => void} [options.onDelete]
  * @param {(id:string|null, point:{x:number,y:number}, event:PointerEvent) => void} [options.onPickRequest]
  * @param {(region:object) => boolean} [options.isRegionDimmed] bound to another frame
+ * @param {(region:object, selectedId:string|null) => boolean} [options.isRegionSelected]
+ *   for surfaces that draw several copies of one region under derived ids
  * @param {() => void} [options.onEscape]
  */
 export function createRegionOverlay(options) {
@@ -180,7 +182,8 @@ export function createRegionOverlay(options) {
       if (!(shape.rx > 0) || !(shape.ry > 0)) continue;
       const dimmed = call('isRegionDimmed', region) === true;
       drawRegion(shape, {
-        selected: region.id != null && region.id === selectedId,
+        selected: call('isRegionSelected', region, selectedId)
+          ?? (region.id != null && region.id === selectedId),
         dimmed,
         softness: Number(region.softness) || 0,
         disabled: region.enabled === false

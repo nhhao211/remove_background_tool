@@ -114,6 +114,9 @@ export function normalizeRegion(region) {
     connected: region.connected === true,
     seed: region.connected === true ? normalizePoint(region.seed) : null,
     enabled: region.enabled !== false,
+    // Clean Sprite Sheet only: replicate into every cell of the grid
+    // (region-cells.js). `applyRegionKeys` itself ignores it.
+    allFrames: region.allFrames === true,
     frame,
     // Only meaningful next to a frame index; carrying it on a global region
     // would invite code to read it as a binding that is not there.
