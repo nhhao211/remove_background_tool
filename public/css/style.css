@@ -3926,6 +3926,8 @@ body.viewport-resizing {
 
 .loop-card-details {
   display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
   align-items: center;
   justify-content: space-between;
   font-size: 0.76rem;

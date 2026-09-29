@@ -6,7 +6,11 @@ import {
   descriptorDistance,
   findLoopCandidates,
   hasUsableMatte,
-  seamCostAt
+  refineSeamOnFrames,
+  seamCostAt,
+  seamJumpFrames,
+  seamJumpRatio,
+  seamRefinementFrames
 } from '../public/js/loop-analysis.js';
 
 import { computeFrameDistance, computeLoopTimestamps } from '../public/js/loop-optimizer.js';
@@ -435,4 +439,121 @@ test('findLoopCandidates: reports the output-frame stride it used', () => {
     windowStride: 1
   });
   assert.equal(forced.diagnostics.windowStride, 1);
+});
+
+// --- Native-frame seam refinement --------------------------------------------
+
+/**
+ * Distance between native frames of a subject circling with a period of
+ * `period` frames: the chord between the two phases, plus a constant floor so
+ * near-ties are decided by the tie-breakers rather than by an exact zero.
+ */
+function orbitDistance(period, floor = 0) {
+  const phase = (k) => (2 * Math.PI * k) / period;
+  return (a, b) => {
+    const dx = Math.cos(phase(a)) - Math.cos(phase(b));
+    const dy = Math.sin(phase(a)) - Math.sin(phase(b));
+    return floor + Math.hypot(dx, dy);
+  };
+}
+
+test('refineSeamOnFrames: moves a coarse seam onto the true period', () => {
+  const dist = orbitDistance(47);
+  const result = refineSeamOnFrames({
+    startFrame: 20, endFrame: 65, stepFrames: 2, searchRadius: 3, windowRadius: 1
+  }, dist);
+  assert.equal(result.changed, true);
+  assert.equal(result.endFrame - result.startFrame, 47);
+  assert.ok(result.cost < 1e-9);
+  assert.ok(result.anchorCost > 0.1);
+  assert.ok(result.gain > 0.99);
+});
+
+test('refineSeamOnFrames: never reports a cost above the anchor', () => {
+  let seed = 7;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const table = new Map();
+  const dist = (a, b) => {
+    const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+    if (!table.has(key)) table.set(key, rand());
+    return table.get(key);
+  };
+  for (let trial = 0; trial < 20; trial++) {
+    const start = 10 + trial;
+    const r = refineSeamOnFrames({ startFrame: start, endFrame: start + 40, stepFrames: 3, searchRadius: 2 }, dist);
+    assert.ok(r.cost <= r.anchorCost + 1e-12, `trial ${trial}`);
+    if (!r.changed) assert.equal(r.cost, r.anchorCost);
+  }
+});
+
+test('refineSeamOnFrames: respects the frame-count rule and the clip bounds', () => {
+  const dist = orbitDistance(47);
+  const even = refineSeamOnFrames({
+    startFrame: 20, endFrame: 64, stepFrames: 2, searchRadius: 3, acceptSpan: (k) => k % 2 === 0
+  }, dist);
+  assert.equal((even.endFrame - even.startFrame) % 2, 0);
+
+  const bounded = refineSeamOnFrames({
+    startFrame: 1, endFrame: 45, stepFrames: 2, searchRadius: 3, minFrame: 0, maxFrame: 46
+  }, dist);
+  assert.ok(bounded.startFrame >= 0);
+  assert.ok(bounded.endFrame <= 46);
+});
+
+test('refineSeamOnFrames: ties go to the nominal length, then to not moving', () => {
+  // Period 3: spans 15, 18, 21, 24 are all perfect.
+  const dist = orbitDistance(3, 0.1);
+  const r = refineSeamOnFrames({
+    startFrame: 30, endFrame: 48, stepFrames: 1, searchRadius: 3, nominalSpan: 21
+  }, dist);
+  assert.equal(r.endFrame - r.startFrame, 21);
+
+  const still = refineSeamOnFrames({ startFrame: 30, endFrame: 48, stepFrames: 1, searchRadius: 3 }, dist);
+  assert.equal(still.changed, false);
+  assert.equal(still.startFrame, 30);
+});
+
+test('seamRefinementFrames: lists every frame the refinement reads', () => {
+  const options = { startFrame: 12, endFrame: 55, stepFrames: 2.5, searchRadius: 2, windowRadius: 1, minFrame: 0, maxFrame: 60 };
+  const listed = new Set(seamRefinementFrames(options));
+  const read = new Set();
+  refineSeamOnFrames(options, (a, b) => {
+    read.add(a);
+    read.add(b);
+    return Math.abs(a - b) % 7;
+  });
+  for (const k of read) assert.ok(listed.has(k), `frame ${k} read but not listed`);
+  for (const k of listed) assert.ok(k >= 0 && k <= 60);
+});
+
+test('seamJumpRatio: judges the wrap against an ordinary step', () => {
+  const cells = Array.from({ length: 12 }, (_, i) => 2 * i); // 0, 2, …, 22
+  const verdict = (period) => seamJumpRatio(cells, orbitDistance(period)).verdict;
+  // Period 24: the wrap 22 → 0 is two frames, like every other step.
+  assert.equal(verdict(24), 'smooth');
+  assert.ok(Math.abs(seamJumpRatio(cells, orbitDistance(24)).ratio - 1) < 1e-9);
+  // Period 22: frame 22 is frame 0 again — the pose holds at the wrap.
+  assert.equal(verdict(22), 'hold');
+  // Period 25 / 26: the wrap skips one / two frames.
+  assert.equal(verdict(25), 'bump');
+  assert.equal(verdict(26), 'jump');
+  // A subject that does not move has no step to compare against.
+  assert.equal(seamJumpRatio(cells, () => 0), null);
+  assert.equal(seamJumpRatio([0, 1], orbitDistance(24)), null);
+});
+
+test('seamJumpFrames: lists the frames seamJumpRatio reads', () => {
+  const cells = Array.from({ length: 24 }, (_, i) => 100 + (3 * i));
+  const listed = new Set(seamJumpFrames(cells, 4));
+  const read = new Set();
+  seamJumpRatio(cells, (a, b) => {
+    read.add(a);
+    read.add(b);
+    return 1;
+  }, 4);
+  assert.deepEqual([...read].sort((a, b) => a - b), [...listed]);
+  assert.ok(listed.has(100) && listed.has(169));
 });

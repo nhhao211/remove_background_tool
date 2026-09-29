@@ -661,3 +661,217 @@ export function seamCostAt(descriptors, startIndex, endIndex, options = {}) {
   }
   return acc / total;
 }
+
+/**
+ * Seam neighbourhood offsets in native frames: one output step apart, rounded
+ * symmetrically so a 2.5-frame step gives -3, 0, +3 rather than -2, 0, +3.
+ */
+function seamWindowOffsets(stepFrames, radius) {
+  const h = Math.max(1, Number(stepFrames) || 1);
+  const out = [];
+  for (let m = -radius; m <= radius; m++) {
+    out.push(Math.sign(m) * Math.round(Math.abs(m) * h));
+  }
+  return out;
+}
+
+function normaliseRefineOptions(options) {
+  const startFrame = Math.round(Number(options.startFrame) || 0);
+  const endFrame = Math.round(Number(options.endFrame) || 0);
+  const searchRadius = Math.max(0, Math.min(12, Math.round(Number(options.searchRadius ?? 2)) || 0));
+  const windowRadius = Math.max(0, Math.min(3, Math.round(Number(options.windowRadius ?? 1)) || 0));
+  const minFrame = Number.isFinite(Number(options.minFrame)) ? Math.round(Number(options.minFrame)) : 0;
+  const maxFrame = Number.isFinite(Number(options.maxFrame)) ? Math.round(Number(options.maxFrame)) : Infinity;
+  const offsets = seamWindowOffsets(options.stepFrames, windowRadius);
+  return { startFrame, endFrame, searchRadius, windowRadius, minFrame, maxFrame, offsets };
+}
+
+/**
+ * Native frames the seam refinement will ask `dist()` about, so the caller
+ * can decode them all before the (synchronous) search runs.
+ *
+ * @param {Object} options - Same options as refineSeamOnFrames()
+ * @returns {number[]} Sorted unique frame indices
+ */
+export function seamRefinementFrames(options = {}) {
+  const o = normaliseRefineOptions(options);
+  const set = new Set();
+  for (const anchor of [o.startFrame, o.endFrame]) {
+    for (let d = -o.searchRadius; d <= o.searchRadius; d++) {
+      for (const off of o.offsets) {
+        const k = anchor + d + off;
+        if (k >= o.minFrame && k <= o.maxFrame) set.add(k);
+      }
+    }
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+/**
+ * Re-places a seam on the native frame grid.
+ *
+ * The coarse scan puts a seam on its sampling lattice, one or more source
+ * frames away from the best cut. This searches start and end independently
+ * within ±searchRadius native frames and scores every pair with the same
+ * windowed cost: frames one *output* step before, at and after the cut on
+ * each side, weighted 1-2-1. Matching the neighbours an output step away is
+ * what makes the velocity line up at the rate the loop is actually played;
+ * neighbours one source frame away barely move and say little about it.
+ *
+ * The original pair is always scored with the same yardstick and wins ties,
+ * so refinement can only lower the cost it reports. `acceptSpan(K)` is the
+ * caller's frame-count rule (a loop of K native frames must still produce
+ * the same number of cells); `nominalSpan` breaks near-ties toward the length
+ * the user asked for.
+ *
+ * @param {Object} options
+ * @param {number} options.startFrame - Coarse seam start (native frame index)
+ * @param {number} options.endFrame - Coarse seam end: the twin of startFrame
+ * @param {number} options.stepFrames - Native frames per output frame
+ * @param {number} [options.searchRadius=2] - Frames each end may move
+ * @param {number} [options.windowRadius=1] - Output steps either side of the cut
+ * @param {number} [options.minFrame=0] - First decodable frame
+ * @param {number} [options.maxFrame=Infinity] - Last decodable frame
+ * @param {(span:number)=>boolean} [options.acceptSpan] - Admissible loop lengths
+ * @param {number} [options.nominalSpan] - Preferred loop length in frames
+ * @param {(a:number, b:number)=>(number|null)} dist - Distance between frames
+ * @returns {{ startFrame:number, endFrame:number, cost:number, anchorCost:number,
+ *   gain:number, changed:boolean, evaluated:number }}
+ */
+export function refineSeamOnFrames(options, dist) {
+  const o = normaliseRefineOptions(options || {});
+  const weights = WINDOW_WEIGHTS[o.windowRadius];
+  const acceptSpan = typeof options.acceptSpan === 'function' ? options.acceptSpan : () => true;
+  const nominal = Number(options.nominalSpan);
+  const hasNominal = Number.isFinite(nominal) && nominal > 0;
+  const stepFrames = Math.max(1, Number(options.stepFrames) || 1);
+
+  const costAt = (a, b) => {
+    let acc = 0;
+    let wsum = 0;
+    for (let m = 0; m < o.offsets.length; m++) {
+      const ka = a + o.offsets[m];
+      const kb = b + o.offsets[m];
+      if (ka < o.minFrame || kb < o.minFrame || ka > o.maxFrame || kb > o.maxFrame) {
+        if (m === o.windowRadius) return Infinity;
+        continue;
+      }
+      const d = dist(ka, kb);
+      if (d === null || d === undefined || !Number.isFinite(d)) {
+        if (m === o.windowRadius) return Infinity;
+        continue;
+      }
+      acc += weights[m] * d;
+      wsum += weights[m];
+    }
+    return wsum > 0 ? acc / wsum : Infinity;
+  };
+
+  // Near-tie breakers only: one percent per output frame of length drift, and
+  // a vanishing preference for not moving at all.
+  const adjusted = (cost, a, b) => {
+    let v = cost;
+    if (hasNominal) v *= 1 + (0.01 * Math.abs((b - a) - nominal) / stepFrames);
+    return v + (1e-9 * (Math.abs(a - o.startFrame) + Math.abs(b - o.endFrame)));
+  };
+
+  const anchorCost = costAt(o.startFrame, o.endFrame);
+  let best = {
+    a: o.startFrame,
+    b: o.endFrame,
+    cost: anchorCost,
+    score: Number.isFinite(anchorCost) ? adjusted(anchorCost, o.startFrame, o.endFrame) : Infinity
+  };
+  let evaluated = 1;
+
+  for (let da = -o.searchRadius; da <= o.searchRadius; da++) {
+    for (let db = -o.searchRadius; db <= o.searchRadius; db++) {
+      if (!da && !db) continue;
+      const a = o.startFrame + da;
+      const b = o.endFrame + db;
+      if (b <= a || a < o.minFrame || b > o.maxFrame) continue;
+      if (!acceptSpan(b - a)) continue;
+      const cost = costAt(a, b);
+      evaluated++;
+      if (!Number.isFinite(cost)) continue;
+      const score = adjusted(cost, a, b);
+      if (score < best.score) best = { a, b, cost, score };
+    }
+  }
+
+  const changed = best.a !== o.startFrame || best.b !== o.endFrame;
+  const gain = Number.isFinite(anchorCost) && anchorCost > 1e-9 && Number.isFinite(best.cost)
+    ? clamp01(1 - (best.cost / anchorCost))
+    : 0;
+
+  return {
+    startFrame: best.a,
+    endFrame: best.b,
+    cost: best.cost,
+    anchorCost,
+    gain,
+    changed,
+    evaluated
+  };
+}
+
+function seamJumpPairs(frameIndices, samples) {
+  const n = Array.isArray(frameIndices) ? frameIndices.length : 0;
+  if (n < 3) return null;
+  const interior = [];
+  const count = Math.max(1, Math.min(n - 1, Math.round(Number(samples) || 6)));
+  const used = new Set();
+  for (let s = 0; s < count; s++) {
+    // Spread over the loop, away from the seam itself.
+    const i = Math.min(n - 2, Math.floor(((s + 0.5) * (n - 1)) / count));
+    if (used.has(i)) continue;
+    used.add(i);
+    if (frameIndices[i + 1] !== frameIndices[i]) interior.push([frameIndices[i], frameIndices[i + 1]]);
+  }
+  return { seam: [frameIndices[n - 1], frameIndices[0]], interior };
+}
+
+/**
+ * Frames seamJumpRatio() reads, so the caller can decode them first.
+ */
+export function seamJumpFrames(frameIndices, samples = 6) {
+  const pairs = seamJumpPairs(frameIndices, samples);
+  if (!pairs) return [];
+  const set = new Set(pairs.seam);
+  for (const [a, b] of pairs.interior) {
+    set.add(a);
+    set.add(b);
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+/**
+ * How big the wrap from the last cell back to the first looks, relative to an
+ * ordinary step inside the loop — measured on the frames the sheet will really
+ * contain, not on the seam the search optimised. ~1 is invisible; 2 reads as
+ * a skipped frame; well below 1 is a hold (the pose repeats at the wrap).
+ *
+ * @param {number[]} frameIndices - Planned native frame of each cell
+ * @param {(a:number, b:number)=>(number|null)} dist - Distance between frames
+ * @returns {{ ratio:number, seam:number, typical:number, verdict:string }|null}
+ */
+export function seamJumpRatio(frameIndices, dist, samples = 6) {
+  const pairs = seamJumpPairs(frameIndices, samples);
+  if (!pairs || !pairs.interior.length) return null;
+  const seam = dist(pairs.seam[0], pairs.seam[1]);
+  if (seam === null || seam === undefined || !Number.isFinite(seam)) return null;
+  const steps = [];
+  for (const [a, b] of pairs.interior) {
+    const d = dist(a, b);
+    if (d !== null && d !== undefined && Number.isFinite(d)) steps.push(d);
+  }
+  const typical = median(steps);
+  // A subject that barely moves has no step to compare the wrap against.
+  if (!(typical > 1e-4)) return null;
+  const ratio = seam / typical;
+  let verdict = 'smooth';
+  if (ratio > 1.75) verdict = 'jump';
+  else if (ratio > 1.3) verdict = 'bump';
+  else if (ratio < 0.35) verdict = 'hold';
+  return { ratio, seam, typical, verdict };
+}

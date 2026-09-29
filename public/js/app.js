@@ -31,12 +31,22 @@ import { applySharpen, isSharpenIdentity, SHARPEN_DEFAULTS } from './sharpen.js'
 import { encodePNG, canEncodePNG } from './png-encoder.js';
 import { detectSubjectBounds, calculateGuidelineShift, alignFrameCanvas, drawSubImageSafe } from './subject-alignment.js';
 import {
-  computeLoopTimestamps,
   computeFrameDistance,
   scanVideoForOptimalLoops,
-  applyLoopCrossfade,
+  detectFrameGrid,
+  blendLoopTwin,
+  measureLoopSeam,
   createDiffHeatmapCanvas
 } from './loop-optimizer.js';
+import {
+  planLoopFrames,
+  planCrossfadeTwins,
+  describePacing,
+  evenPacingFpsOptions,
+  frameIndexAt,
+  frameTime,
+  seekTimeFor
+} from './frame-grid.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const DEFAULT_AUTO_FPS = 12;
@@ -601,6 +611,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // that swap as a new clip.
     rehostingVideo: false,
     rehost: null, // { tokens, promise } of the last recovery attempt
+    // The clip's native frame grid (frame-grid.js), measured once per clip on
+    // first use. null = not measured yet, or the clip has no regular grid
+    // (variable frame rate, no requestVideoFrameCallback) — sampling then
+    // falls back to plain times.
+    frameGrid: null,
+    frameGridAttempts: 0,
+    // What the last Generate could not do as asked (crossfade twins outside
+    // the clip, cells repeating a frame) — read once for the result toasts.
+    lastGenerateNotes: null,
     // Subject Alignment Vertical (X) & Horizontal (Y) Guidelines state
     guidelineEnabled: false,
     guidelineX: 0,
@@ -1441,6 +1460,46 @@ document.addEventListener('DOMContentLoaded', () => {
     throw new Error(`the browser treats this video as cross-origin data, so its pixels cannot be read — ${hint}`);
   }
 
+  /**
+   * The clip's native frame grid, measured on first use and cached for the
+   * clip (a blob: re-host is the same bytes, so it keeps it). Detection seeks
+   * the video, so it runs only right before Generate or a loop scan, never
+   * while the user may be scrubbing. Two failed attempts and the clip is left
+   * on plain time sampling.
+   */
+  let frameGridPending = null; // { token, promise } of the detection in flight
+  async function ensureFrameGrid() {
+    if (state.frameGrid) return state.frameGrid;
+    const loadToken = state.videoLoadToken;
+    // Detection seeks the video; two at once would read each other's frames.
+    if (frameGridPending?.token === loadToken) return frameGridPending.promise;
+    if (!state.videoLoaded || state.frameGridAttempts >= 2) return null;
+    // requestVideoFrameCallback is tied to rendering; a hidden tab would just
+    // time out every probe. Not counted as an attempt.
+    if (document.visibilityState === 'hidden') return null;
+    state.frameGridAttempts += 1;
+    const promise = (async () => {
+      let grid = null;
+      try {
+        grid = await detectFrameGrid(video, { duration: state.duration });
+      } catch (err) {
+        console.warn('Frame grid detection failed:', err);
+      }
+      if (loadToken !== state.videoLoadToken) return null;
+      if (grid) {
+        state.frameGrid = grid;
+        console.info(`Native frame grid: ${grid.fps.toFixed(3)} fps, phase ${(grid.origin * 1000).toFixed(2)} ms (${grid.samples} probes).`);
+      }
+      return grid;
+    })();
+    frameGridPending = { token: loadToken, promise };
+    try {
+      return await promise;
+    } finally {
+      if (frameGridPending?.promise === promise) frameGridPending = null;
+    }
+  }
+
   function resetVideoViewportAspect() {
     videoViewport.classList.remove('auto-aspect', 'portrait', 'landscape', 'square');
     videoViewport.style.removeProperty('--video-aspect-ratio');
@@ -1614,6 +1673,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.rehostingVideo) return;
     state.videoLoaded = true;
     state.duration = video.duration || 0;
+    state.frameGrid = null;
+    state.frameGridAttempts = 0;
     state.videoWidth = video.videoWidth || 640;
     state.videoHeight = video.videoHeight || 360;
     updateVideoViewportAspect();
@@ -6180,6 +6241,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       updateMoveToCleanerButtons();
       showToast('Sprite Sheet generated successfully!', 'success');
+      showGenerateNotes(state.lastGenerateNotes);
       startAnimationPreview();
     } catch (err) {
       console.error(err);
@@ -6195,8 +6257,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  function showGenerateNotes(notes) {
+    if (!notes) return;
+    if (notes.duplicateFrames > 0) {
+      showToast(`Vùng trim có ít frame gốc hơn số ô: ${notes.duplicateFrames} ô lặp lại frame trước nên animation sẽ khựng. Kéo dài trim hoặc giảm số frame.`, 'info');
+    }
+    if (notes.crossfadeRequested > notes.crossfadeApplied) {
+      showToast(notes.crossfadeApplied > 0
+        ? `Crossfade chỉ áp được ${notes.crossfadeApplied}/${notes.crossfadeRequested} frame: clip không đủ frame trước/sau vùng trim.`
+        : 'Không crossfade được: clip không có frame nào trước hoặc sau vùng trim để hoà vào mối nối.', 'info');
+    }
+  }
+
   async function generateSpriteSheet() {
     await ensureReadableVideo();
+    // Measured once per clip; every cell below is then a whole native frame,
+    // seeked at mid-frame (frame-grid.js). null = plain time sampling.
+    await ensureFrameGrid();
     const totalFrames = parseInt(inputFrames.value, 10) || 24;
     const rows = parseInt(inputRows.value, 10) || 6;
     const cols = parseInt(inputCols.value, 10) || 4;
@@ -6281,9 +6358,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // time it was painted at, and the mask providers below have to resolve those
     // bindings against this run's sampling — a sheet regenerated at a different
     // frame count still erases the same moment.
-    const startTime = state.trimStart;
-    const endTime = state.trimEnd;
-    const timestamps = computeLoopTimestamps(startTime, endTime, totalFrames, chkClosedLoop.checked);
+    //
+    // `timestamps` are the logical sample times — what strokes and regions bind
+    // to, unchanged from before. The video is seeked to `plan.seekTimes`: the
+    // middle of the native frame each cell shows, so a trim point sitting on a
+    // frame boundary can no longer land on either neighbour at random.
+    const plan = planLoopFrames({
+      start: state.trimStart,
+      end: state.trimEnd,
+      count: totalFrames,
+      closed: chkClosedLoop.checked,
+      grid: state.frameGrid,
+      duration: state.duration
+    });
+    const timestamps = plan.times;
 
     // The erase mask is NOT gated on chkTransparentFormat: erasing is an
     // explicit instruction to remove pixels, not a keying refinement, so it must
@@ -6357,14 +6445,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // preview brush reads it back either way, so it is filled on both paths.
     const frameOrigins = [];
 
+    // Seam crossfade: each blended cell is mixed with its periodic twin, the
+    // source frame exactly one loop length away (see planCrossfadeTwins). The
+    // twins are rendered through the same pipeline as the cells.
+    const crossfadeRequested = parseInt(sliderLoopCrossfade?.value, 10) || 0;
+    const crossfade = planCrossfadeTwins(plan, crossfadeRequested);
+    const totalRenders = totalFrames + crossfade.count;
+
     // Pause video during extraction
     video.pause();
 
-    for (let i = 0; i < totalFrames; i++) {
-      const targetTime = timestamps[i];
-      
-      // Seek video to target frame time
-      await seekVideoAsync(video, targetTime);
+    // Seeks, keys and composes one source frame into frameCanvas, the way cell
+    // `editIndex` is composed. Returns where the cell was cut from.
+    const renderCell = async (seekTime, editIndex) => {
+      await seekVideoAsync(video, seekTime);
 
       frameCtx.clearRect(0, 0, cellW, cellH);
 
@@ -6398,10 +6492,10 @@ document.addEventListener('DOMContentLoaded', () => {
       // Region then erase, and both before detectSubjectBounds: a detail that has
       // been removed must not go on dragging the subject alignment.
       if (regionsFor && isGuidelineActive) {
-        const regions = regionsFor(i);
+        const regions = regionsFor(editIndex);
         if (regions) applyRegionKeys(fullImgData, regions, regionGeometryFull);
       }
-      if (eraseMaskFullFor) applyEraseMask(fullImgData, eraseMaskFullFor(i));
+      if (eraseMaskFullFor) applyEraseMask(fullImgData, eraseMaskFullFor(editIndex));
       clearWatermarkFromImageData(
         fullImgData,
         { x: 0, y: 0, width: fullW, height: fullH },
@@ -6437,8 +6531,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      frameOrigins.push({ x: sourceX, y: sourceY });
-
       // Draw from fullFrameCanvas to frameCanvas preserving full dimensions and exact cell size
       drawSubImageSafe(frameCtx, fullFrameCanvas, sourceX, sourceY, cropW, cropH, 0, 0, cellW, cellH);
 
@@ -6447,6 +6539,12 @@ document.addEventListener('DOMContentLoaded', () => {
         applySharpen(cellImgData, sharpenOptions);
         frameCtx.putImageData(cellImgData, 0, 0);
       }
+
+      return { x: sourceX, y: sourceY };
+    };
+
+    for (let i = 0; i < totalFrames; i++) {
+      frameOrigins.push(await renderCell(plan.seekTimes[i], i));
 
       // Store individual frame canvas for animation preview
       const singleFrameCopy = document.createElement('canvas');
@@ -6465,15 +6563,28 @@ document.addEventListener('DOMContentLoaded', () => {
       sheetCtx.drawImage(frameCanvas, destX, destY);
 
       // Update progress
-      const pct = Math.round(((i + 1) / totalFrames) * 100);
+      const pct = Math.round(((i + 1) / totalRenders) * 100);
       progressBarFill.style.width = `${pct}%`;
     }
 
-    // Apply temporal seam crossfade blending if configured
-    const crossfadeFrames = parseInt(sliderLoopCrossfade?.value, 10) || 0;
-    if (crossfadeFrames > 0 && state.generatedFrames.length >= crossfadeFrames * 2) {
-      applyLoopCrossfade(state.generatedFrames, crossfadeFrames);
+    // Twins come after every cell, so the sheet is complete even if a twin
+    // seek fails, and the blend runs on the cell before region/erase (the
+    // unaligned path applies those below, after the crossfade).
+    for (let j = 0; j < crossfade.pairs.length; j++) {
+      const pair = crossfade.pairs[j];
+      await renderCell(pair.seekTime, pair.cell);
+      blendLoopTwin(state.generatedFrames[pair.cell], frameCanvas, pair.weight);
+      progressBarFill.style.width = `${Math.round(((totalFrames + j + 1) / totalRenders) * 100)}%`;
+    }
+    state.lastGenerateNotes = {
+      crossfadeRequested: crossfade.requested,
+      crossfadeApplied: crossfade.count,
+      duplicateFrames: plan.duplicateFrames,
+      pacing: describePacing(plan),
+      gridFps: plan.grid ? plan.grid.fps : null
+    };
 
+    if (crossfade.count > 0) {
       // Re-render full sprite sheet from the blended frames
       sheetCtx.clearRect(0, 0, sheetW, sheetH);
       for (let i = 0; i < totalFrames; i++) {
@@ -7005,16 +7116,75 @@ document.addEventListener('DOMContentLoaded', () => {
       : (mode === 'speed'
         ? 'giữ nguyên chu kỳ tốt nhất, tự chỉnh lại tốc độ'
         : 'ưu tiên viền nối mượt, số frame có thể lệch');
+    let gridNote = '';
+    const grid = state.frameGrid;
+    if (grid) {
+      // How many native frames one output frame advances. Anything but a whole
+      // number means the cells step unevenly (2, 3, 2, 3 …) — a steady judder
+      // that no seam can fix, so it is called out here, before the scan.
+      const perCell = (grid.fps * speed) / targetFps;
+      const even = Math.abs(perCell - Math.round(perCell)) < 0.02 && Math.round(perCell) >= 1;
+      gridNote = ` · video gốc ${formatFps(grid.fps)} FPS, 1 frame xuất = ${even ? Math.round(perCell) : perCell.toFixed(2)} frame gốc`;
+      if (!even) {
+        const listed = Array.from(selectLoopTargetFps?.options || []).map((o) => parseInt(o.value, 10));
+        const suggestions = evenPacingFpsOptions(grid.fps, speed, targetFrames)
+          .filter((opt) => listed.includes(opt.fps))
+          .map((opt) => `${opt.fps} FPS`);
+        gridNote += suggestions.length
+          ? ` — nhịp không đều, dễ giật; nhịp đều ở ${suggestions.join(', ')}`
+          : ' — nhịp không đều, dễ giật; thử đổi Speed';
+      }
+    }
     lblLoopIdealDurationText.textContent =
-      `Mục tiêu: ${targetFrames} frames @ ${speed}x (${targetFps} FPS) ➔ Chu kỳ video gốc lý tưởng ~${idealDuration.toFixed(2)}s · ${modeNote}`;
+      `Mục tiêu: ${targetFrames} frames @ ${speed}x (${targetFps} FPS) ➔ Chu kỳ video gốc lý tưởng ~${idealDuration.toFixed(2)}s · ${modeNote}${gridNote}`;
   }
+
+  function formatFps(fps) {
+    const rounded = Math.round(fps);
+    return Math.abs(fps - rounded) < 0.005 ? String(rounded) : fps.toFixed(2);
+  }
+
+  // Which native frames a candidate's loop shows, planned exactly the way
+  // Generate will plan it once the candidate is applied (closed loop).
+  function planCandidateFrames(cand, count) {
+    return planLoopFrames({
+      start: cand.startTime,
+      end: cand.endTime,
+      count,
+      closed: true,
+      grid: state.frameGrid,
+      duration: state.duration
+    });
+  }
+
+  // One inspector frame: seek, crop, scale to the inspector size and key.
+  async function captureInspectFrame(seekTime, w, h, cLeft, cTop, cropW, cropH) {
+    await seekVideoAsync(video, seekTime);
+    const cvs = document.createElement('canvas');
+    cvs.width = w;
+    cvs.height = h;
+    const ctx = cvs.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, w, h);
+    if (chkTransparentFormat.checked && state.keyColors.length > 0) {
+      const keyResult = runKeyer(ctx.getImageData(0, 0, w, h), buildChromaOptions({ enabled: true }));
+      ctx.putImageData(keyResult.imageData, 0, 0);
+    }
+    return cvs;
+  }
+
+  const SEAM_VERDICT_LABELS = {
+    smooth: 'nối mượt',
+    bump: 'nối hơi khựng',
+    jump: 'nối giật',
+    hold: 'nối đứng hình'
+  };
 
   selectLoopSpeed?.addEventListener('change', updateLoopTargetHint);
   inputLoopTargetFrames?.addEventListener('input', updateLoopTargetHint);
   selectLoopTargetFps?.addEventListener('change', updateLoopTargetHint);
   selectLoopFrameMode?.addEventListener('change', updateLoopTargetHint);
 
-  function openLoopModal() {
+  async function openLoopModal() {
     if (!state.videoLoaded) {
       showToast('Vui lòng tải video trước khi tìm chu kỳ Loop', 'error');
       return;
@@ -7046,6 +7216,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     updateLoopTargetHint();
 
+    // The inspector, the nudges and the scan all work in native frames.
+    await ensureFrameGrid();
+    updateLoopTargetHint();
+
     if (activeSeamCandidate) {
       inspectSeamCandidate(activeSeamCandidate);
     } else {
@@ -7054,6 +7228,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function closeLoopModal() {
+    inspectSeq += 1; // drop an inspect still seeking in the background
     stopSeamPlayer();
     stopFullCyclePlayer();
     if (modalLoopFinder) modalLoopFinder.style.display = 'none';
@@ -7081,8 +7256,14 @@ document.addEventListener('DOMContentLoaded', () => {
     await inspectSeamCandidate(curCand);
   }
 
+  // Every inspect seeks the video many times; a newer one (a nudge, another
+  // card) supersedes the one in flight instead of interleaving seeks with it.
+  let inspectSeq = 0;
+
   async function inspectSeamCandidate(cand) {
     if (!cand || !state.videoLoaded) return;
+    const seq = ++inspectSeq;
+    const stale = () => seq !== inspectSeq;
     activeSeamCandidate = cand;
     if (btnApplyLoopToTimeline) btnApplyLoopToTimeline.disabled = false;
 
@@ -7099,49 +7280,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const inspectW = Math.min(220, cropW);
     const inspectH = Math.round(inspectW * (cropH / cropW));
 
-    // 1. Capture Start Frame
-    await seekVideoAsync(video, cand.startTime);
-    if (seamStartCanvas) {
-      seamStartCanvas.width = inspectW;
-      seamStartCanvas.height = inspectH;
-      const ctxStart = seamStartCanvas.getContext('2d');
-      ctxStart.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, inspectW, inspectH);
-      if (chkTransparentFormat.checked && state.keyColors.length > 0) {
-        let imgDataS = ctxStart.getImageData(0, 0, inspectW, inspectH);
-        const startKeyResult = runKeyer(imgDataS, buildChromaOptions({ enabled: true }));
-        imgDataS = startKeyResult.imageData;
-        ctxStart.putImageData(imgDataS, 0, 0);
-      }
-    }
+    const totalFrames = cand.calculatedFrames || parseInt(inputLoopTargetFrames?.value, 10) || 24;
+    const plan = planCandidateFrames(cand, totalFrames);
 
-    // 2. Capture End Frame
-    await seekVideoAsync(video, cand.endTime);
-    if (seamEndCanvas) {
-      seamEndCanvas.width = inspectW;
-      seamEndCanvas.height = inspectH;
-      const ctxEnd = seamEndCanvas.getContext('2d');
-      ctxEnd.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, inspectW, inspectH);
-      if (chkTransparentFormat.checked && state.keyColors.length > 0) {
-        let imgDataE = ctxEnd.getImageData(0, 0, inspectW, inspectH);
-        const endKeyResult = runKeyer(imgDataE, buildChromaOptions({ enabled: true }));
-        imgDataE = endKeyResult.imageData;
-        ctxEnd.putImageData(imgDataE, 0, 0);
-      }
+    // 1–2. The loop's first frame, and the frame one loop length later — the
+    // one the wrap stands in for. A perfect loop makes them identical.
+    const startFrame = await captureInspectFrame(plan.seekTimes[0], inspectW, inspectH, cLeft, cTop, cropW, cropH);
+    if (stale()) return;
+    const endFrame = await captureInspectFrame(seekTimeFor(cand.endTime, state.frameGrid), inspectW, inspectH, cLeft, cTop, cropW, cropH);
+    if (stale()) return;
+    for (const [target, frame] of [[seamStartCanvas, startFrame], [seamEndCanvas, endFrame]]) {
+      if (!target) continue;
+      target.width = inspectW;
+      target.height = inspectH;
+      target.getContext('2d').drawImage(frame, 0, 0);
     }
 
     // 3. Compute Frame Distance & Similarity Score
+    let badgeText = '';
     if (seamStartCanvas && seamEndCanvas) {
-      const ctxStart = seamStartCanvas.getContext('2d');
-      const ctxEnd = seamEndCanvas.getContext('2d');
-      const imgDataA = ctxStart.getImageData(0, 0, inspectW, inspectH);
-      const imgDataB = ctxEnd.getImageData(0, 0, inspectW, inspectH);
+      const imgDataA = startFrame.getContext('2d').getImageData(0, 0, inspectW, inspectH);
+      const imgDataB = endFrame.getContext('2d').getImageData(0, 0, inspectW, inspectH);
       const metrics = computeFrameDistance(imgDataA, imgDataB, inspectW, inspectH);
       const scorePct = metrics.similarity;
 
-      const candFrames = cand.calculatedFrames || 24;
       const candSpeed = cand.speed || 1;
+      badgeText = `${scorePct}% khớp viền · ${totalFrames}f @ ${candSpeed}x`;
       if (loopSeamScoreBadge) {
-        loopSeamScoreBadge.textContent = `${scorePct}% khớp viền · ${candFrames}f @ ${candSpeed}x`;
+        loopSeamScoreBadge.textContent = badgeText;
         loopSeamScoreBadge.className = `loop-score-badge ${scorePct >= 90 ? 'high' : 'medium'}`;
       }
 
@@ -7152,42 +7318,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 5. Setup Live Seam Mini Player
-    await setupSeamPlayer(cand, inspectW, inspectH, cLeft, cTop, cropW, cropH);
+    await setupSeamPlayer(plan, inspectW, inspectH, cLeft, cTop, cropW, cropH, stale);
+    if (stale()) return;
 
-    // 6. Setup Full Action 24-Frame Player
-    await setupFullCyclePlayer(cand, inspectW, inspectH, cLeft, cTop, cropW, cropH);
+    // 6. Setup Full Action Player
+    await setupFullCyclePlayer(plan, inspectW, inspectH, cLeft, cTop, cropW, cropH, stale);
+    if (stale()) return;
+
+    // 7. Judge the wrap as it will play: last cell → first cell, against an
+    // ordinary step of the same loop. Start/end similarity alone cannot see a
+    // loop whose seam repeats a pose (a hold) or skips one (a jump).
+    const seam = measureLoopSeam(fullCycleFrames);
+    if (seam && loopSeamScoreBadge && badgeText) {
+      loopSeamScoreBadge.textContent = `${badgeText} · ${SEAM_VERDICT_LABELS[seam.verdict] || seam.verdict} ×${seam.ratio.toFixed(2)}`;
+      loopSeamScoreBadge.title = 'Độ chênh của bước nối (frame cuối → frame đầu) so với một bước bình thường trong loop. ×1.00 là nối mượt như mọi bước khác.';
+      if (seam.verdict !== 'smooth') loopSeamScoreBadge.className = 'loop-score-badge medium';
+    }
   }
 
-  async function setupSeamPlayer(cand, w, h, cLeft, cTop, cropW, cropH) {
+  async function setupSeamPlayer(plan, w, h, cLeft, cTop, cropW, cropH, stale = () => false) {
     stopSeamPlayer();
     seamPlayerFrames = [];
 
-    const totalFrames = cand.calculatedFrames || parseInt(inputFrames?.value, 10) || 24;
-    const dt = Math.max(0.03, cand.duration / totalFrames);
-    const times = [
-      Math.max(0, cand.endTime - (dt * 2)),
-      Math.max(0, cand.endTime - dt),
-      cand.endTime,
-      cand.startTime,
-      Math.min(state.duration, cand.startTime + dt),
-      Math.min(state.duration, cand.startTime + (dt * 2))
-    ];
+    // The three cells before the wrap and the three after it, exactly as the
+    // loop plays them — the old version added the end frame as a cell of its
+    // own, which played the seam pose twice.
+    const N = plan.count;
+    const cells = N <= 6
+      ? Array.from({ length: N }, (_, i) => i)
+      : [N - 3, N - 2, N - 1, 0, 1, 2];
 
-    for (const t of times) {
-      await seekVideoAsync(video, t);
-      const cvs = document.createElement('canvas');
-      cvs.width = w;
-      cvs.height = h;
-      const ctx = cvs.getContext('2d');
-      ctx.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, w, h);
-      if (chkTransparentFormat.checked && state.keyColors.length > 0) {
-        let img = ctx.getImageData(0, 0, w, h);
-        const imgKeyResult = runKeyer(img, buildChromaOptions({ enabled: true }));
-        img = imgKeyResult.imageData;
-        ctx.putImageData(img, 0, 0);
-      }
-      seamPlayerFrames.push(cvs);
+    const frames = [];
+    for (const cell of cells) {
+      frames.push(await captureInspectFrame(plan.seekTimes[cell], w, h, cLeft, cTop, cropW, cropH));
+      if (stale()) return;
     }
+    seamPlayerFrames = frames;
 
     if (seamLoopPlayerCanvas) {
       seamLoopPlayerCanvas.width = w;
@@ -7230,29 +7396,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  async function setupFullCyclePlayer(cand, w, h, cLeft, cTop, cropW, cropH) {
+  async function setupFullCyclePlayer(plan, w, h, cLeft, cTop, cropW, cropH, stale = () => false) {
     stopFullCyclePlayer();
     fullCycleFrames = [];
 
-    const totalFrames = cand.calculatedFrames || parseInt(inputLoopTargetFrames?.value, 10) || 24;
-    const timestamps = computeLoopTimestamps(cand.startTime, cand.endTime, totalFrames, true);
-
-    for (let i = 0; i < timestamps.length; i++) {
-      const t = timestamps[i];
-      await seekVideoAsync(video, t);
-      const cvs = document.createElement('canvas');
-      cvs.width = w;
-      cvs.height = h;
-      const ctx = cvs.getContext('2d');
-      ctx.drawImage(video, cLeft, cTop, cropW, cropH, 0, 0, w, h);
-      if (chkTransparentFormat.checked && state.keyColors.length > 0) {
-        let img = ctx.getImageData(0, 0, w, h);
-        const cycleKeyResult = runKeyer(img, buildChromaOptions({ enabled: true }));
-        img = cycleKeyResult.imageData;
-        ctx.putImageData(img, 0, 0);
-      }
-      fullCycleFrames.push(cvs);
+    const frames = [];
+    for (let i = 0; i < plan.count; i++) {
+      frames.push(await captureInspectFrame(plan.seekTimes[i], w, h, cLeft, cTop, cropW, cropH));
+      if (stale()) return;
     }
+    fullCycleFrames = frames;
 
     if (seamFullCycleCanvas) {
       seamFullCycleCanvas.width = w;
@@ -7333,7 +7486,9 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     try {
+      await ensureFrameGrid();
       const candidates = await scanVideoForOptimalLoops(video, {
+        frameGrid: state.frameGrid,
         duration: state.duration,
         searchStart,
         searchEnd,
@@ -7405,6 +7560,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const frameNote = cand.exactFrames
         ? (speedChanged ? ` <span style="color:#38bdf8;">· đúng mục tiêu, tốc độ ${cand.requestedSpeed}x ➔ ${candSpeed}x</span>` : ' <span style="color:#10b981;">· đúng mục tiêu</span>')
         : ` <span style="color:#f59e0b;">· lệch ${candFrames - wantFrames > 0 ? '+' : ''}${candFrames - wantFrames}f so với ${wantFrames}f</span>`;
+      const seamNote = cand.seamJump
+        ? `<span style="color:${cand.seamJump.verdict === 'smooth' ? '#10b981' : '#f59e0b'};">↻ ${SEAM_VERDICT_LABELS[cand.seamJump.verdict] || cand.seamJump.verdict} ×${cand.seamJump.ratio.toFixed(2)}</span>`
+        : '';
+      const pacingNote = cand.pacing
+        ? ` · <span style="color:${cand.pacing.even ? '#94a3b8' : '#f59e0b'};">${cand.pacing.label} frame gốc/ô${cand.pacing.even ? '' : ' (nhịp không đều)'}</span>`
+        : '';
+      const gridLine = cand.spanFrames != null
+        ? `<span>🎞 ${cand.spanFrames} frame gốc${cand.frameGridFps ? ` @ ${formatFps(cand.frameGridFps)} FPS` : ''}${pacingNote}${seamNote ? ` · ${seamNote}` : ''}</span>`
+        : (seamNote ? `<span>${seamNote}</span>` : '');
 
       card.innerHTML = `
         <div class="loop-card-top">
@@ -7414,6 +7578,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="loop-card-details">
           <span>${formatTime(cand.startTime)} → ${formatTime(cand.endTime)} (${cand.duration.toFixed(3)}s video)</span>
           <span>⚡ ${candSpeed}x Speed ➔ <strong>${candFrames} frames</strong> @ ${candFps} FPS (${cand.effectiveDuration.toFixed(2)}s)${frameNote}</span>
+          ${gridLine}
         </div>
         <div class="loop-card-thumbs">
           <img class="loop-card-thumb-img" src="${cand.startThumb}" alt="Start" title="Frame 0 (Start)">
@@ -7454,8 +7619,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!cand) return;
     // Snapping here would undo the sub-frame refinement and, with it, the
     // guaranteed frame count: a 0.1s grid is ~3 source frames of slop.
-    applyTrimStart(cand.startTime, false, { snap: false });
-    applyTrimEnd(cand.endTime, true, { snap: false });
+    //
+    // Each setter clamps against the other end as it stands, so a candidate
+    // lying entirely after the current trim must move its end first, or its
+    // start is pulled back to the old end and the loop gets the wrong length.
+    if (cand.startTime >= state.trimEnd - U.MIN_TRIM_DURATION) {
+      applyTrimEnd(cand.endTime, false, { snap: false });
+      applyTrimStart(cand.startTime, true, { snap: false });
+    } else {
+      applyTrimStart(cand.startTime, false, { snap: false });
+      applyTrimEnd(cand.endTime, true, { snap: false });
+    }
+    // Candidates are periods — the end frame is the start frame one cycle
+    // later. Open-range sampling would put that repeat into the last cell.
+    if (chkClosedLoop && !chkClosedLoop.checked) {
+      chkClosedLoop.checked = true;
+      chkClosedLoop.dispatchEvent(new Event('change'));
+    }
 
     if (cand.speed) {
       setPlaybackSpeed(cand.speed, { toast: false, syncInputs: true, persist: true });
@@ -7488,37 +7668,34 @@ document.addEventListener('DOMContentLoaded', () => {
     else startFullCyclePlayer();
   });
 
-  btnNudgeStartBack?.addEventListener('click', async () => {
-    if (!activeSeamCandidate) return;
-    activeSeamCandidate.startTime = Math.max(0, activeSeamCandidate.startTime - 0.02);
-    activeSeamCandidate.duration = Math.max(0.05, activeSeamCandidate.endTime - activeSeamCandidate.startTime);
-    activeSeamCandidate.effectiveDuration = activeSeamCandidate.duration / (activeSeamCandidate.speed || 1);
-    await inspectSeamCandidate(activeSeamCandidate);
-  });
+  // One native frame when the grid is known (the inspector then shows exactly
+  // the neighbouring frame), 0.02 s otherwise.
+  function nudgeLoopTime(time, direction) {
+    const grid = state.frameGrid;
+    if (!grid) return time + (0.02 * direction);
+    return frameTime(frameIndexAt(time, grid) + direction, grid);
+  }
 
-  btnNudgeStartForward?.addEventListener('click', async () => {
-    if (!activeSeamCandidate) return;
-    activeSeamCandidate.startTime = Math.min(activeSeamCandidate.endTime - 0.05, activeSeamCandidate.startTime + 0.02);
-    activeSeamCandidate.duration = Math.max(0.05, activeSeamCandidate.endTime - activeSeamCandidate.startTime);
-    activeSeamCandidate.effectiveDuration = activeSeamCandidate.duration / (activeSeamCandidate.speed || 1);
-    await inspectSeamCandidate(activeSeamCandidate);
-  });
+  async function nudgeActiveCandidate(edge, direction) {
+    const cand = activeSeamCandidate;
+    if (!cand) return;
+    const minSpan = 0.05;
+    if (edge === 'start') {
+      const next = nudgeLoopTime(cand.startTime, direction);
+      cand.startTime = Math.max(0, Math.min(cand.endTime - minSpan, next));
+    } else {
+      const next = nudgeLoopTime(cand.endTime, direction);
+      cand.endTime = Math.min(state.duration, Math.max(cand.startTime + minSpan, next));
+    }
+    cand.duration = Math.max(minSpan, cand.endTime - cand.startTime);
+    cand.effectiveDuration = cand.duration / (cand.speed || 1);
+    await inspectSeamCandidate(cand);
+  }
 
-  btnNudgeEndBack?.addEventListener('click', async () => {
-    if (!activeSeamCandidate) return;
-    activeSeamCandidate.endTime = Math.max(activeSeamCandidate.startTime + 0.05, activeSeamCandidate.endTime - 0.02);
-    activeSeamCandidate.duration = Math.max(0.05, activeSeamCandidate.endTime - activeSeamCandidate.startTime);
-    activeSeamCandidate.effectiveDuration = activeSeamCandidate.duration / (activeSeamCandidate.speed || 1);
-    await inspectSeamCandidate(activeSeamCandidate);
-  });
-
-  btnNudgeEndForward?.addEventListener('click', async () => {
-    if (!activeSeamCandidate) return;
-    activeSeamCandidate.endTime = Math.min(state.duration, activeSeamCandidate.endTime + 0.02);
-    activeSeamCandidate.duration = Math.max(0.05, activeSeamCandidate.endTime - activeSeamCandidate.startTime);
-    activeSeamCandidate.effectiveDuration = activeSeamCandidate.duration / (activeSeamCandidate.speed || 1);
-    await inspectSeamCandidate(activeSeamCandidate);
-  });
+  btnNudgeStartBack?.addEventListener('click', () => nudgeActiveCandidate('start', -1));
+  btnNudgeStartForward?.addEventListener('click', () => nudgeActiveCandidate('start', 1));
+  btnNudgeEndBack?.addEventListener('click', () => nudgeActiveCandidate('end', -1));
+  btnNudgeEndForward?.addEventListener('click', () => nudgeActiveCandidate('end', 1));
 
   btnApplyLoopToTimeline?.addEventListener('click', () => {
     if (activeSeamCandidate) {

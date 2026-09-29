@@ -16,8 +16,23 @@ import {
   buildFrameDescriptor,
   descriptorDistance,
   findLoopCandidates,
-  hasUsableMatte
+  hasUsableMatte,
+  refineSeamOnFrames,
+  seamJumpFrames,
+  seamJumpRatio,
+  seamRefinementFrames
 } from './loop-analysis.js';
+import {
+  describePacing,
+  frameIndexAt,
+  frameSeekTime,
+  frameTime,
+  inferFrameGrid,
+  isValidGrid,
+  lastFrameIndex,
+  planLoopFrames,
+  sampleTimes
+} from './frame-grid.js';
 
 /**
  * Calculates sampling timestamps for animation generation.
@@ -29,34 +44,7 @@ import {
  * @returns {number[]} Array of timestamps in seconds
  */
 export function computeLoopTimestamps(startTime, endTime, frameCount, isClosedLoop = true) {
-  const count = Math.max(1, Math.round(Number(frameCount) || 1));
-  const s = Math.max(0, Number(startTime) || 0);
-  const e = Math.max(s, Number(endTime) || s);
-  const span = e - s;
-
-  const timestamps = [];
-  if (count === 1 || span <= 0) {
-    for (let i = 0; i < count; i++) timestamps.push(s);
-    return timestamps;
-  }
-
-  if (isClosedLoop) {
-    // Closed periodic cycle: N intervals across [s, e).
-    // Frame N-1 ends right before e, so when animation loops back to Frame 0 (at s === e in cycle),
-    // there is NO duplicate frame at the boundary.
-    const step = span / count;
-    for (let i = 0; i < count; i++) {
-      timestamps.push(s + (i * step));
-    }
-  } else {
-    // Open linear range: N-1 intervals across [s, e]. Last frame is exactly at e.
-    const step = span / (count - 1);
-    for (let i = 0; i < count; i++) {
-      timestamps.push(s + (i * step));
-    }
-  }
-
-  return timestamps;
+  return sampleTimes(startTime, endTime, frameCount, isClosedLoop);
 }
 
 /**
@@ -109,11 +97,113 @@ function defaultSeek(duration) {
 }
 
 /**
+ * Seeks and reports the presentation timestamp of the frame that ends up on
+ * screen, via requestVideoFrameCallback. `video.currentTime` cannot answer
+ * that: it echoes the time that was asked for.
+ *
+ * The callback is registered before the seek starts so it cannot be missed,
+ * and it lands a few ms after 'seeked'. Seeking to the frame already on
+ * screen presents nothing new and the callback never fires, hence the short
+ * wait after 'seeked' before giving up on this probe.
+ */
+function seekForMediaTime(video, time, { timeout = 1500, settle = 250 } = {}) {
+  return new Promise((resolve) => {
+    let done = false;
+    let seeked = false;
+    let mediaTime = null;
+    let handle = null;
+    let settleTimer = null;
+    let hardTimer = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      video.removeEventListener('seeked', onSeeked);
+      if (handle !== null && typeof video.cancelVideoFrameCallback === 'function') {
+        video.cancelVideoFrameCallback(handle);
+      }
+      clearTimeout(settleTimer);
+      clearTimeout(hardTimer);
+      resolve(mediaTime);
+    };
+    const onSeeked = () => {
+      seeked = true;
+      if (mediaTime !== null) finish();
+      else settleTimer = setTimeout(finish, settle);
+    };
+    handle = video.requestVideoFrameCallback((now, meta) => {
+      handle = null;
+      const t = Number(meta?.mediaTime);
+      mediaTime = Number.isFinite(t) ? t : null;
+      if (seeked) finish();
+    });
+    video.addEventListener('seeked', onSeeked);
+    hardTimer = setTimeout(finish, timeout);
+    video.currentTime = time;
+  });
+}
+
+// Spread over the clip and deliberately irrational-looking, so the probes do
+// not all share one phase against a round frame rate.
+const GRID_PROBE_FRACTIONS = [0.137, 0.263, 0.419, 0.577, 0.691, 0.853];
+
+/**
+ * Measures the video's native frame grid (frame duration and phase) from real
+ * presentation timestamps. See frame-grid.js for why every seek depends on it.
+ *
+ * A handful of scattered probes pin the phase; a probe half a millisecond
+ * before a known PTS lands on the previous frame, which pins the frame
+ * duration. Returns null when the browser has no requestVideoFrameCallback,
+ * the tab is hidden (callbacks are tied to rendering), or the clip is
+ * variable-frame-rate — callers then fall back to plain time sampling.
+ *
+ * @param {HTMLVideoElement} video
+ * @param {{duration?: number}} [options]
+ * @returns {Promise<Object|null>} inferFrameGrid() result
+ */
+export async function detectFrameGrid(video, options = {}) {
+  if (!video || typeof video.requestVideoFrameCallback !== 'function') return null;
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return null;
+  const duration = Number(options.duration) || video.duration || 0;
+  if (!Number.isFinite(duration) || duration <= 0.1) return null;
+
+  const originalTime = video.currentTime;
+  video.pause();
+
+  const times = [];
+  const limit = Math.max(0, duration - 0.05);
+  try {
+    for (const frac of GRID_PROBE_FRACTIONS) {
+      const t = await seekForMediaTime(video, Math.min(limit, frac * duration));
+      if (t !== null) times.push(t);
+    }
+    // Two adjacency probes: one would do, the second keeps a single odd
+    // decode from deciding the frame duration on its own.
+    const anchors = times.filter((t) => t > 0.001);
+    for (const anchor of [anchors[0], anchors[3] ?? anchors[1]]) {
+      if (anchor === undefined) continue;
+      const t = await seekForMediaTime(video, anchor - 0.0005);
+      if (t !== null) times.push(t);
+    }
+  } finally {
+    await seekForMediaTime(video, originalTime, { timeout: 1000, settle: 0 });
+  }
+
+  return inferFrameGrid(times);
+}
+
+/**
  * Scans video range to detect candidate seamless loop cycles.
  *
- * Pipeline: adaptive sampling -> per-frame descriptors -> coarse lag profile
- * (periodicity) -> fine windowed seam cost -> contrast-normalised scoring ->
- * sub-sample refinement of the winners.
+ * Pipeline: native-frame sampling -> per-frame descriptors -> coarse lag
+ * profile (periodicity) -> fine windowed seam cost -> contrast-normalised
+ * scoring -> seam refinement on individual native frames -> as-played seam
+ * check on the frames the sheet will actually contain.
+ *
+ * With `options.frameGrid` (from detectFrameGrid) every sample is a whole
+ * native frame: seeks aim at the middle of the frame and the reported time is
+ * that frame's PTS, so a candidate's start/end map back to exactly the frames
+ * that were compared. Without a grid a synthetic lattice finer than the
+ * sampling step stands in for it.
  *
  * @param {HTMLVideoElement} video - HTML5 video element
  * @param {Object} [options={}] - Scan parameters
@@ -127,9 +217,10 @@ function defaultSeek(duration) {
  * @param {number} [options.maxCycleDuration] - Maximum valid loop cycle length in seconds (source time)
  * @param {number} [options.sampleRate] - Sampling frequency in frames per second (auto when omitted)
  * @param {number} [options.maxSamples=320] - Hard cap on captured frames (seek budget)
- * @param {boolean} [options.refine=true] - Run the sub-sample seam refinement pass
+ * @param {boolean} [options.refine=true] - Run the native-frame seam refinement pass
  * @param {number} [options.refineCandidates=3] - How many top candidates to refine
  * @param {number} [options.maxCandidates=6] - How many candidates to return
+ * @param {Object|null} [options.frameGrid] - Native frame grid (detectFrameGrid)
  * @param {Object} [options.chromaOptions] - Chroma key configuration for background removal
  * @param {Object} [options.cropOptions] - Video crop margins { top, bottom, left, right }
  * @param {Function} [options.onProgress] - Progress callback (percentage: number, statusText: string)
@@ -176,6 +267,18 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
     ? options.seekVideoAsync
     : defaultSeek(duration);
 
+  // The lattice every sample, seam and trim point lives on. A real grid means
+  // "frame k" is a decoded frame; the synthetic one is only a fine time grid,
+  // seeked at its nodes exactly like the old time sampling was.
+  const nativeGrid = isValidGrid(options.frameGrid) ? options.frameGrid : null;
+  const lattice = nativeGrid || { frameDuration: Math.max(stepTime / 4, 1 / 120), origin: 0 };
+  const delta = lattice.frameDuration;
+  const maxFrame = lastFrameIndex(lattice, duration);
+  const seekTimeOf = (k) => (nativeGrid
+    ? frameSeekTime(k, nativeGrid)
+    : Math.max(0, Math.min(duration, frameTime(k, lattice))));
+  const timeOf = (k) => frameTime(k, lattice);
+
   const originalTime = video.currentTime;
   video.pause();
 
@@ -199,17 +302,16 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
   const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
 
   let seekCount = 0;
+  // Every pass asks for frames by index, so one decode serves the coarse
+  // scan, the refinement strips and the seam check alike.
+  const captures = new Map();
 
-  /**
-   * Seeks, grabs the frame, keys it and reduces it to a descriptor.
-   * The timestamp reported back is the decoder's actual position, not the
-   * requested one — those differ by up to half a source frame and that error
-   * used to land straight in the returned trim points.
-   */
-  async function captureSample(requestedTime) {
-    await seekAsync(video, Math.max(0, Math.min(duration, requestedTime)));
+  /** Seeks to native frame `k`, keys it and reduces it to a descriptor. */
+  async function captureFrame(k) {
+    const hit = captures.get(k);
+    if (hit) return hit;
+    await seekAsync(video, seekTimeOf(k));
     seekCount++;
-    const actualTime = Number.isFinite(video.currentTime) ? video.currentTime : requestedTime;
 
     thumbCtx.clearRect(0, 0, thumbW, thumbH);
     thumbCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, thumbW, thumbH);
@@ -219,11 +321,21 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
       imgData = runKeyer(imgData, chromaOptions).imageData;
     }
 
-    return {
-      time: actualTime,
+    const sample = {
+      frame: k,
+      time: timeOf(k),
       imgData,
       descriptor: buildFrameDescriptor(imgData, thumbW, thumbH)
     };
+    captures.set(k, sample);
+    return sample;
+  }
+
+  async function captureFrames(list, onEach) {
+    for (let n = 0; n < list.length; n++) {
+      await captureFrame(list[n]);
+      if (onEach) onEach(n);
+    }
   }
 
   function thumbUrl(imgData) {
@@ -231,43 +343,27 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
     return thumbCanvas.toDataURL('image/jpeg', 0.8);
   }
 
-  // --- Pass 1: capture the coarse grid. ---
-  const plannedCount = Math.max(1, Math.floor((searchEnd - searchStart) / stepTime) + 1);
-  onProgress(4, `Đang trích xuất ~${plannedCount} frames (${searchSpan.toFixed(2)}s video @ ${speed}x)...`);
+  // --- Pass 1: capture the coarse grid, in whole lattice frames. ---
+  const kFirst = Math.min(maxFrame, frameIndexAt(searchStart, lattice));
+  const kLast = Math.max(kFirst, Math.min(maxFrame, frameIndexAt(searchEnd, lattice)));
+  let stride = Math.max(1, Math.round(stepTime / delta));
+  while (Math.floor((kLast - kFirst) / stride) + 1 > maxSamples) stride++;
 
-  const samples = [];
-  const times = [];
-  const descriptors = [];
-  let lastTime = -Infinity;
+  const coarseFrames = [];
+  for (let k = kFirst; k <= kLast; k += stride) coarseFrames.push(k);
+  const plannedCount = coarseFrames.length;
+  const gridNote = nativeGrid ? `, lưới ${nativeGrid.fps.toFixed(nativeGrid.standard && Number.isInteger(nativeGrid.fps) ? 0 : 2)} fps gốc` : '';
+  onProgress(4, `Đang trích xuất ~${plannedCount} frames (${searchSpan.toFixed(2)}s video @ ${speed}x${gridNote})...`);
 
-  for (let n = 0; n < plannedCount; n++) {
-    const t = Math.min(searchEnd, searchStart + (n * stepTime));
-    const sample = await captureSample(t);
-
-    // A grid finer than the source frame rate returns the same decoded frame
-    // twice; keeping it would fake a zero-cost seam.
-    if (sample.time > lastTime + 1e-4) {
-      lastTime = sample.time;
-      samples.push(sample);
-      times.push(sample.time);
-      descriptors.push(sample.descriptor);
-    }
-
+  await captureFrames(coarseFrames, (n) => {
     if (n % 5 === 0 || n === plannedCount - 1) {
       onProgress(4 + Math.round(((n + 1) / plannedCount) * 56), `Trích xuất frame ${n + 1}/${plannedCount}...`);
     }
-  }
+  });
 
-  // When the sampling grid outran the source frame rate, duplicate decodes were
-  // dropped above; the smallest surviving gap is then the native frame duration,
-  // which is the finest step refinement can usefully ask for.
-  let minGap = Infinity;
-  for (let i = 1; i < times.length; i++) {
-    const gap = times[i] - times[i - 1];
-    if (gap > 1e-4 && gap < minGap) minGap = gap;
-  }
-  const droppedDuplicates = plannedCount - times.length;
-  const nativeStep = droppedDuplicates > 0 && Number.isFinite(minGap) ? minGap : 0;
+  const samples = coarseFrames.map((k) => captures.get(k));
+  const times = samples.map((sample) => sample.time);
+  const descriptors = samples.map((sample) => sample.descriptor);
 
   if (descriptors.length < 6) {
     await seekAsync(video, originalTime);
@@ -289,242 +385,275 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
     frameMode,
     frameTolerance: Math.max(0, Math.round(Number(options.frameTolerance) || 0)),
     maxCandidates: Math.max(1, Math.min(12, Math.round(Number(options.maxCandidates) || 6))),
-    minSeparation: Math.max(stepTime * 1.5, 0.12)
+    minSeparation: Math.max(stride * delta * 1.5, 0.12)
   });
 
-  let candidates = analysis.candidates;
+  const candidates = analysis.candidates;
   if (!candidates.length) {
     await seekAsync(video, originalTime);
     onProgress(100, 'Không tìm thấy chu kỳ lặp rõ rệt.');
     return [];
   }
 
-  // --- Pass 3: sub-sample refinement of the winners. ---
-  // The coarse grid quantises every seam to `stepTime`; at 12 fps sampling that
-  // is ~1.5 source frames of slop, which is exactly the residual jump users see.
+  const resolvedMode = analysis.diagnostics.frameMode;
+  const fineCtx = { matte, coarse: false };
+  const dist = (a, b) => {
+    const A = captures.get(a);
+    const B = captures.get(b);
+    if (!A || !B) return null;
+    return a === b ? 0 : descriptorDistance(A.descriptor, B.descriptor, fineCtx);
+  };
+  // Lattice frames per output frame: the spacing of the cells in the sheet.
+  const stepFrames = outputStep / delta;
+
+  for (const cand of candidates) {
+    cand.startFrame = samples[cand.startIndex].frame;
+    cand.endFrame = samples[cand.endIndex].frame;
+  }
+
+  // --- Pass 3: seam refinement on individual lattice frames. ---
+  // The coarse grid only offers every `stride`-th frame as a seam, and scores
+  // it with neighbours one sample apart. Here both ends move independently
+  // frame by frame, and the neighbours sit one *output* step apart — the
+  // spacing the loop is played at.
   const refineEnabled = options.refine !== false;
   const refineCount = Math.max(0, Math.min(candidates.length, Math.round(Number(options.refineCandidates ?? 3) || 0)));
 
   if (refineEnabled && refineCount > 0) {
-    const fineStep = Math.max(stepTime / 4, nativeStep);
-    const STRIP = 4; // strip covers offsets -4..4, so a +-3 shift keeps a +-1 window
-    const SHIFT = 3;
-    const lockDuration = analysis.diagnostics.frameMode === 'exact';
+    const searchRadius = Math.max(2, Math.min(8, Math.ceil(stride / 2) + 1));
 
     for (let c = 0; c < refineCount; c++) {
       const cand = candidates[c];
       onProgress(
-        68 + Math.round((c / refineCount) * 22),
-        `Tinh chỉnh viền nối ứng viên #${c + 1}/${refineCount}...`
+        68 + Math.round((c / refineCount) * 18),
+        `Tinh chỉnh viền nối ứng viên #${c + 1}/${refineCount} theo từng frame gốc...`
       );
 
-      // In exact mode the cycle length is not up for negotiation: it is
-      // frames * outputStep by definition. Locking it turns refinement into a
-      // pure phase search, which both guarantees the frame count survives and
-      // halves the offsets that need evaluating.
-      const lockedDuration = cand.calculatedFrames * outputStep;
-      const endOffset = lockDuration ? lockedDuration : (cand.endTime - cand.startTime);
-
-      const startStrip = [];
-      const endStrip = [];
-      let usable = true;
-
-      for (let k = -STRIP; k <= STRIP && usable; k++) {
-        const ts = cand.startTime + (k * fineStep);
-        const te = ts + endOffset;
-        if (ts < 0 || te > duration) {
-          usable = false;
-          break;
+      // The frame-count rule each mode already enforced on the coarse grid.
+      // Exact/nearest: the cycle must still come out at the same number of
+      // frames at the requested speed. Speed: the re-solved tempo must stay
+      // inside what the speed control can hold.
+      const acceptSpan = (span) => {
+        const seconds = span * delta;
+        if (seconds < minCycle - 1e-9 || seconds > maxCycle + 1e-9) return false;
+        if (resolvedMode === 'speed') {
+          const adapted = Math.round(((seconds * targetFps) / cand.calculatedFrames) * 100) / 100;
+          return adapted >= 0.1 && adapted <= 16;
         }
-        startStrip.push(await captureSample(ts));
-        endStrip.push(await captureSample(te));
-      }
-      if (!usable) continue;
-
-      // Cost of a fixed fine-grained window, so the refined offsets and the
-      // unrefined one are measured with the exact same yardstick. Comparing a
-      // fine window against the coarse ranking cost would report a gain on
-      // every candidate purely because the window shrank.
-      const localCost = (si, ei) => {
-        let acc = 0;
-        let wsum = 0;
-        for (let k = -1; k <= 1; k++) {
-          const w = k === 0 ? 2 : 1;
-          acc += w * descriptorDistance(
-            startStrip[si + k].descriptor,
-            endStrip[ei + k].descriptor,
-            { matte, coarse: false }
-          );
-          wsum += w;
-        }
-        return acc / wsum;
+        return Math.max(1, Math.round((seconds / speed) * targetFps)) === cand.calculatedFrames;
+      };
+      const refineOptions = {
+        startFrame: cand.startFrame,
+        endFrame: cand.endFrame,
+        stepFrames,
+        searchRadius,
+        windowRadius: 1,
+        minFrame: 0,
+        maxFrame,
+        acceptSpan,
+        nominalSpan: resolvedMode === 'speed'
+          ? cand.endFrame - cand.startFrame
+          : cand.calculatedFrames * stepFrames
       };
 
-      const anchorCost = localCost(STRIP, STRIP);
-      let best = null;
+      await captureFrames(seamRefinementFrames(refineOptions));
+      const result = refineSeamOnFrames(refineOptions, dist);
+      if (!result.changed || !(result.cost < result.anchorCost)) continue;
 
-      for (let ds = -SHIFT; ds <= SHIFT; ds++) {
-        // Locked duration: start and end slide together, so every offset keeps
-        // the frame count. Free duration: sweep the end independently too.
-        const endShifts = lockDuration ? [ds] : [];
-        if (!lockDuration) {
-          for (let de = -SHIFT; de <= SHIFT; de++) endShifts.push(de);
-        }
-        for (const de of endShifts) {
-          const si = ds + STRIP;
-          const ei = de + STRIP;
-          const newDuration = (endStrip[ei].time - startStrip[si].time);
-          if (!lockDuration) {
-            if (newDuration < minCycle || newDuration > maxCycle) continue;
-            // Never let refinement quietly change how many frames come out.
-            const newFrames = Math.max(1, Math.round((newDuration / speed) * targetFps));
-            if (newFrames !== cand.calculatedFrames) continue;
-          }
-          const cost = localCost(si, ei);
-          if (!best || cost < best.cost) {
-            best = { cost, si, ei, newDuration };
-          }
-        }
+      const spanSeconds = (result.endFrame - result.startFrame) * delta;
+      if (resolvedMode === 'speed') {
+        // Speed mode buys the frame count with tempo, so a re-cut cycle needs
+        // its tempo re-solved or the count drifts again. Quantised to the 2
+        // decimals the speed control keeps, so the tempo on the card is the
+        // tempo the player actually runs at.
+        cand.speed = Math.round(((spanSeconds * targetFps) / cand.calculatedFrames) * 100) / 100;
+        cand.effectiveDuration = cand.calculatedFrames / targetFps;
+      } else {
+        cand.effectiveDuration = spanSeconds / cand.speed;
       }
 
-      if (best && best.cost < anchorCost) {
-        const s = startStrip[best.si];
-        const gain = anchorCost > 1e-9 ? Math.max(0, 1 - (best.cost / anchorCost)) : 0;
-        const finalDuration = lockDuration ? lockedDuration : best.newDuration;
-
-        if (analysis.diagnostics.frameMode === 'speed') {
-          // Speed mode buys the frame count with tempo, so a shifted cycle
-          // needs its tempo re-solved or the count drifts again.
-          // Quantised to the 2 decimals the speed control keeps, so the tempo
-          // shown on the card is the tempo the player actually runs at.
-          cand.speed = Math.round(((finalDuration * targetFps) / cand.calculatedFrames) * 100) / 100;
-          cand.effectiveDuration = cand.calculatedFrames / targetFps;
-        } else {
-          cand.effectiveDuration = finalDuration / cand.speed;
-        }
-
-        cand.startTime = s.time;
-        // The locked end is computed, not read back from the decoder: the frame
-        // count depends on the requested span, and generation seeks to it anyway.
-        cand.endTime = lockDuration ? (s.time + lockedDuration) : endStrip[best.ei].time;
-        cand.duration = cand.endTime - cand.startTime;
-        // Keep the reported cost on the ranking scale; only the ratio transfers.
-        cand.seamCost = cand.seamCost * (1 - gain);
-        cand.distance = cand.seamCost;
-        cand.refined = true;
-        // Reward the improvement without letting refinement outrank a genuinely
-        // better cycle: the seam term can gain at most its own remaining headroom.
-        cand.visualScore = Math.min(100, Math.round((cand.visualScore + ((100 - cand.visualScore) * gain)) * 10) / 10);
-        cand.score = Math.min(100, Math.round((cand.score + ((100 - cand.score) * gain * 0.5)) * 10) / 10);
-        cand.startSample = s;
-        cand.endSample = endStrip[best.ei];
-      }
+      const gain = result.gain;
+      cand.startFrame = result.startFrame;
+      cand.endFrame = result.endFrame;
+      // Keep the reported cost on the ranking scale; only the ratio transfers.
+      cand.seamCost = cand.seamCost * (1 - gain);
+      cand.distance = cand.seamCost;
+      cand.refined = true;
+      // Reward the improvement without letting refinement outrank a genuinely
+      // better cycle: the seam term can gain at most its own remaining headroom.
+      cand.visualScore = Math.min(100, Math.round((cand.visualScore + ((100 - cand.visualScore) * gain)) * 10) / 10);
+      cand.score = Math.min(100, Math.round((cand.score + ((100 - cand.score) * gain * 0.5)) * 10) / 10);
     }
-
-    candidates.sort((a, b) => b.score - a.score);
   }
 
-  // --- Pass 4: thumbnails, for the survivors only. ---
+  for (const cand of candidates) {
+    cand.startTime = timeOf(cand.startFrame);
+    cand.endTime = timeOf(cand.endFrame);
+    cand.duration = cand.endTime - cand.startTime;
+  }
+
+  // --- Pass 4: judge each seam on the frames the sheet will really hold. ---
+  // The search scores a cut between two source frames; the loop that plays is
+  // the planned cells, one output step apart. Measuring the wrap from the last
+  // cell to the first against an ordinary step between cells is the check that
+  // matches what the eye sees, including the pacing rounding the plan does.
+  onProgress(86, 'Đang kiểm tra bước nhảy tại điểm nối trên đúng các frame sẽ xuất...');
+  for (let c = 0; c < candidates.length; c++) {
+    const cand = candidates[c];
+    onProgress(86 + Math.round((c / candidates.length) * 8), `Kiểm tra điểm nối ${c + 1}/${candidates.length}...`);
+    const plan = planLoopFrames({
+      start: cand.startTime,
+      end: cand.endTime,
+      count: cand.calculatedFrames,
+      closed: true,
+      grid: lattice,
+      duration
+    });
+    cand.pacing = nativeGrid ? describePacing(plan) : null;
+    if (!plan.frameIndices) continue;
+    await captureFrames(seamJumpFrames(plan.frameIndices, 4));
+    const jump = seamJumpRatio(plan.frameIndices, dist, 4);
+    cand.seamJump = jump ? { ratio: Math.round(jump.ratio * 100) / 100, verdict: jump.verdict } : null;
+    if (!jump) continue;
+
+    // 1 while the wrap reads like any other step, falling to 0 once it is
+    // more than ~2.6 steps; a hold (the pose repeats) costs half as much.
+    let played = 1 - (Math.max(0, jump.ratio - 1.15) / 1.5);
+    if (jump.ratio < 0.35) played = 0.5 + (0.5 * (jump.ratio / 0.35));
+    played = Math.max(0, Math.min(1, played));
+    cand.score = Math.round(cand.score * (0.85 + (0.15 * played)) * 10) / 10;
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  // --- Pass 5: thumbnails, for the survivors only. ---
   onProgress(94, 'Đang dựng thumbnail cho các chu kỳ tối ưu...');
 
-  const finalCandidates = candidates.map((cand) => ({
-    id: `loop_${cand.startTime.toFixed(3)}_${cand.endTime.toFixed(3)}`,
-    startTime: cand.startTime,
-    endTime: cand.endTime,
-    duration: Number(cand.duration.toFixed(3)),
-    speed: cand.speed,
-    effectiveDuration: Number(cand.effectiveDuration.toFixed(3)),
-    calculatedFrames: cand.calculatedFrames,
-    calculatedFps: cand.calculatedFps,
-    requestedSpeed: cand.requestedSpeed,
-    frameMode: cand.frameMode,
-    exactFrames: !!cand.exactFrames,
-    score: cand.score,
-    visualScore: cand.visualScore,
-    periodScore: cand.periodScore,
-    frameFitScore: cand.frameFitScore,
-    speedFitScore: cand.speedFitScore,
-    motionActivityScore: cand.motionActivityScore,
-    refined: !!cand.refined,
-    seamCost: Number(cand.seamCost.toFixed(4)),
-    startThumb: thumbUrl((cand.startSample || samples[cand.startIndex]).imgData),
-    endThumb: thumbUrl((cand.endSample || samples[cand.endIndex]).imgData)
-  }));
+  const finalCandidates = [];
+  for (const cand of candidates) {
+    const startSample = await captureFrame(cand.startFrame);
+    const endSample = await captureFrame(cand.endFrame);
+    finalCandidates.push({
+      id: `loop_${cand.startTime.toFixed(3)}_${cand.endTime.toFixed(3)}`,
+      startTime: cand.startTime,
+      endTime: cand.endTime,
+      duration: Number(cand.duration.toFixed(3)),
+      startFrame: nativeGrid ? cand.startFrame : null,
+      endFrame: nativeGrid ? cand.endFrame : null,
+      spanFrames: nativeGrid ? cand.endFrame - cand.startFrame : null,
+      frameGridFps: nativeGrid ? nativeGrid.fps : null,
+      speed: cand.speed,
+      effectiveDuration: Number(cand.effectiveDuration.toFixed(3)),
+      calculatedFrames: cand.calculatedFrames,
+      calculatedFps: cand.calculatedFps,
+      requestedSpeed: cand.requestedSpeed,
+      frameMode: cand.frameMode,
+      exactFrames: !!cand.exactFrames,
+      score: cand.score,
+      visualScore: cand.visualScore,
+      periodScore: cand.periodScore,
+      frameFitScore: cand.frameFitScore,
+      speedFitScore: cand.speedFitScore,
+      motionActivityScore: cand.motionActivityScore,
+      refined: !!cand.refined,
+      seamCost: Number(cand.seamCost.toFixed(4)),
+      seamJump: cand.seamJump || null,
+      pacing: cand.pacing || null,
+      startThumb: thumbUrl(startSample.imgData),
+      endThumb: thumbUrl(endSample.imgData)
+    });
+  }
 
   await seekAsync(video, originalTime);
 
+  const unit = nativeGrid ? 'frame gốc' : 'lần seek';
   onProgress(
     100,
-    `Tìm thấy ${finalCandidates.length} chu kỳ lặp (~${targetFrames} frames @ ${speed}x, ${seekCount} lần seek).`
+    `Tìm thấy ${finalCandidates.length} chu kỳ lặp (~${targetFrames} frames @ ${speed}x, ${seekCount} ${unit}).`
   );
   return finalCandidates;
 }
 
 /**
- * Applies temporal crossfade blending to the boundary frames of an animation.
- * Smoothly blends the last k frames into the first k frames using smoothstep interpolation.
+ * Blends one loop cell toward its periodic twin, in place.
  *
- * @param {HTMLCanvasElement[]} frames - Array of individual frame canvas elements
- * @param {number} crossfadeCount - Number of frames to blend (0 to 6)
+ * The twin is the frame one loop period away from the cell (see
+ * planCrossfadeTwins in frame-grid.js), so the blend eases the motion into
+ * the frames that really come before or after the seam, instead of pulling
+ * tail cells toward the head of the loop — which played the head twice.
+ *
+ * @param {HTMLCanvasElement} target - Cell canvas, modified in place
+ * @param {HTMLCanvasElement} twin - Twin frame, same size
+ * @param {number} weight - Share of the twin, 0..1
  */
-export function applyLoopCrossfade(frames, crossfadeCount = 0) {
-  const k = Math.max(0, Math.min(Math.floor(frames.length / 2), Math.round(Number(crossfadeCount) || 0)));
-  if (k <= 0 || !Array.isArray(frames) || frames.length < k * 2) return;
+export function blendLoopTwin(target, twin, weight) {
+  const w = Math.max(0, Math.min(1, Number(weight) || 0));
+  if (!target || !twin || w <= 0) return;
+  const width = target.width;
+  const height = target.height;
+  if (!width || !height || twin.width !== width || twin.height !== height) return;
 
-  const N = frames.length;
-  const width = frames[0].width;
-  const height = frames[0].height;
+  const targetCtx = target.getContext('2d');
+  const targetImgData = targetCtx.getImageData(0, 0, width, height);
+  const twinImgData = twin.getContext('2d').getImageData(0, 0, width, height);
+  const cellData = targetImgData.data;
+  const twinData = twinImgData.data;
+  const weightCell = 1 - w;
 
-  for (let m = 0; m < k; m++) {
-    const tailIndex = N - k + m;
-    const headIndex = m;
+  // Blend in linear light, not in sRGB code values. Averaging two gamma-
+  // encoded numbers lands darker than the light the two frames actually carry,
+  // so a gamma-space crossfade dips in brightness and saturation across the
+  // seam — the frames it touches read as a dull smudge against their
+  // neighbours. Decoding, mixing, then re-encoding keeps the seam at the same
+  // exposure as the rest of the loop.
+  for (let i = 0; i < cellData.length; i += 4) {
+    const wCell = (cellData[i + 3] / 255) * weightCell;
+    const wTwin = (twinData[i + 3] / 255) * w;
+    const alphaOut = wCell + wTwin;
 
-    const tailCtx = frames[tailIndex].getContext('2d');
-    const headCtx = frames[headIndex].getContext('2d');
-
-    const tailImgData = tailCtx.getImageData(0, 0, width, height);
-    const headImgData = headCtx.getImageData(0, 0, width, height);
-
-    const tailData = tailImgData.data;
-    const headData = headImgData.data;
-
-    // Smoothstep transition factor across the crossfade window
-    const t = (m + 1) / (k + 1);
-    const weightHead = t * t * (3 - (2 * t));
-    const weightTail = 1 - weightHead;
-
-    // Blend in linear light, not in sRGB code values. Averaging two gamma-
-    // encoded numbers lands darker than the light the two frames actually carry,
-    // so a gamma-space crossfade dips in brightness and saturation across the
-    // seam — the frames it touches read as a dull smudge against their
-    // neighbours. Decoding, mixing, then re-encoding keeps the seam at the same
-    // exposure as the rest of the loop.
-    for (let i = 0; i < tailData.length; i += 4) {
-      const aTail = tailData[i + 3] / 255;
-      const aHead = headData[i + 3] / 255;
-
-      const wTail = aTail * weightTail;
-      const wHead = aHead * weightHead;
-      const alphaOut = wTail + wHead;
-
-      if (alphaOut > 0.001) {
-        tailData[i] = linearToSrgb8(
-          ((SRGB_TO_LINEAR[tailData[i]] * wTail) + (SRGB_TO_LINEAR[headData[i]] * wHead)) / alphaOut
-        );
-        tailData[i + 1] = linearToSrgb8(
-          ((SRGB_TO_LINEAR[tailData[i + 1]] * wTail) + (SRGB_TO_LINEAR[headData[i + 1]] * wHead)) / alphaOut
-        );
-        tailData[i + 2] = linearToSrgb8(
-          ((SRGB_TO_LINEAR[tailData[i + 2]] * wTail) + (SRGB_TO_LINEAR[headData[i + 2]] * wHead)) / alphaOut
-        );
-        tailData[i + 3] = Math.round(alphaOut * 255);
-      } else {
-        tailData[i + 3] = 0;
-      }
+    if (alphaOut > 0.001) {
+      cellData[i] = linearToSrgb8(
+        ((SRGB_TO_LINEAR[cellData[i]] * wCell) + (SRGB_TO_LINEAR[twinData[i]] * wTwin)) / alphaOut
+      );
+      cellData[i + 1] = linearToSrgb8(
+        ((SRGB_TO_LINEAR[cellData[i + 1]] * wCell) + (SRGB_TO_LINEAR[twinData[i + 1]] * wTwin)) / alphaOut
+      );
+      cellData[i + 2] = linearToSrgb8(
+        ((SRGB_TO_LINEAR[cellData[i + 2]] * wCell) + (SRGB_TO_LINEAR[twinData[i + 2]] * wTwin)) / alphaOut
+      );
+      cellData[i + 3] = Math.round(alphaOut * 255);
+    } else {
+      cellData[i + 3] = 0;
     }
-
-    tailCtx.putImageData(tailImgData, 0, 0);
   }
+
+  targetCtx.putImageData(targetImgData, 0, 0);
+}
+
+/**
+ * As-played seam check on frames that are already on canvases (the loop
+ * inspector's full-cycle player): the wrap from the last canvas to the first,
+ * against an ordinary step between neighbours. Same yardstick the scanner's
+ * seam check uses, so a nudged or hand-made trim gets a comparable verdict.
+ *
+ * @param {HTMLCanvasElement[]} canvases - The loop's cells, in order
+ * @returns {{ ratio:number, seam:number, typical:number, verdict:string }|null}
+ */
+export function measureLoopSeam(canvases) {
+  if (!Array.isArray(canvases) || canvases.length < 3) return null;
+  const descriptors = [];
+  for (const canvas of canvases) {
+    const ctx = canvas?.getContext?.('2d');
+    if (!ctx || !canvas.width || !canvas.height) return null;
+    descriptors.push(buildFrameDescriptor(ctx.getImageData(0, 0, canvas.width, canvas.height), canvas.width, canvas.height));
+  }
+  const ctx = { matte: hasUsableMatte(descriptors), coarse: false };
+  const indices = descriptors.map((_, i) => i);
+  return seamJumpRatio(
+    indices,
+    (a, b) => descriptorDistance(descriptors[a], descriptors[b], ctx),
+    Math.min(8, canvases.length - 1)
+  );
 }
 
 /**
