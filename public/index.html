@@ -70,27 +70,19 @@
       
       <!-- Source Video Card -->
       <section class="preview-card" id="sourceVideoCard">
-        <div class="card-header">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="card-title">
-              <i data-lucide="video" style="width: 18px; height: 18px; color: #38bdf8;"></i>
-              Source video
-            </span>
-            <!-- Custom Playback Controls in Header -->
-            <div class="video-header-controls">
-              <button id="btnVideoPlayPause" class="btn-ctrl" title="Play/Pause Video (Space)">
-                <i data-lucide="play" id="iconVideoPlayPause" style="width: 13px; height: 13px;"></i>
-              </button>
-              <button id="btnVideoStepBack" class="btn-ctrl" title="Step -1 frame (Left Arrow)">
-                <i data-lucide="skip-back" style="width: 13px; height: 13px;"></i>
-              </button>
-              <button id="btnVideoStepForward" class="btn-ctrl" title="Step +1 frame (Right Arrow)">
-                <i data-lucide="skip-forward" style="width: 13px; height: 13px;"></i>
-              </button>
-              <span id="videoCurrentTimeDisplay" class="time-display-badge">00:00.00 / 00:00.00</span>
-            </div>
-          </div>
-          <span id="sourceVideoInfo" class="card-subtitle-info">No video loaded</span>
+        <div class="card-header source-card-header">
+          <span class="card-title">
+            <i data-lucide="video" style="width: 16px; height: 16px; color: #38bdf8;"></i>
+            Source
+          </span>
+          <span id="sourceVideoInfo" class="card-subtitle-info" title="Kích thước · tỉ lệ · thời lượng">No video loaded</span>
+          <!-- Play/pause and the time readout live in the editor transport row
+               below; these header copies stay in the DOM because app.js keeps
+               them in sync, but showing both was pure duplication. -->
+          <button id="btnVideoPlayPause" class="btn-ctrl" title="Play/Pause Video (Space)" hidden>
+            <i data-lucide="play" id="iconVideoPlayPause" style="width: 13px; height: 13px;"></i>
+          </button>
+          <span id="videoCurrentTimeDisplay" class="time-display-badge" hidden>00:00.00 / 00:00.00</span>
         </div>
         
         <div class="video-viewport" id="videoViewport">
@@ -198,62 +190,65 @@
         <!-- CapCut-style Video Editor Timeline -->
         <div class="video-editor-panel">
           <!-- Toolbar: cut / duplicate / delete / mute + playback -->
+          <!-- Row 1: transport + clip tools -->
           <div class="editor-toolbar">
-            <div class="editor-tools-left">
+            <div class="editor-transport">
+              <button id="btnVideoStepBack" class="editor-tool-btn editor-step-btn" title="Lùi 1 frame (←)">
+                <i data-lucide="step-back" style="width: 15px; height: 15px;"></i>
+              </button>
+              <button id="btnEditorSkipBack" class="editor-tool-btn editor-play-btn" title="Lùi 1 giây">
+                <i data-lucide="chevrons-left" style="width: 17px; height: 17px;"></i>
+              </button>
+              <button id="btnEditorPlay" class="editor-tool-btn editor-play-main" title="Play / Pause (Space)">
+                <i data-lucide="play" id="iconEditorPlay" style="width: 17px; height: 17px;"></i>
+              </button>
+              <button id="btnEditorSkipForward" class="editor-tool-btn editor-play-btn" title="Tới 1 giây">
+                <i data-lucide="chevrons-right" style="width: 17px; height: 17px;"></i>
+              </button>
+              <button id="btnVideoStepForward" class="editor-tool-btn editor-step-btn" title="Tới 1 frame (→)">
+                <i data-lucide="step-forward" style="width: 15px; height: 15px;"></i>
+              </button>
+              <span class="editor-timecode">
+                <span id="editorCurrentTime" class="editor-time-label">00:00.00</span>
+                <span class="editor-timecode-sep">/</span>
+                <span id="editorTotalTime" class="editor-time-label editor-time-total">00:00.00</span>
+              </span>
+            </div>
+            <div class="editor-tools-right">
               <button id="btnEditorSplit" class="editor-tool-btn" title="Cắt tại vị trí playhead (Split)">
-                <i data-lucide="scissors" style="width: 16px; height: 16px;"></i>
+                <i data-lucide="scissors" style="width: 15px; height: 15px;"></i>
               </button>
               <button id="btnEditorDuplicate" class="editor-tool-btn" title="Nhân bản đoạn cắt hiện tại">
-                <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
+                <i data-lucide="copy" style="width: 15px; height: 15px;"></i>
               </button>
               <button id="btnEditorDelete" class="editor-tool-btn" title="Xóa đoạn cắt (reset về full video)">
-                <i data-lucide="trash-2" style="width: 16px; height: 16px;"></i>
+                <i data-lucide="trash-2" style="width: 15px; height: 15px;"></i>
               </button>
               <div class="editor-toolbar-divider"></div>
               <button id="btnEditorMute" class="editor-tool-btn" title="Tắt / bật tiếng">
-                <i data-lucide="volume-2" id="iconEditorMute" style="width: 16px; height: 16px;"></i>
+                <i data-lucide="volume-2" id="iconEditorMute" style="width: 15px; height: 15px;"></i>
               </button>
-              <div class="editor-toolbar-divider"></div>
-              <!-- Speed up control -->
-              <div class="speed-control" title="Tốc độ phát video (Speed up / Slow down)">
-                <i data-lucide="gauge" style="width: 14px; height: 14px; color: #a3a3a3;"></i>
-                <span class="speed-label">Speed</span>
-                <div class="speed-presets" id="speedPresets">
-                  <button type="button" id="speedPreset05" class="speed-preset-btn" data-speed="0.5">0.5x</button>
-                  <button type="button" id="speedPreset075" class="speed-preset-btn" data-speed="0.75">0.75x</button>
-                  <button type="button" id="speedPreset1" class="speed-preset-btn active" data-speed="1">1x</button>
-                  <button type="button" id="speedPreset15" class="speed-preset-btn" data-speed="1.5">1.5x</button>
-                  <button type="button" id="speedPreset2" class="speed-preset-btn" data-speed="2">2x</button>
-                  <button type="button" id="speedPreset3" class="speed-preset-btn" data-speed="3">3x</button>
-                  <button type="button" id="speedPreset4" class="speed-preset-btn" data-speed="4">4x</button>
-                </div>
-                <input type="number" id="inputSpeedCustom" class="speed-custom-input" min="0.1" max="16" step="0.05" value="1" title="Nhập tốc độ tùy chỉnh (0.1x – 16x)">
-                <span class="speed-unit">x</span>
+            </div>
+          </div>
+
+          <!-- Row 2: playback speed -->
+          <div class="editor-speed-row">
+            <div class="speed-control" title="Tốc độ phát video (Speed up / Slow down)">
+              <i data-lucide="gauge" style="width: 14px; height: 14px; color: #a3a3a3;"></i>
+              <span class="speed-label">Speed</span>
+              <div class="speed-presets" id="speedPresets">
+                <button type="button" id="speedPreset05" class="speed-preset-btn" data-speed="0.5">0.5x</button>
+                <button type="button" id="speedPreset075" class="speed-preset-btn" data-speed="0.75">0.75x</button>
+                <button type="button" id="speedPreset1" class="speed-preset-btn active" data-speed="1">1x</button>
+                <button type="button" id="speedPreset15" class="speed-preset-btn" data-speed="1.5">1.5x</button>
+                <button type="button" id="speedPreset2" class="speed-preset-btn" data-speed="2">2x</button>
+                <button type="button" id="speedPreset3" class="speed-preset-btn" data-speed="3">3x</button>
+                <button type="button" id="speedPreset4" class="speed-preset-btn" data-speed="4">4x</button>
               </div>
+              <input type="number" id="inputSpeedCustom" class="speed-custom-input" min="0.1" max="16" step="0.05" value="1" title="Nhập tốc độ tùy chỉnh (0.1x – 16x)">
+              <span class="speed-unit">x</span>
             </div>
-            <div class="editor-tools-center">
-              <span id="editorCurrentTime" class="editor-time-label">00:00.00</span>
-              <button id="btnEditorSkipBack" class="editor-tool-btn editor-play-btn" title="Lùi 1 giây">
-                <i data-lucide="chevrons-left" style="width: 18px; height: 18px;"></i>
-              </button>
-              <button id="btnEditorPlay" class="editor-tool-btn editor-play-main" title="Play / Pause">
-                <i data-lucide="play" id="iconEditorPlay" style="width: 18px; height: 18px;"></i>
-              </button>
-              <button id="btnEditorSkipForward" class="editor-tool-btn editor-play-btn" title="Tới 1 giây">
-                <i data-lucide="chevrons-right" style="width: 18px; height: 18px;"></i>
-              </button>
-              <span id="editorTotalTime" class="editor-time-label">00:00.00</span>
-            </div>
-            <div class="editor-tools-right">
-              <span id="speedEffectiveHint" class="speed-effective-hint">Eff. 0.00s</span>
-              <button id="btnAutoLoopFinder" class="time-btn time-btn-loop" title="Tự động tìm chu kỳ Loop mượt mà (Auto Loop Seeker)">
-                <i data-lucide="repeat" style="width: 13px; height: 13px; color: #38bdf8;"></i>
-                <span>Auto Loop</span>
-              </button>
-              <button id="btnSetTrimStart" class="time-btn" title="Gán Trim Start = thời điểm hiện tại">[ Set Start ]</button>
-              <button id="btnSetTrimEnd" class="time-btn" title="Gán Trim End = thời điểm hiện tại">[ Set End ]</button>
-              <button id="btnResetTrim" class="time-btn" title="Reset trim về full video">Reset</button>
-            </div>
+            <span id="speedEffectiveHint" class="speed-effective-hint" title="Độ dài vùng trim sau khi áp tốc độ">Eff. 0.00s</span>
           </div>
 
           <!-- Timeline: ruler + filmstrip clip + playhead -->
@@ -278,12 +273,30 @@
           <!-- Numeric trim inputs (synced with drag handles) -->
           <div class="trim-inputs">
             <div class="trim-time-group">
-              <span>Trim Start:</span>
-            <input type="number" id="trimStartInput" class="form-input compact-number" step="0.05" min="0" value="0.00">
+              <label for="trimStartInput">Start</label>
+              <input type="number" id="trimStartInput" class="form-input compact-number" step="0.05" min="0" value="0.00">
+              <button id="btnSetTrimStart" class="time-btn trim-set-btn" type="button" title="Gán Trim Start = vị trí playhead hiện tại">
+                <i data-lucide="corner-down-right" style="width: 12px; height: 12px;"></i>
+                <span>Set</span>
+              </button>
             </div>
             <div class="trim-time-group">
-              <span>Trim End:</span>
-            <input type="number" id="trimEndInput" class="form-input compact-number" step="0.05" min="0" value="0.00">
+              <label for="trimEndInput">End</label>
+              <input type="number" id="trimEndInput" class="form-input compact-number" step="0.05" min="0" value="0.00">
+              <button id="btnSetTrimEnd" class="time-btn trim-set-btn" type="button" title="Gán Trim End = vị trí playhead hiện tại">
+                <i data-lucide="corner-down-left" style="width: 12px; height: 12px;"></i>
+                <span>Set</span>
+              </button>
+            </div>
+            <div class="trim-actions">
+              <button id="btnResetTrim" class="time-btn" type="button" title="Reset trim về full video">
+                <i data-lucide="rotate-ccw" style="width: 12px; height: 12px;"></i>
+                <span>Reset</span>
+              </button>
+              <button id="btnAutoLoopFinder" class="time-btn time-btn-loop" type="button" title="Tự động tìm chu kỳ Loop mượt mà (Auto Loop Seeker)">
+                <i data-lucide="repeat" style="width: 12px; height: 12px;"></i>
+                <span>Auto Loop</span>
+              </button>
             </div>
           </div>
 
@@ -297,31 +310,42 @@
 
       <!-- Sprite Sheet Preview Card -->
       <section class="preview-card">
-        <div class="card-header">
+        <div class="card-header preview-card-header">
           <div class="preview-controls">
-            <button id="btnPlayPause" class="btn-ctrl active">
-              <i data-lucide="play" id="iconPlayPause" style="width: 14px; height: 14px;"></i>
-              <span id="textPlayPause">Play</span>
-            </button>
-            <button id="btnToggleMode" class="btn-ctrl">
-              <i data-lucide="layout-grid" style="width: 14px; height: 14px;"></i>
-              <span id="textToggleMode">Sheet</span>
-            </button>
-            <span id="frameCounter" class="frame-badge">0/0</span>
-            <button id="btnZoomOut" class="btn-ctrl" title="Zoom Out">-</button>
-            <span id="zoomLevel" class="zoom-indicator">100%</span>
-            <button id="btnZoomIn" class="btn-ctrl" title="Zoom In">+</button>
-            <button id="btnZoomFit" class="btn-ctrl" title="Fit to View">Fit</button>
-            <label class="preview-bg-picker" title="Preview background color">
+            <span class="card-title preview-card-title">
+              <i data-lucide="film" style="width: 16px; height: 16px; color: #a78bfa;"></i>
+              <span>Preview</span>
+            </span>
+            <div class="ctrl-segment">
+              <button id="btnPlayPause" class="btn-ctrl active">
+                <i data-lucide="play" id="iconPlayPause" style="width: 14px; height: 14px;"></i>
+                <span id="textPlayPause">Play</span>
+              </button>
+              <button id="btnToggleMode" class="btn-ctrl" title="Đổi giữa Anim (từng frame) và Sheet (cả lưới)">
+                <i data-lucide="layout-grid" style="width: 14px; height: 14px;"></i>
+                <span id="textToggleMode">Sheet</span>
+              </button>
+            </div>
+            <span id="frameCounter" class="frame-badge" title="Frame hiện tại / tổng số frame">0/0</span>
+            <div class="ctrl-segment zoom-segment" title="Cuộn chuột để zoom · kéo để pan">
+              <button id="btnZoomOut" class="btn-ctrl" title="Zoom Out">
+                <i data-lucide="minus" style="width: 13px; height: 13px;"></i>
+              </button>
+              <span id="zoomLevel" class="zoom-indicator">100%</span>
+              <button id="btnZoomIn" class="btn-ctrl" title="Zoom In">
+                <i data-lucide="plus" style="width: 13px; height: 13px;"></i>
+              </button>
+              <button id="btnZoomFit" class="btn-ctrl" title="Fit to View">Fit</button>
+            </div>
+            <label class="preview-bg-picker" title="Màu nền khung Preview">
               <span>BG</span>
               <input type="color" id="inputPreviewBgColor" value="#111827" aria-label="Preview background color">
             </label>
-            <button id="btnPreviewMoveToCleaner" class="btn-ctrl" type="button" disabled title="Chuyển sprite sheet sang Clean Sprite Sheet">
-              <i data-lucide="wand-sparkles" style="width: 14px; height: 14px; color: #a78bfa;"></i>
-              <span>To Cleaner</span>
-            </button>
           </div>
-          <span class="card-subtitle-info">Auto-play · wheel to zoom</span>
+          <button id="btnPreviewMoveToCleaner" class="btn-ctrl preview-to-cleaner" type="button" disabled title="Chuyển sprite sheet sang Clean Sprite Sheet">
+            <i data-lucide="wand-sparkles" style="width: 14px; height: 14px; color: #a78bfa;"></i>
+            <span>To Cleaner</span>
+          </button>
         </div>
         <div class="sprite-viewport checkerboard-bg" id="spriteViewport">
           <canvas id="previewCanvas" class="sprite-canvas"></canvas>
@@ -375,22 +399,12 @@
 
     <!-- Left Sidebar: Sprite Sheet Settings Panel -->
     <section class="settings-card settings-sidebar">
-      <!-- Action Bar -->
+      <!-- Action Bar: one primary action, one export action, then the hand-offs -->
       <div class="settings-action-bar">
         <div class="action-buttons-group">
           <button id="btnGenerate" class="btn-primary-blue">
-            <i data-lucide="settings" style="width: 16px; height: 16px;"></i>
+            <i data-lucide="sparkles" style="width: 16px; height: 16px;"></i>
             <span>Generate</span>
-          </button>
-
-          <button id="btnMoveToCleaner" class="btn-primary-purple" type="button" disabled title="Chuyển sprite sheet sang Clean Sprite Sheet để làm sạch nền">
-            <i data-lucide="wand-sparkles" style="width: 15px; height: 15px;"></i>
-            <span>Move to Clean Sprite Sheet</span>
-          </button>
-
-          <button id="btnMoveToTransform" class="btn-secondary" type="button" disabled title="Chuyển sprite sheet sang Transform để scale & căn chỉnh toạ độ">
-            <i data-lucide="move" style="width: 15px; height: 15px; color: #eab308;"></i>
-            <span>Transform & Scale</span>
           </button>
 
           <!-- Download Button with Dropdown -->
@@ -425,30 +439,39 @@
             </div>
           </div>
 
-          <button id="btnBrowseFile" class="btn-browse">
+          <div class="sidebar-send-row" role="group" aria-label="Chuyển sprite sheet sang tab khác">
+            <button id="btnMoveToCleaner" class="btn-send" type="button" disabled title="Chuyển sprite sheet sang Clean Sprite Sheet để làm sạch nền">
+              <i data-lucide="wand-sparkles" style="width: 14px; height: 14px; color: #a78bfa;"></i>
+              <span>Cleaner</span>
+            </button>
+            <button id="btnMoveToTransform" class="btn-send" type="button" disabled title="Chuyển sprite sheet sang Transform để scale &amp; căn chỉnh toạ độ">
+              <i data-lucide="move" style="width: 14px; height: 14px; color: #eab308;"></i>
+              <span>Transform</span>
+            </button>
+          </div>
+
+          <!-- The drop zone below already carries the Browse action; this
+               copy stays in the DOM only because app.js binds it. -->
+          <button id="btnBrowseFile" class="btn-browse" type="button" hidden>
             <i data-lucide="folder-open" style="width: 15px; height: 15px;"></i>
             <span>Browse</span>
           </button>
-
-          <span id="activeFilenameLabel" class="file-info-title">Sprite sheet settings</span>
         </div>
-
-        <button id="btnToggleCollapse" class="btn-collapse" type="button" aria-expanded="true" aria-controls="settingsBody">
-          <i data-lucide="chevron-up" id="iconCollapse" style="width: 14px; height: 14px;"></i>
-          <span id="lblCollapse">Collapse</span>
-        </button>
       </div>
 
       <!-- Hidden Video File Input -->
       <input type="file" id="videoFileInput" accept="video/*" style="display: none;">
 
-      <!-- Drag & Drop Zone -->
-      <div id="dropZone" class="drop-zone">
+      <!-- Drag & Drop Zone: doubles as the "current file" chip -->
+      <div id="dropZone" class="drop-zone" title="Bấm để chọn video, hoặc kéo thả file vào đây">
         <div class="drop-content">
-          <i data-lucide="clapperboard" style="width: 20px; height: 20px; color: #64748b;"></i>
-          <span>Drag & drop video <strong id="dropZoneFilename" class="drop-file-name">No file selected</strong></span>
+          <i data-lucide="clapperboard" style="width: 18px; height: 18px; color: #64748b;"></i>
+          <span class="drop-text">
+            <strong id="dropZoneFilename" class="drop-file-name">No file selected</strong>
+            <span class="drop-hint">Kéo thả hoặc bấm để chọn video</span>
+          </span>
         </div>
-        <button id="btnBrowseSecondary" class="btn-browse" style="padding: 4px 10px; font-size: 0.8rem;">
+        <button id="btnBrowseSecondary" class="btn-browse" type="button" title="Chọn video">
           <i data-lucide="folder-open" style="width: 14px; height: 14px;"></i>
           <span>Browse</span>
         </button>
@@ -459,71 +482,133 @@
         <div id="progressBarFill" class="progress-bar-fill"></div>
       </div>
 
+      <div class="sidebar-settings-head">
+        <span class="sidebar-settings-title">
+          <i data-lucide="grid-3x3" style="width: 14px; height: 14px;"></i>
+          Sprite sheet
+        </span>
+        <!-- Mirrors the loaded file name for app.js; the drop zone already shows it. -->
+        <span id="activeFilenameLabel" class="file-info-title" hidden>Sprite sheet settings</span>
+        <button id="btnToggleCollapse" class="btn-collapse" type="button" aria-expanded="true" aria-controls="settingsBody" title="Thu gọn / mở rộng phần cài đặt">
+          <span id="lblCollapse">Collapse</span>
+          <i data-lucide="chevron-up" id="iconCollapse" style="width: 14px; height: 14px;"></i>
+        </button>
+      </div>
+
       <!-- Settings Sidebar Body -->
       <div id="settingsBody" class="settings-body">
         <div class="settings-grid settings-sidebar-grid">
-            <div class="form-group" id="panelFrames">
-              <label class="form-label" for="inputFrames">
-                <span>Frames</span>
-              </label>
-              <input type="number" id="inputFrames" class="form-input compact-number" min="1" max="500" value="24">
-            </div>
+          <div class="sb-section">
+            <div class="sb-heading">Frames &amp; lưới</div>
+            <div class="sb-fields sb-fields-3">
+              <div class="form-group" id="panelFrames">
+                <label class="form-label" for="inputFrames">
+                  <span>Frames</span>
+                </label>
+                <input type="number" id="inputFrames" class="form-input compact-number" min="1" max="500" value="24">
+              </div>
 
-            <div class="form-group" id="panelKeepSourceSize">
-              <label class="form-label">Original resolution</label>
+              <div class="form-group" id="panelRows">
+                <label class="form-label" for="inputRows">
+                  <span>Rows</span>
+                </label>
+                <input type="number" id="inputRows" class="form-input compact-number" min="1" max="100" value="6">
+              </div>
+
+              <div class="form-group" id="panelCols">
+                <label class="form-label" for="inputCols">
+                  <span>Cols</span>
+                </label>
+                <input type="number" id="inputCols" class="form-input compact-number" min="1" max="100" value="4">
+              </div>
+            </div>
+          </div>
+
+          <div class="sb-section">
+            <div class="sb-heading">Kích thước ô</div>
+            <div class="form-group sb-inline" id="panelKeepSourceSize">
+              <label class="form-label sr-only">Original resolution</label>
               <label class="checkbox-row">
                 <input type="checkbox" id="chkKeepSourceSize" checked>
-                <span>Keep source size</span>
+                <span>Giữ kích thước gốc (Keep source size)</span>
               </label>
             </div>
 
-            <div class="form-group" id="panelRows">
-              <label class="form-label" for="inputRows">
-                <span>Rows</span>
-              </label>
-              <input type="number" id="inputRows" class="form-input compact-number" min="1" max="100" value="6">
-            </div>
-
-            <div class="form-group" id="panelCols">
-              <label class="form-label" for="inputCols">
-                <span>Cols</span>
-              </label>
-              <input type="number" id="inputCols" class="form-input compact-number" min="1" max="100" value="4">
-            </div>
-
-            <div class="form-group" id="panelCellNative">
+            <div class="form-group sb-inline" id="panelCellNative">
               <label class="form-label" for="inputCellNative">
-                <span>Cell (native)</span>
+                <span>Cell width (px)</span>
                 <span id="cellSizeHint" class="hint">1920×1080</span>
               </label>
               <input type="number" id="inputCellNative" class="form-input compact-number" min="16" max="4096" value="512">
             </div>
+          </div>
 
-            <div class="form-group" id="panelCropTop">
-              <label class="form-label" for="inputCropTop">Crop top (px)</label>
-              <input type="number" id="inputCropTop" class="form-input compact-number" min="0" value="0">
+          <div class="sb-section">
+            <div class="sb-heading">Crop (px)</div>
+            <div class="sb-fields sb-fields-2 sb-crop">
+              <div class="form-group" id="panelCropTop">
+                <label class="form-label" for="inputCropTop">Top</label>
+                <input type="number" id="inputCropTop" class="form-input compact-number" min="0" value="0">
+              </div>
+
+              <div class="form-group" id="panelCropBottom">
+                <label class="form-label" for="inputCropBottom">Bottom</label>
+                <input type="number" id="inputCropBottom" class="form-input compact-number" min="0" value="0">
+              </div>
+
+              <div class="form-group" id="panelCropLeft">
+                <label class="form-label" for="inputCropLeft">Left</label>
+                <input type="number" id="inputCropLeft" class="form-input compact-number" min="0" value="0">
+              </div>
+
+              <div class="form-group" id="panelCropRight">
+                <label class="form-label" for="inputCropRight">Right</label>
+                <input type="number" id="inputCropRight" class="form-input compact-number" min="0" value="0">
+              </div>
             </div>
+          </div>
 
-            <div class="form-group" id="panelCropBottom">
-              <label class="form-label" for="inputCropBottom">Crop bottom (px)</label>
-              <input type="number" id="inputCropBottom" class="form-input compact-number" min="0" value="0">
-            </div>
-
-            <div class="form-group" id="panelCropLeft">
-              <label class="form-label" for="inputCropLeft">Crop left (px)</label>
-              <input type="number" id="inputCropLeft" class="form-input compact-number" min="0" value="0">
-            </div>
-
-            <div class="form-group" id="panelCropRight">
-              <label class="form-label" for="inputCropRight">Crop right (px)</label>
-              <input type="number" id="inputCropRight" class="form-input compact-number" min="0" value="0">
-            </div>
-
-            <div class="form-group watermark-tool-group" id="groupWatermarkEraser">
-              <label class="form-label">
-                <span>Watermark eraser</span>
-                <span id="watermarkStatus" class="hint">No area selected</span>
+          <div class="sb-section">
+            <div class="sb-heading">Phát &amp; xuất</div>
+            <!-- Video Speed + Preview FPS -->
+            <div class="form-group sb-inline" id="panelVideoSpeed">
+              <label class="form-label" for="inputSpeedCustomSettings">
+                <span>Video speed</span>
               </label>
+              <div class="number-field-row">
+                <input type="number" id="inputSpeedCustomSettings" class="form-input compact-speed" min="0.1" max="16" step="0.05" value="1">
+                <span class="number-unit">x</span>
+                <span id="lblSpeedSettings" class="slider-value" hidden>1x</span>
+                <button id="btnResetSpeed" class="time-btn" type="button" title="Reset speed về 1x">Reset</button>
+              </div>
+            </div>
+
+            <div class="form-group sb-inline" id="panelPreviewFps">
+              <label class="form-label" for="inputFps">
+                <span>Preview FPS</span>
+              </label>
+              <div class="number-field-row">
+                <input type="number" id="inputFps" class="form-input compact-fps" min="1" max="60" value="12">
+                <button id="btnAutoFps" class="time-btn" title="Tính FPS theo độ dài trim và Video Speed">Auto</button>
+              </div>
+            </div>
+
+            <div class="form-group" id="panelDownloadName">
+              <label class="form-label" for="inputDownloadName">
+                <span>Download name</span>
+              </label>
+              <input type="text" id="inputDownloadName" class="form-input" value="Lily_attack" placeholder="sprite_output">
+            </div>
+          </div>
+
+          <div class="sb-section sb-tools">
+            <div class="sb-heading">Công cụ</div>
+            <div class="form-group watermark-tool-group" id="groupWatermarkEraser">
+              <div class="tool-card-head">
+                <i data-lucide="scan" style="width: 14px; height: 14px; color: #f59e0b;"></i>
+                <span class="section-collapse-name">Watermark eraser</span>
+                <span id="watermarkStatus" class="hint">No area selected</span>
+              </div>
               <div class="watermark-tool-actions">
                 <button id="btnSelectWatermark" class="time-btn watermark-tool-btn" type="button" title="Kéo chọn vùng watermark trên Source video">
                   <i data-lucide="scan" style="width: 13px; height: 13px;"></i>
@@ -687,44 +772,173 @@
                 </div>
               </div>
             </div>
-
-            <div class="form-group" id="panelDownloadName">
-              <label class="form-label" for="inputDownloadName">
-                <span>Download name</span>
-              </label>
-              <input type="text" id="inputDownloadName" class="form-input" value="Lily_attack" placeholder="sprite_output">
-            </div>
-
-            <!-- Video Speed + Preview FPS -->
-            <div class="form-group" id="panelVideoSpeed">
-              <label class="form-label" for="inputSpeedCustomSettings">
-                <span>Video Speed</span>
-              </label>
-              <div class="number-field-row">
-                <input type="number" id="inputSpeedCustomSettings" class="form-input compact-speed" min="0.1" max="16" step="0.05" value="1">
-                <span style="font-size: 0.8rem; color: #94a3b8;">x</span>
-                <span id="lblSpeedSettings" class="slider-value">1x</span>
-                <button id="btnResetSpeed" class="time-btn" type="button" title="Reset speed về 1x">Reset</button>
-              </div>
-            </div>
-
-            <div class="form-group" id="panelPreviewFps">
-              <label class="form-label" for="inputFps">
-                <span>Preview FPS</span>
-              </label>
-              <div class="number-field-row">
-                <input type="number" id="inputFps" class="form-input compact-fps" min="1" max="60" value="12">
-                <button id="btnAutoFps" class="time-btn" title="Tính FPS theo độ dài trim và Video Speed">Auto FPS</button>
-              </div>
-            </div>
+          </div>
         </div>
       </div>
     </section>
 
     <!-- Bottom Section: Chroma Key Settings Panel -->
     <section class="settings-card chroma-card">
+      <div class="chroma-card-header">
+        <span class="card-title">
+          <i data-lucide="pipette" style="width: 16px; height: 16px; color: #38bdf8;"></i>
+          Chroma key &amp; hiệu ứng
+        </span>
+        <span class="card-subtitle-info">Xoá nền, tinh chỉnh viền, bút và màu — áp khi Generate</span>
+      </div>
       <div class="settings-body chroma-body">
         <div class="settings-grid chroma-grid">
+          <!-- Chroma Key / Green Screen Removal Options: the first thing anyone
+               touches on this panel, so it leads. -->
+          <div class="form-group chroma-key-group" id="groupChromaKey">
+            <div class="color-key-container ck-layout">
+              <!-- Left: the colours being keyed out -->
+              <div class="ck-col ck-colors">
+                <div class="ck-heading">
+                  <span>Màu nền cần xoá</span>
+                  <span class="hint">Nhiều màu cho nền gradient / bóng đổ</span>
+                </div>
+                <div class="ck-pick-row">
+                  <button id="btnPickColor" class="eyedropper-trigger-btn" title="Pick màu từ Source Video hoặc Sprite Preview">
+                    <i data-lucide="pipette" style="width: 13px; height: 13px;"></i>
+                    <span>Pick từ Video / Preview</span>
+                  </button>
+                  <div class="ck-manual">
+                    <input type="color" id="manualColorInput" value="#0024f5" class="manual-color-input" title="Chọn màu thủ công">
+                    <button id="btnAddManualColor" class="time-btn" type="button" title="Thêm màu đang chọn vào danh sách">+ Add</button>
+                  </div>
+                  <button id="btnClearKeyColors" class="time-btn color-clear-btn" type="button" title="Clear all picked chroma-key colors">Clear all</button>
+                </div>
+
+                <!-- Active Key Colors List -->
+                <div id="swatchesList" class="color-swatches">
+                  <!-- Swatches dynamically injected here -->
+                </div>
+
+                <div class="color-value-editor" role="group" aria-label="Color value">
+                  <input id="inputColorHex" class="form-input color-text-input" value="#0024f5" placeholder="#RRGGBB" aria-label="HEX color">
+                  <input id="inputColorRgb" class="form-input color-text-input" placeholder="rgb(0, 36, 245)" aria-label="RGB color">
+                  <button id="btnApplyColorValue" class="time-btn" type="button">Apply</button>
+                  <button id="btnCopyColor" class="time-btn" type="button" title="Copy color">Copy</button>
+                  <button id="btnPasteColor" class="time-btn" type="button" title="Paste color">Paste</button>
+                </div>
+                <div id="colorInputError" class="color-input-error" role="alert" aria-live="polite"></div>
+                <div class="recent-colors-row"><span>Recent</span><div id="recentColorsList" class="recent-colors-list"></div></div>
+              </div>
+
+              <!-- Right: output format, then the local (circle) removal -->
+              <div class="ck-col ck-side">
+                <div class="ck-heading">
+                  <span>Định dạng xuất</span>
+                </div>
+                <div class="ck-format-row">
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="chkTransparentFormat" checked>
+                    <span id="lblFormatName">Transparent WebP</span>
+                  </label>
+                  <!-- WebP is the default for file size. Note what it costs: the
+                       canvas WebP encoder is lossy and subsamples chroma 4:2:0, which
+                       smears saturated colour across the subject edge, and it is the
+                       one export path that cannot carry alpha bleed - the browser
+                       gives no way to encode WebP without going through the canvas,
+                       whose premultiplied backing store discards colour at alpha 0.
+                       Switch to PNG when edge quality matters more than size. -->
+                  <select id="selectFormat" class="form-input compact-select">
+                    <option value="webp" selected>WebP</option>
+                    <option value="png">PNG</option>
+                  </select>
+                </div>
+
+                <!-- Quality only exists for WebP; PNG is lossless by definition.
+                     100 is a cliff, not the top of a ramp: the canvas encoder
+                     switches to lossless VP8L at exactly 1.0, which is why it
+                     produced files many times larger than every value below it. -->
+                <div id="webpQualityRow" class="webp-quality-row">
+                  <label for="numWebpQuality">
+                    <span>WebP quality</span>
+                    <span class="hint">100 = lossless, file lớn hơn nhiều</span>
+                  </label>
+                  <div class="slider-group compact-slider-group">
+                    <input type="range" id="sliderWebpQuality" min="60" max="100" step="1" value="90">
+                    <input type="number" id="numWebpQuality" class="form-input slider-number-input" min="60" max="100" step="1" value="90" aria-label="WebP export quality">
+                  </div>
+                </div>
+
+                <!-- Circle region + colour pick: remove a colour inside one circle only -->
+                <div class="ck-heading ck-heading-region">
+                  <span>Xoá màu cục bộ</span>
+                  <span id="regionToolStatus" class="hint">Chưa có vùng nào</span>
+                </div>
+                <div class="region-tool-row">
+                  <button id="btnRegionPick" class="eyedropper-trigger-btn region-pick-btn" type="button" title="Khoanh một vòng tròn rồi pick màu cần xoá bên trong nó">
+                    <i data-lucide="circle-dashed" style="width: 14px; height: 14px;"></i>
+                    <span>Vùng tròn + Pick màu</span>
+                  </button>
+                </div>
+                <div id="regionList" class="color-swatches region-list"></div>
+                <div id="regionControls" class="region-controls" hidden>
+                  <div class="region-controls-head">
+                    <span>Vùng đang chọn</span>
+                    <span id="regionLabel" class="hint">—</span>
+                  </div>
+                  <div class="region-step-row">
+                    <button id="btnRegionPickColor" class="time-btn region-step-btn" type="button" title="Bước 2: click vào màu cần xoá bên trong vòng tròn">
+                      <i data-lucide="pipette" style="width: 12px; height: 12px;"></i>
+                      <span>Pick màu trong vùng</span>
+                    </button>
+                    <button id="btnRegionDrawNew" class="time-btn region-step-btn" type="button" title="Vẽ thêm một vòng tròn nữa">
+                      <i data-lucide="circle-dashed" style="width: 12px; height: 12px;"></i>
+                      <span>Vẽ vùng mới</span>
+                    </button>
+                  </div>
+                  <div class="region-sliders">
+                    <label>
+                      <span>Tolerance</span>
+                      <div class="slider-group compact-slider-group">
+                        <input type="range" id="sliderRegionTolerance" min="0" max="1" step="0.01" value="0.30">
+                        <input type="number" id="numRegionTolerance" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.30" aria-label="Region colour tolerance">
+                      </div>
+                    </label>
+                    <label>
+                      <span>Softness</span>
+                      <div class="slider-group compact-slider-group">
+                        <input type="range" id="sliderRegionSoftness" min="0" max="1" step="0.01" value="0.12">
+                        <input type="number" id="numRegionSoftness" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.12" aria-label="Region edge softness">
+                      </div>
+                    </label>
+                    <label>
+                      <span>Despill</span>
+                      <div class="slider-group compact-slider-group">
+                        <input type="range" id="sliderRegionDespill" min="0" max="1" step="0.01" value="0">
+                        <input type="number" id="numRegionDespill" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.00" aria-label="Region despill strength">
+                      </div>
+                    </label>
+                  </div>
+                  <label class="checkbox-row">
+                    <input type="checkbox" id="chkRegionConnected">
+                    <span>Chỉ vùng liền kề với điểm pick</span>
+                  </label>
+                  <div class="erase-scope-row">
+                    <span class="erase-scope-label">Vẽ trên Preview:</span>
+                    <button id="btnRegionScopeFrame" class="time-btn erase-scope-btn" type="button" title="Vùng chỉ áp cho đúng ô (frame) bạn vẽ">
+                      <i data-lucide="square-dashed" style="width: 12px; height: 12px;"></i>
+                      <span>Frame này</span>
+                    </button>
+                    <button id="btnRegionScopeAll" class="time-btn erase-scope-btn" type="button" title="Vùng áp cho mọi frame, như khi vẽ trên Source video">
+                      <i data-lucide="layers" style="width: 12px; height: 12px;"></i>
+                      <span>Mọi frame</span>
+                    </button>
+                    <span class="hint">Giữ Shift để tạm đổi</span>
+                  </div>
+                </div>
+                <details class="help-details">
+                  <summary>Vùng tròn hoạt động thế nào?</summary>
+                  <p class="erase-brush-help">Vòng tròn là <strong>phạm vi được phép xoá</strong>, không phải vùng được bảo vệ: màu bạn pick chỉ mất bên trong nó, nên một màu cũng có trên người nhân vật vẫn giữ nguyên ở mọi nơi khác. Vẽ trên Source video ⇒ áp cho mọi frame; vẽ thẳng lên một ô Preview ⇒ mặc định chỉ ô đó. Vùng chạy sau chroma key và trước Bút Xóa, hoạt động cả khi tắt <em>Transparent</em>. Nhân vật di chuyển thì vòng tròn đứng yên — hãy vẽ vùng riêng cho từng ô trên Preview, hoặc vẽ rộng hơn rồi siết bằng <em>Tolerance</em> và <em>Chỉ vùng liền kề</em>.</p>
+                </details>
+              </div>
+            </div>
+          </div>
+
           <div class="form-group" id="panelSimilarity">
             <label class="form-label" for="sliderSimilarity">
               <span>Similarity (Color Tolerance)</span>
@@ -898,7 +1112,10 @@
                   </select>
                 </label>
               </div>
-              <p class="protection-brush-help">Translucent giữ lại 80% cường độ nét để nền vẫn xuyên nhẹ qua hoa mỏng, tóc, kính hoặc khói. Pixel trùng màu nền vẫn được giữ trong suốt để tránh kéo mảng background vào sprite. Generate lại sau khi vẽ.</p>
+              <details class="help-details">
+                <summary>Translucent hay Solid?</summary>
+                <p class="protection-brush-help">Translucent giữ lại 80% cường độ nét để nền vẫn xuyên nhẹ qua hoa mỏng, tóc, kính hoặc khói. Pixel trùng màu nền vẫn được giữ trong suốt để tránh kéo mảng background vào sprite. Generate lại sau khi vẽ.</p>
+              </details>
             </div>
           </div>
 
@@ -977,7 +1194,10 @@
                   </div>
                 </label>
               </div>
-              <p class="erase-brush-help">Bút Xóa đưa alpha vùng được bôi về trong suốt, chạy sau chroma key nên xóa được cả nền còn sót lẫn chi tiết thừa nằm trên chủ thể — và hoạt động cả khi tắt <em>Transparent</em>. Mask vẽ trên Source video nên bám theo nội dung gốc, không bị lệch khi bật Subject Alignment. Nếu đã Generate, nét vẽ được áp ngay vào preview mà không cần Generate lại (trừ khi đang bật Subject Alignment). Sau khi Generate bạn còn bôi được <strong>trực tiếp trên khung Preview</strong> — ở cả chế độ Anim lẫn Sheet. Ở đó nét vẽ mặc định <strong>chỉ xóa trên đúng ô (frame) bạn bôi</strong>, giống Eraser trong Paint, để dọn chi tiết thừa chỉ xuất hiện ở vài frame; chuyển sang <em>Mọi frame</em> (hoặc giữ <kbd>Shift</kbd>) khi muốn xóa xuyên suốt. Nét bôi trên Source video luôn áp cho mọi frame. Mọi nét đều được quy đổi về toạ độ video gốc nên vẫn bám nội dung khi đổi crop/cell size, và nét theo frame tự bám lại đúng thời điểm cũ nếu bạn Generate với số frame khác.</p>
+              <details class="help-details">
+                <summary>Bút Xóa hoạt động thế nào?</summary>
+                <p class="erase-brush-help">Bút Xóa đưa alpha vùng được bôi về trong suốt, chạy sau chroma key nên xóa được cả nền còn sót lẫn chi tiết thừa nằm trên chủ thể — và hoạt động cả khi tắt <em>Transparent</em>. Mask vẽ trên Source video nên bám theo nội dung gốc, không bị lệch khi bật Subject Alignment. Nếu đã Generate, nét vẽ được áp ngay vào preview mà không cần Generate lại (trừ khi đang bật Subject Alignment). Sau khi Generate bạn còn bôi được <strong>trực tiếp trên khung Preview</strong> — ở cả chế độ Anim lẫn Sheet. Ở đó nét vẽ mặc định <strong>chỉ xóa trên đúng ô (frame) bạn bôi</strong>, giống Eraser trong Paint, để dọn chi tiết thừa chỉ xuất hiện ở vài frame; chuyển sang <em>Mọi frame</em> (hoặc giữ <kbd>Shift</kbd>) khi muốn xóa xuyên suốt. Nét bôi trên Source video luôn áp cho mọi frame. Mọi nét đều được quy đổi về toạ độ video gốc nên vẫn bám nội dung khi đổi crop/cell size, và nét theo frame tự bám lại đúng thời điểm cũ nếu bạn Generate với số frame khác.</p>
+              </details>
             </div>
           </div>
 
@@ -1098,7 +1318,10 @@
                 </label>
               </div>
 
-              <p class="color-grade-help"><strong>Vibrance</strong> nâng các màu đang nhợt nhiều hơn các màu đã rực, nên không làm cháy da người hay bệt các mảng màu mạnh — kéo cái này trước, chỉ dùng <strong>Saturation</strong> khi cần đẩy đều toàn bộ. Exposure tính theo stop (linear light), Contrast xoay quanh mid-grey 50% nên không làm sáng/tối tổng thể.</p>
+              <details class="help-details">
+                <summary>Vibrance hay Saturation?</summary>
+                <p class="color-grade-help"><strong>Vibrance</strong> nâng các màu đang nhợt nhiều hơn các màu đã rực, nên không làm cháy da người hay bệt các mảng màu mạnh — kéo cái này trước, chỉ dùng <strong>Saturation</strong> khi cần đẩy đều toàn bộ. Exposure tính theo stop (linear light), Contrast xoay quanh mid-grey 50% nên không làm sáng/tối tổng thể.</p>
+              </details>
 
               <div class="color-grade-controls">
                 <label>
@@ -1124,145 +1347,10 @@
                 </label>
               </div>
 
-              <p class="color-grade-help">Sharpen chạy <em>sau</em> khi thu nhỏ về kích thước ô, tức là ở đúng độ phân giải xuất ra. Làm mờ có chuẩn hoá theo alpha nên không hút màu đen từ vùng trong suốt vào viền chủ thể. Ngưỡng giữ nhiễu khỏi bị khuếch đại — tăng lên nếu thấy hạt. Màu và độ nét áp dụng khi Generate lại.</p>
-            </div>
-          </div>
-
-          <!-- Chroma Key / Green Screen Removal Options -->
-          <div class="form-group chroma-key-group" id="groupChromaKey">
-            <label class="form-label">
-              <span>Green screen / Chroma key</span>
-              <span class="hint">Multi-color background removal</span>
-            </label>
-            
-            <div class="color-key-container">
-              <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                <label class="checkbox-row" style="height: auto;">
-                  <input type="checkbox" id="chkTransparentFormat" checked>
-                  <span id="lblFormatName">Transparent WebP</span>
-                </label>
-                
-                <div style="display: flex; align-items: center; gap: 6px;">
-                  <!-- WebP is the default for file size. Note what it costs: the
-                       canvas WebP encoder is lossy and subsamples chroma 4:2:0, which
-                       smears saturated colour across the subject edge, and it is the
-                       one export path that cannot carry alpha bleed - the browser
-                       gives no way to encode WebP without going through the canvas,
-                       whose premultiplied backing store discards colour at alpha 0.
-                       Switch to PNG when edge quality matters more than size. -->
-                  <select id="selectFormat" class="form-input compact-select">
-                    <option value="webp" selected>WebP</option>
-                    <option value="png">PNG</option>
-                  </select>
-                </div>
-              </div>
-
-              <!-- Quality only exists for WebP; PNG is lossless by definition.
-                   100 is a cliff, not the top of a ramp: the canvas encoder
-                   switches to lossless VP8L at exactly 1.0, which is why it
-                   produced files many times larger than every value below it. -->
-              <div id="webpQualityRow" class="webp-quality-row">
-                <label for="numWebpQuality">
-                  <span>WebP quality</span>
-                  <span class="hint">100 = lossless, much larger file</span>
-                </label>
-                <div class="slider-group compact-slider-group">
-                  <input type="range" id="sliderWebpQuality" min="60" max="100" step="1" value="90">
-                  <input type="number" id="numWebpQuality" class="form-input slider-number-input" min="60" max="100" step="1" value="90" aria-label="WebP export quality">
-                </div>
-              </div>
-
-              <!-- Eyedropper & Color Swatches -->
-              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
-                <button id="btnPickColor" class="eyedropper-trigger-btn" title="Pick màu từ Source Video hoặc Sprite Preview">
-                  <i data-lucide="pipette" style="width: 13px; height: 13px;"></i>
-                  <span>Pick Color from Video / Preview</span>
-                </button>
-
-                <div style="display: flex; align-items: center; gap: 4px;">
-                  <input type="color" id="manualColorInput" value="#0024f5" class="manual-color-input">
-                  <button id="btnAddManualColor" class="time-btn" style="height: 28px; padding: 0 8px;">+ Add</button>
-                  <button id="btnClearKeyColors" class="time-btn color-clear-btn" type="button" title="Clear all picked chroma-key colors">Clear all</button>
-                </div>
-              </div>
-              <div class="color-value-editor" role="group" aria-label="Color value">
-                <input id="inputColorHex" class="form-input color-text-input" value="#0024f5" placeholder="#RRGGBB" aria-label="HEX color">
-                <input id="inputColorRgb" class="form-input color-text-input" placeholder="rgb(0, 36, 245)" aria-label="RGB color">
-                <button id="btnApplyColorValue" class="time-btn" type="button">Apply</button>
-                <button id="btnCopyColor" class="time-btn" type="button" title="Copy color">Copy</button>
-                <button id="btnPasteColor" class="time-btn" type="button" title="Paste color">Paste</button>
-              </div>
-              <div id="colorInputError" class="color-input-error" role="alert" aria-live="polite"></div>
-              <div class="recent-colors-row"><span>Recent</span><div id="recentColorsList" class="recent-colors-list"></div></div>
-
-              <!-- Active Key Colors List -->
-              <div id="swatchesList" class="color-swatches">
-                <!-- Swatches dynamically injected here -->
-              </div>
-
-              <!-- Circle region + colour pick: remove a colour inside one circle only -->
-              <div class="region-tool-row">
-                <button id="btnRegionPick" class="eyedropper-trigger-btn region-pick-btn" type="button" title="Khoanh một vòng tròn rồi pick màu cần xoá bên trong nó">
-                  <i data-lucide="circle-dashed" style="width: 14px; height: 14px;"></i>
-                  <span>Vùng tròn + Pick màu</span>
-                </button>
-                <span id="regionToolStatus" class="hint">Chưa có vùng nào</span>
-              </div>
-              <div id="regionList" class="color-swatches region-list"></div>
-              <div id="regionControls" class="region-controls" hidden>
-                <div class="region-controls-head">
-                  <span>Vùng đang chọn</span>
-                  <span id="regionLabel" class="hint">—</span>
-                </div>
-                <div class="region-step-row">
-                  <button id="btnRegionPickColor" class="time-btn region-step-btn" type="button" title="Bước 2: click vào màu cần xoá bên trong vòng tròn">
-                    <i data-lucide="pipette" style="width: 12px; height: 12px;"></i>
-                    <span>Pick màu trong vùng</span>
-                  </button>
-                  <button id="btnRegionDrawNew" class="time-btn region-step-btn" type="button" title="Vẽ thêm một vòng tròn nữa">
-                    <i data-lucide="circle-dashed" style="width: 12px; height: 12px;"></i>
-                    <span>Vẽ vùng mới</span>
-                  </button>
-                </div>
-                <label>
-                  <span>Tolerance</span>
-                  <div class="slider-group compact-slider-group">
-                    <input type="range" id="sliderRegionTolerance" min="0" max="1" step="0.01" value="0.30">
-                    <input type="number" id="numRegionTolerance" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.30" aria-label="Region colour tolerance">
-                  </div>
-                </label>
-                <label>
-                  <span>Softness</span>
-                  <div class="slider-group compact-slider-group">
-                    <input type="range" id="sliderRegionSoftness" min="0" max="1" step="0.01" value="0.12">
-                    <input type="number" id="numRegionSoftness" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.12" aria-label="Region edge softness">
-                  </div>
-                </label>
-                <label>
-                  <span>Despill</span>
-                  <div class="slider-group compact-slider-group">
-                    <input type="range" id="sliderRegionDespill" min="0" max="1" step="0.01" value="0">
-                    <input type="number" id="numRegionDespill" class="form-input slider-number-input" min="0" max="1" step="0.01" value="0.00" aria-label="Region despill strength">
-                  </div>
-                </label>
-                <label class="checkbox-row">
-                  <input type="checkbox" id="chkRegionConnected">
-                  <span>Chỉ vùng liền kề với điểm pick</span>
-                </label>
-                <div class="erase-scope-row">
-                  <span class="erase-scope-label">Vẽ trên Preview:</span>
-                  <button id="btnRegionScopeFrame" class="time-btn erase-scope-btn" type="button" title="Vùng chỉ áp cho đúng ô (frame) bạn vẽ">
-                    <i data-lucide="square-dashed" style="width: 12px; height: 12px;"></i>
-                    <span>Frame này</span>
-                  </button>
-                  <button id="btnRegionScopeAll" class="time-btn erase-scope-btn" type="button" title="Vùng áp cho mọi frame, như khi vẽ trên Source video">
-                    <i data-lucide="layers" style="width: 12px; height: 12px;"></i>
-                    <span>Mọi frame</span>
-                  </button>
-                  <span class="hint">Giữ Shift để tạm đổi</span>
-                </div>
-              </div>
-              <p class="erase-brush-help">Vòng tròn là <strong>phạm vi được phép xoá</strong>, không phải vùng được bảo vệ: màu bạn pick chỉ mất bên trong nó, nên một màu cũng có trên người nhân vật vẫn giữ nguyên ở mọi nơi khác. Vẽ trên Source video ⇒ áp cho mọi frame; vẽ thẳng lên một ô Preview ⇒ mặc định chỉ ô đó. Vùng chạy sau chroma key và trước Bút Xóa, hoạt động cả khi tắt <em>Transparent</em>. Nhân vật di chuyển thì vòng tròn đứng yên — hãy vẽ vùng riêng cho từng ô trên Preview, hoặc vẽ rộng hơn rồi siết bằng <em>Tolerance</em> và <em>Chỉ vùng liền kề</em>.</p>
+              <details class="help-details">
+                <summary>Sharpen chạy lúc nào?</summary>
+                <p class="color-grade-help">Sharpen chạy <em>sau</em> khi thu nhỏ về kích thước ô, tức là ở đúng độ phân giải xuất ra. Làm mờ có chuẩn hoá theo alpha nên không hút màu đen từ vùng trong suốt vào viền chủ thể. Ngưỡng giữ nhiễu khỏi bị khuếch đại — tăng lên nếu thấy hạt. Màu và độ nét áp dụng khi Generate lại.</p>
+              </details>
             </div>
           </div>
         </div>

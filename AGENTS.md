@@ -38,6 +38,9 @@
   - `public/js/panel-visibility.js`: registry của các khung chức năng bật/tắt được ở tab Video → Sprite (id panel → danh sách id phần tử DOM), cộng phần đọc/ghi/chuẩn hoá trạng thái. Thuần tuý, không dùng DOM; phần wiring (dialog, hook tắt công cụ) nằm ở `app.js`. Test bằng `test/panel-visibility.test.mjs` — test này đọc `public/index.html` để chứng minh mọi id trong registry thật sự tồn tại trong markup.
   - `public/js/sprite-transform.js`: controller UI của tab Sprite Transform (lưới 4 cột 6 hàng, stage canvas tương tác kéo thả toạ độ trực tiếp, preview animation, 3 view modes, circle crop, export PNG/WebP).
   - `public/css/style.css`: giao diện và trạng thái tương tác.
+    - Layout gọn của tab Video → Sprite nằm trong khối `Video → Sprite — compact layout` ở cuối file, mọi selector scope trong `#videoWorkspace` để không đụng 3 tab kia. Sidebar chia thành `.sb-section` (tiêu đề `.sb-heading`, field phẳng, `.sb-inline` = nhãn trái / input phải); section tự ẩn khi mọi panel con mang `.panel-hidden`. `#groupChromaKey` đứng đầu panel chroma, chia 2 cột `.ck-layout` (màu key | định dạng xuất + vùng tròn). Đoạn giải thích dài bọc trong `<details class="help-details">`.
+    - Có `#videoWorkspace [hidden] { display: none !important }`: rule `display` của author thắng `[hidden]` của UA, nên thiếu dòng này thì `#regionControls` hiện ra dù đang `hidden`.
+    - Các nút trùng chức năng (`#btnVideoPlayPause`, `#videoCurrentTimeDisplay`, `#btnBrowseFile`, `#lblSpeedSettings`, `#activeFilenameLabel`) vẫn còn trong DOM với `hidden` vì `app.js` còn cập nhật chúng; đừng xoá. Đổi thứ tự hiển thị thì cập nhật `applyTabOrder()` trong `app.js`.
   - `public/samples/sample_blue_flower.mp4`: video demo được tự động load khi mở app.
 
 ## Chạy và kiểm tra

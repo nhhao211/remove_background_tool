@@ -416,27 +416,37 @@ document.addEventListener('DOMContentLoaded', () => {
   function applyTabOrder() {
     const orderedIds = [
       'btnLoadDemo', 'btnToggleChecker',
-      'btnVideoPlayPause', 'btnVideoStepBack', 'btnVideoStepForward',
+      'btnVideoPlayPause',
       'btnResetEyedropperZoom', 'btnCancelEyedropper',
+      // Source editor: transport, clip tools, speed, trim
+      'btnVideoStepBack', 'btnEditorSkipBack', 'btnEditorPlay', 'btnEditorSkipForward', 'btnVideoStepForward',
       'btnEditorSplit', 'btnEditorDuplicate', 'btnEditorDelete', 'btnEditorMute',
       ...Array.from(document.querySelectorAll('#speedPresets .speed-preset-btn')).map((element) => element.id || null),
-      'inputSpeedCustom', 'btnEditorSkipBack', 'btnEditorPlay', 'btnEditorSkipForward',
-      'btnAutoLoopFinder', 'btnSetTrimStart', 'btnSetTrimEnd', 'btnResetTrim', 'trimHandleLeft', 'trimHandleRight',
-      'trimStartInput', 'trimEndInput',
+      'inputSpeedCustom', 'trimHandleLeft', 'trimHandleRight',
+      'trimStartInput', 'btnSetTrimStart', 'trimEndInput', 'btnSetTrimEnd', 'btnResetTrim', 'btnAutoLoopFinder',
       'btnPlayPause', 'btnToggleMode', 'btnZoomOut', 'btnZoomIn', 'btnZoomFit', 'inputPreviewBgColor', 'btnPreviewMoveToCleaner', 'btnCancelPreviewEyedropper', 'btnCancelPreviewErase',
-      'btnGenerate', 'btnMoveToCleaner', 'btnDownloadMain', 'btnDownloadBundleZip', 'btnDownloadSpriteOnly', 'btnDownloadAudioOnly', 'btnDropdownMoveToCleaner',
-      'btnBrowseFile', 'btnToggleCollapse', 'btnBrowseSecondary',
-      // Sprite Sheet Settings (sidebar)
-      'inputFrames', 'chkKeepSourceSize',
-      'inputRows', 'inputCols', 'inputCellNative',
+      // Sidebar: actions, source file, sprite sheet settings
+      'btnGenerate', 'btnDownloadMain', 'btnDownloadBundleZip', 'btnDownloadSpriteOnly', 'btnDownloadAudioOnly', 'btnDropdownMoveToCleaner',
+      'btnMoveToCleaner', 'btnMoveToTransform',
+      'btnBrowseFile', 'btnBrowseSecondary', 'btnToggleCollapse',
+      'inputFrames', 'inputRows', 'inputCols',
+      'chkKeepSourceSize', 'inputCellNative',
       'inputCropTop', 'inputCropBottom', 'inputCropLeft', 'inputCropRight',
+      'inputSpeedCustomSettings', 'btnResetSpeed',
+      'inputFps', 'btnAutoFps',
+      'inputDownloadName',
       'btnSelectWatermark', 'btnClearWatermark', 'btnCancelWatermarkSelect',
       'headerSubjectAlignment', 'chkEnableGuideline', 'inputGuidelineX', 'selectGuidelineMode', 'chkEnableGuidelineY', 'inputGuidelineY', 'selectGuidelineYMode', 'btnGuidelineAutoDetect', 'btnGuidelineCenter', 'btnGuidelineResetCrop', 'chkShowGuidelineVideo', 'chkGuidelinePreview',
       'headerLoopSettings', 'chkClosedLoop', 'sliderLoopCrossfade', 'numLoopCrossfade', 'chkPingPongLoop', 'btnOpenLoopModalFromSettings',
-      'inputDownloadName',
-      'inputSpeedCustomSettings', 'btnResetSpeed',
-      'inputFps', 'btnAutoFps',
-      // Chroma Key Settings
+      // Chroma panel: key colours + format + circle region first, as laid out
+      'btnPickColor',
+      'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
+      'inputColorHex', 'inputColorRgb', 'btnApplyColorValue', 'btnCopyColor', 'btnPasteColor',
+      'chkTransparentFormat', 'selectFormat', 'sliderWebpQuality', 'numWebpQuality',
+      'btnRegionPick', 'btnRegionPickColor', 'btnRegionDrawNew',
+      'sliderRegionTolerance', 'numRegionTolerance', 'sliderRegionSoftness', 'numRegionSoftness', 'sliderRegionDespill', 'numRegionDespill',
+      'chkRegionConnected', 'btnRegionScopeFrame', 'btnRegionScopeAll',
+      // Chroma sliders, then the tool accordions
       'sliderSimilarity', 'numSimilarity', 'sliderBlend', 'numBlend', 'sliderSpill', 'numSpill', 'sliderSubjectProtection', 'numSubjectProtection', 'sliderEdgeCleanup', 'numEdgeCleanup',
       'chkChromaSmooth', 'sliderChromaSmooth', 'numChromaSmooth',
       'chkSubjectGuard', 'sliderSubjectGuardStrength', 'numSubjectGuardStrength', 'sliderSubjectGuardLeak', 'numSubjectGuardLeak',
@@ -452,11 +462,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'sliderGradeVibrance', 'numGradeVibrance', 'sliderGradeSaturation', 'numGradeSaturation',
       'sliderGradeTemperature', 'numGradeTemperature',
       'sliderSharpenAmount', 'numSharpenAmount', 'sliderSharpenRadius', 'numSharpenRadius',
-      'sliderSharpenThreshold', 'numSharpenThreshold',
-      'chkTransparentFormat', 'selectFormat', 'sliderWebpQuality', 'numWebpQuality',
-      'btnPickColor',
-      'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
-      'inputColorHex', 'inputColorRgb', 'btnApplyColorValue', 'btnCopyColor', 'btnPasteColor'
+      'sliderSharpenThreshold', 'numSharpenThreshold'
     ];
     let index = 1;
     orderedIds.forEach((id) => {

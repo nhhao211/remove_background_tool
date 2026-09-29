@@ -5080,3 +5080,1098 @@ body.viewport-resizing {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Video → Sprite — compact layout
+   Everything below is scoped to #videoWorkspace so the Cleaner / Reframe /
+   Transform tabs, which share many of these class names, are untouched.
+   The rules only restyle; every id app.js looks up is still in the markup.
+   ========================================================================== */
+
+/* Author `display` rules beat the UA `[hidden] { display: none }`, which is how
+   `#regionControls` used to show "Vùng đang chọn" with no region selected. */
+#videoWorkspace [hidden] {
+  display: none !important;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+#videoWorkspace .main-workspace {
+  grid-template-columns: 292px minmax(0, 1fr);
+  gap: 12px;
+}
+
+#videoWorkspace .preview-card,
+#videoWorkspace .settings-card {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+}
+
+/* ---------- Card headers ---------- */
+#videoWorkspace .card-header {
+  min-height: 44px;
+  padding: 7px 12px;
+  gap: 10px;
+}
+
+#videoWorkspace .card-title {
+  font-size: 0.86rem;
+  font-weight: 650;
+  color: #e2e8f0;
+  white-space: nowrap;
+  flex-shrink: 0;
+  gap: 7px;
+}
+
+.source-card-header {
+  justify-content: flex-start;
+}
+
+.source-card-header .card-subtitle-info {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Preview toolbar: title, play/mode segment, counter, zoom segment, BG — then
+   the hand-off to the Cleaner pinned right. Nothing wraps mid-control. */
+.preview-card-header .preview-controls {
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The preview card is ~0.57 of the space right of the sidebar; below this it
+   can't hold every toolbar label on one line. (Not a container query: inline-size
+   containment collapses the card to 0 width once the grid stacks.) */
+@media (max-width: 1600px) {
+  .preview-card-title span,
+  .preview-to-cleaner span {
+    display: none;
+  }
+  .preview-card-header .ctrl-segment .btn-ctrl {
+    padding: 0 7px;
+  }
+}
+
+@media (max-width: 560px) {
+  .preview-card-header {
+    flex-wrap: wrap;
+  }
+  .preview-card-header .preview-controls {
+    flex-wrap: wrap;
+  }
+}
+
+.preview-card-title {
+  margin-right: 2px;
+}
+
+.ctrl-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: #0f172a;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+}
+
+.ctrl-segment .btn-ctrl {
+  height: 26px;
+  padding: 0 9px;
+  border-color: transparent;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.ctrl-segment .btn-ctrl:hover {
+  background: #1e293b;
+  border-color: transparent;
+}
+
+.ctrl-segment .btn-ctrl.active {
+  background: var(--accent-blue);
+  color: #fff;
+}
+
+.zoom-segment .btn-ctrl {
+  padding: 0 7px;
+}
+
+.zoom-segment .zoom-indicator {
+  min-width: 42px;
+}
+
+#videoWorkspace .frame-badge {
+  min-width: 52px;
+  padding: 3px 7px;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#videoWorkspace .preview-bg-picker {
+  height: 30px;
+}
+
+.preview-to-cleaner {
+  flex-shrink: 0;
+  height: 30px;
+  white-space: nowrap;
+}
+
+/* ---------- Source video editor ---------- */
+#videoWorkspace .editor-toolbar {
+  flex-wrap: nowrap;
+  padding: 5px 8px;
+  min-height: 44px;
+  gap: 8px;
+}
+
+.editor-transport {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+#videoWorkspace .editor-tool-btn {
+  width: 30px;
+  height: 30px;
+}
+
+#videoWorkspace .editor-play-main {
+  width: 34px;
+  height: 34px;
+  margin: 0 2px;
+  background: #2563eb;
+  color: #fff;
+}
+
+#videoWorkspace .editor-play-main:hover {
+  background: #1d4ed8;
+}
+
+.editor-timecode {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+#videoWorkspace .editor-timecode .editor-time-label {
+  min-width: 0;
+  color: #e5e5e5;
+}
+
+#videoWorkspace .editor-timecode .editor-time-total,
+.editor-timecode-sep {
+  color: #737373;
+  font-size: 0.72rem;
+}
+
+#videoWorkspace .editor-tools-right {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+#videoWorkspace .editor-toolbar-divider {
+  margin: 0 4px;
+}
+
+.editor-speed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  background: #0d0d0d;
+  border-bottom: 1px solid #1a1a1a;
+  flex-wrap: wrap;
+}
+
+#videoWorkspace .speed-control {
+  padding: 0;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+/* The presets used to vanish below 1500px because they shared a row with the
+   transport; on their own row they fit, so keep them. */
+#videoWorkspace .speed-presets {
+  display: flex;
+}
+
+#videoWorkspace .speed-preset-btn {
+  padding: 3px 6px;
+}
+
+#videoWorkspace .speed-custom-input {
+  width: 46px;
+  height: 24px;
+}
+
+#videoWorkspace .trim-inputs {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 6px 8px 8px;
+}
+
+#videoWorkspace .trim-time-group {
+  gap: 5px;
+}
+
+#videoWorkspace .trim-time-group > label {
+  color: #a3a3a3;
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+
+#videoWorkspace .trim-inputs .compact-number {
+  width: 58px;
+  max-width: 58px;
+  height: 26px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#videoWorkspace .trim-inputs .time-btn,
+.trim-actions .time-btn {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  font-size: 0.72rem;
+}
+
+/* The arrow icons on Set only repeat the word; drop them to keep one line. */
+#videoWorkspace .trim-set-btn svg {
+  display: none;
+}
+
+.trim-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+#videoWorkspace .time-btn-loop {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+/* ---------- Sidebar ---------- */
+#videoWorkspace .settings-sidebar {
+  top: 12px;
+  max-height: calc(100vh - 24px);
+}
+
+#videoWorkspace .settings-action-bar {
+  padding: 10px;
+  gap: 8px;
+}
+
+#videoWorkspace .settings-sidebar .action-buttons-group {
+  gap: 7px;
+  width: 100%;
+}
+
+#videoWorkspace .settings-sidebar .btn-primary-blue {
+  padding: 9px 8px;
+  font-size: 0.86rem;
+}
+
+#videoWorkspace .settings-sidebar .btn-primary-green {
+  padding: 7px 8px;
+  font-size: 0.8rem;
+}
+
+.sidebar-send-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.btn-send {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: #1e293b;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: #cbd5e1;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.btn-send:hover:not(:disabled) {
+  background: #334155;
+  color: #fff;
+  border-color: #475569;
+}
+
+.btn-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#videoWorkspace .settings-sidebar .drop-zone {
+  margin: 10px 10px 8px;
+  padding: 8px 8px 8px 10px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+#videoWorkspace .settings-sidebar .drop-content {
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.drop-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+#videoWorkspace .settings-sidebar .drop-file-name {
+  display: block;
+  font-size: 0.78rem;
+  word-break: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drop-hint {
+  font-size: 0.68rem;
+  color: #64748b;
+}
+
+#videoWorkspace .settings-sidebar #btnBrowseSecondary {
+  width: auto;
+  flex-shrink: 0;
+  padding: 5px 9px;
+  font-size: 0.74rem;
+}
+
+.sidebar-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px 6px;
+  border-top: 1px solid var(--border-color);
+}
+
+.sidebar-settings-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #cbd5e1;
+}
+
+#videoWorkspace .settings-sidebar .sidebar-settings-head .btn-collapse {
+  width: auto;
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  border-color: transparent;
+}
+
+#videoWorkspace .settings-sidebar .sidebar-settings-head .btn-collapse:hover {
+  border-color: var(--border-color);
+}
+
+#videoWorkspace .settings-sidebar .settings-body {
+  padding: 0 10px 12px;
+}
+
+#videoWorkspace .settings-sidebar-grid {
+  gap: 0;
+}
+
+.sb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(36, 47, 68, 0.7);
+}
+
+.sb-section:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+
+/* A heading with nothing left under it (every field hidden via Settings) is
+   noise, so the whole section goes. */
+.sb-section:not(:has(> .form-group:not(.panel-hidden), > .sb-fields > .form-group:not(.panel-hidden))) {
+  display: none;
+}
+
+.sb-heading {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.sb-fields {
+  display: grid;
+  gap: 6px;
+}
+
+.sb-fields-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sb-fields-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* Flat fields: the section is the container, so the per-field boxes go. */
+#videoWorkspace .settings-sidebar-grid .form-group {
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  gap: 3px;
+}
+
+#videoWorkspace .settings-sidebar-grid .sb-fields .form-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+#videoWorkspace .settings-sidebar-grid .sb-fields .form-label {
+  justify-content: flex-start;
+}
+
+#videoWorkspace .settings-sidebar-grid .form-group .form-label {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+#videoWorkspace .settings-sidebar-grid .sb-fields .compact-number {
+  width: 100% !important;
+  max-width: none;
+  height: 30px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Label left, control right, one line. */
+#videoWorkspace .settings-sidebar-grid .form-group.sb-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  min-height: 30px;
+}
+
+#videoWorkspace .settings-sidebar-grid .form-group.sb-inline .form-label {
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+#videoWorkspace .settings-sidebar-grid .form-group.sb-inline .form-label .hint {
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#videoWorkspace .settings-sidebar-grid .form-group.sb-inline .compact-number {
+  width: 70px !important;
+  max-width: 70px;
+  height: 28px;
+}
+
+#videoWorkspace #panelKeepSourceSize {
+  grid-template-columns: 1fr;
+}
+
+#videoWorkspace .settings-sidebar-grid .checkbox-row {
+  height: 26px;
+}
+
+#videoWorkspace .settings-sidebar-grid .checkbox-row span {
+  font-size: 0.78rem;
+}
+
+#videoWorkspace .number-field-row {
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+.number-unit {
+  font-size: 0.76rem;
+  color: #64748b;
+}
+
+#videoWorkspace .settings-sidebar-grid .number-field-row .time-btn {
+  min-height: 28px;
+  padding: 2px 8px;
+}
+
+#videoWorkspace .settings-sidebar-grid #inputDownloadName {
+  height: 30px;
+  font-size: 0.78rem;
+}
+
+/* Tool cards (watermark, alignment, loop): same chrome, one accent each. */
+.sb-tools {
+  gap: 7px;
+}
+
+#videoWorkspace .settings-sidebar-grid .sb-tools > .form-group {
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(36, 47, 68, 0.9);
+  border-radius: 8px;
+  gap: 6px;
+}
+
+#videoWorkspace .settings-sidebar-grid .sb-tools > .form-group.collapsed {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.tool-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.tool-card-head .hint {
+  margin-left: auto;
+  font-size: 0.68rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#videoWorkspace .watermark-tool-actions {
+  display: flex;
+  gap: 6px;
+}
+
+#videoWorkspace .watermark-tool-btn {
+  flex: 1;
+  justify-content: center;
+}
+
+#videoWorkspace .settings-sidebar-grid .sb-tools .hint {
+  line-height: 1.4;
+}
+
+/* ---------- Collapsible sections (both panels) ---------- */
+/* Chevron only — "Collapse" / "Expand" next to it was a second label for the
+   same state. app.js still writes the text, so it stays for screen readers. */
+#videoWorkspace .section-collapse-state-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+#videoWorkspace .section-collapse-action {
+  padding: 3px;
+  background: transparent;
+  border-color: transparent;
+}
+
+#videoWorkspace .section-collapse-header:hover .section-collapse-action {
+  background: rgba(51, 65, 85, 0.6);
+}
+
+#videoWorkspace .section-collapse-title {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+#videoWorkspace .section-collapse-name {
+  white-space: nowrap;
+}
+
+#videoWorkspace .section-collapse-title .hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---------- Help text folded away ---------- */
+.help-details {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.help-details > summary {
+  cursor: pointer;
+  width: fit-content;
+  color: #64748b;
+  font-size: 0.72rem;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  user-select: none;
+}
+
+.help-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.help-details > summary::before {
+  content: "?";
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+
+.help-details > summary:hover,
+.help-details[open] > summary {
+  color: #cbd5e1;
+}
+
+.help-details > p {
+  margin-top: 6px;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(100, 116, 139, 0.45);
+  background: rgba(15, 23, 42, 0.45);
+  border-radius: 0 6px 6px 0;
+  line-height: 1.5;
+}
+
+/* ---------- Chroma card ---------- */
+.chroma-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 14px 0;
+  min-width: 0;
+}
+
+.chroma-card-header .card-title {
+  font-size: 0.86rem;
+  font-weight: 650;
+  color: #e2e8f0;
+  align-self: center;
+}
+
+.chroma-card-header .card-subtitle-info {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+#videoWorkspace .chroma-body {
+  padding: 10px 12px 12px;
+}
+
+#videoWorkspace .chroma-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* Slider card: name + value on the first line, a one-line hint under the
+   name, the slider across the full width underneath. */
+#videoWorkspace .chroma-grid > .form-group:has(> .slider-group) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: start;
+  column-gap: 8px;
+  row-gap: 6px;
+  padding: 9px 10px 10px;
+}
+
+#videoWorkspace .chroma-grid > .form-group > .slider-group {
+  display: contents;
+}
+
+#videoWorkspace .chroma-grid > .form-group:has(> .slider-group) > .form-label {
+  grid-column: 1;
+  grid-row: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+
+#videoWorkspace .chroma-grid > .form-group:has(> .slider-group) > .form-label > span:first-child {
+  color: #e2e8f0;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+#videoWorkspace .chroma-grid > .form-group:has(> .slider-group) > .form-label > .hint {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+#videoWorkspace .chroma-grid > .form-group > .slider-group > .slider-number-input {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+}
+
+#videoWorkspace .chroma-grid > .form-group > .slider-group > input[type="range"],
+#videoWorkspace .chroma-grid > .form-group:has(> .slider-group) > .checkbox-row {
+  grid-column: 1 / -1;
+}
+
+#videoWorkspace .chroma-grid > .form-group:has(> .slider-group) > .checkbox-row {
+  height: 22px;
+}
+
+#videoWorkspace .chroma-grid .checkbox-row span {
+  font-size: 0.76rem;
+}
+
+/* Subject Guard: its own two sliders sit side by side. */
+#videoWorkspace .subject-guard-group {
+  padding: 9px 10px 10px;
+  gap: 5px;
+}
+
+#videoWorkspace .subject-guard-group > .form-label {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+#videoWorkspace .subject-guard-group > .form-label > span:first-child {
+  color: #e2e8f0;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+#videoWorkspace .subject-guard-group > .form-label > .hint {
+  font-size: 0.68rem;
+}
+
+#videoWorkspace .subject-guard-group > .checkbox-row {
+  height: 22px;
+}
+
+#videoWorkspace .subject-guard-controls > label {
+  font-size: 0.72rem;
+}
+
+/* Key colours: one full-width card, colours left, format + circle region right. */
+#videoWorkspace .chroma-key-group {
+  order: -1;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+#videoWorkspace .ck-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  background: rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(36, 47, 68, 0.9);
+  border-radius: 8px;
+}
+
+.ck-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+
+.ck-side {
+  border-left: 1px solid rgba(36, 47, 68, 0.9);
+}
+
+.ck-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.ck-heading .hint {
+  font-size: 0.68rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.ck-heading-region {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(36, 47, 68, 0.9);
+}
+
+.ck-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#videoWorkspace .ck-pick-row .eyedropper-trigger-btn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 0.78rem;
+}
+
+.ck-manual {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#videoWorkspace .ck-pick-row .time-btn {
+  height: 30px;
+  padding: 0 9px;
+  font-size: 0.72rem;
+}
+
+#videoWorkspace .ck-pick-row .color-clear-btn {
+  margin-left: auto;
+}
+
+#videoWorkspace .ck-pick-row .manual-color-input {
+  width: 30px;
+  height: 30px;
+}
+
+#videoWorkspace .ck-colors .color-swatches {
+  min-height: 26px;
+}
+
+#videoWorkspace .ck-colors .color-value-editor {
+  grid-template-columns: minmax(80px, 1fr) minmax(120px, 1.3fr) auto auto auto;
+}
+
+#videoWorkspace .ck-colors .color-value-editor .time-btn {
+  height: 28px;
+  padding: 0 8px;
+}
+
+#videoWorkspace .ck-colors .color-input-error:empty {
+  display: none;
+}
+
+.ck-format-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#videoWorkspace .ck-format-row .checkbox-row {
+  height: 28px;
+}
+
+#videoWorkspace .ck-format-row .checkbox-row span {
+  font-size: 0.8rem;
+}
+
+#videoWorkspace .ck-side .webp-quality-row {
+  margin-top: 0;
+}
+
+#videoWorkspace .ck-side .region-tool-row {
+  margin-top: 0;
+}
+
+#videoWorkspace .ck-side .region-list:empty {
+  display: none;
+}
+
+#videoWorkspace .region-controls {
+  margin-top: 0;
+  gap: 8px;
+  padding: 9px 10px;
+  background: rgba(56, 189, 248, 0.04);
+}
+
+.region-sliders {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.region-sliders > label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.region-sliders .compact-slider-group {
+  margin-top: 0;
+}
+
+.region-sliders .slider-number-input {
+  width: 46px !important;
+  min-width: 40px;
+}
+
+#videoWorkspace .region-controls .checkbox-row {
+  height: 24px;
+}
+
+#videoWorkspace .region-controls .checkbox-row span {
+  font-size: 0.76rem;
+}
+
+#videoWorkspace .region-controls .erase-scope-row {
+  margin-top: 0;
+}
+
+/* Tool accordions (protect / erase / replace / grade): one list, same chrome. */
+#videoWorkspace .chroma-grid > .collapsible-section {
+  padding: 8px 12px;
+}
+
+#videoWorkspace .chroma-grid > .collapsible-section:not(.collapsed) {
+  padding-bottom: 12px;
+}
+
+#videoWorkspace .chroma-grid > .collapsible-section .section-collapse-body {
+  margin-top: 8px;
+  gap: 10px;
+}
+
+@media (max-width: 1280px) {
+  #videoWorkspace .chroma-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  #videoWorkspace .ck-layout {
+    grid-template-columns: 1fr;
+  }
+  .ck-side {
+    border-left: 0;
+    border-top: 1px solid rgba(36, 47, 68, 0.9);
+  }
+}
+
+@media (max-width: 980px) {
+  /* The stacked layout is a flex column; `align-items: start` from the grid
+     would leave every card at its content width. */
+  #videoWorkspace .main-workspace {
+    align-items: stretch;
+  }
+  #videoWorkspace .settings-sidebar {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 768px) {
+  #videoWorkspace .chroma-grid {
+    grid-template-columns: 1fr;
+  }
+  .region-sliders {
+    grid-template-columns: 1fr;
+  }
+  .chroma-card-header .card-subtitle-info {
+    display: none;
+  }
+  #videoWorkspace .editor-toolbar {
+    flex-wrap: wrap;
+  }
+  .trim-actions {
+    margin-left: 0;
+  }
+}
+
+/* Sidebar tool cards are ~260px wide: let the name wrap and put the status on
+   its own line rather than truncating either, and keep the chevron in view. */
+#videoWorkspace .sb-tools .section-collapse-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+#videoWorkspace .sb-tools .section-collapse-title {
+  flex: 1;
+  flex-wrap: wrap;
+  row-gap: 1px;
+  column-gap: 7px;
+  text-align: left;
+}
+
+#videoWorkspace .sb-tools .section-collapse-name {
+  white-space: normal;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+#videoWorkspace .sb-tools .section-collapse-title .hint {
+  flex-basis: 100%;
+  padding-left: 21px;
+  font-size: 0.68rem;
+}
+
+#videoWorkspace .sb-tools .section-collapse-action {
+  flex-shrink: 0;
+}
+
+#videoWorkspace .recent-colors-row:has(> .recent-colors-list:empty) {
+  display: none;
+}
