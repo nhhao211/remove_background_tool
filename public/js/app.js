@@ -1661,9 +1661,9 @@ document.addEventListener('DOMContentLoaded', () => {
     sliderEdgeCleanup.value = String(Math.round(U.clampNumber(saved?.chromaEdgeCleanup, 0, 3, 0)));
     chkChromaSmooth.checked = saved?.chromaSmoothEnabled !== false;
     sliderChromaSmooth.value = String(Math.round(U.clampNumber(saved?.chromaSmoothRadius, 1, 2, 1)));
-    // Clips saved before Subject Guard existed have none of these fields and
-    // get it switched on at the defaults, like a fresh clip.
-    chkSubjectGuard.checked = saved?.subjectGuardEnabled !== false;
+    // Off unless the clip saved it on. Clips saved before Subject Guard
+    // existed have none of these fields and start off, like a fresh clip.
+    chkSubjectGuard.checked = saved?.subjectGuardEnabled === true;
     sliderSubjectGuardStrength.value = String(U.clampNumber(saved?.subjectGuardStrength, 0, 1, SUBJECT_GUARD_DEFAULTS.strength));
     sliderSubjectGuardLeak.value = String(Math.round(U.clampNumber(saved?.subjectGuardLeak, 0, 3, SUBJECT_GUARD_DEFAULTS.leakGuard)));
     updateChromaSliderLabels();
