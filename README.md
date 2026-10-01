@@ -15,6 +15,8 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 12. **Subject Color Replace**: Dùng eyedropper chọn màu chủ thể từ Source Video hoặc Sprite Preview, chọn màu đích, rồi điều chỉnh tolerance/strength để đổi dải màu tương ứng mà vẫn giữ highlight và bóng.
 13. **Bút Xóa (Erase Brush)**: Bôi trực tiếp lên Source Video **hoặc thẳng trên khung Preview** (sprite sheet, cả chế độ Anim và Sheet) để xóa hẳn vùng nền còn sót hay chi tiết thừa mà chroma key không bắt được (logo, micro, bóng, vệt sáng); có Erase/Restore, size/strength/hardness, vòng tròn cỡ bút, undo/redo/clear. Nét bôi trên Source Video áp cho mọi frame, còn nét bôi trên một ô của sprite sheet **chỉ xóa đúng ô đó** — hoạt động như Eraser trong Paint để dọn chi tiết của riêng một frame.
 14. **Vùng tròn + Pick màu (Circle region + colour pick)**: Kéo một vòng tròn quanh chi tiết cần xoá rồi bấm vào màu bên trong nó. Màu đó **chỉ bị xoá trong vòng tròn**, nên một màu trùng với màu áo/da nhân vật vẫn giữ nguyên ở mọi nơi khác. Có ở cả `Video → Sprite` và `Clean Sprite Sheet`; vẽ được trên video gốc, trên khung Preview, và trên cả hai khung của tab làm sạch. Đo trên sheet mẫu: xoá một chi tiết 1 936 px bằng pick màu thường làm hỏng thêm **12 392 px** khác của nhân vật, còn bằng vùng tròn thì **0 pixel** nào ngoài vòng tròn bị đụng tới.
+15. **Python Precision Matting (tuỳ chọn)**: Engine NumPy + OpenCV chạy cục bộ, ước lượng lại alpha và màu của dải viền sau keyer — dùng nền *cục bộ* sát từng pixel viền nên nền gradient/bóng đổ không làm lệch alpha, tách màu nền khỏi pixel trộn thay vì chỉ kẹp kênh màu. Bật ở panel **Python Precision Matting** (tab Video → Sprite) hoặc section **Python Matting** (tab Clean Sprite Sheet). Không cài Python thì app vẫn chạy bằng JavaScript như cũ.
+16. **Giao diện TailwindCSS**: header, tab và các panel mới dùng TailwindCSS v4 với theme tối, nút gradient, font Inter.
 
 ---
 
@@ -23,10 +25,22 @@ Một ứng dụng web chạy localhost bằng **NodeJS & Express** cho phép:
 ### Yêu cầu hệ thống:
 - **NodeJS** (>= v18)
 - **FFmpeg** (đã được cài đặt trên hệ thống để trích xuất âm thanh MP3 chất lượng cao)
+- **Python 3 + NumPy + OpenCV** (tuỳ chọn, chỉ cần cho Python Precision Matting)
 
 ### 1. Cài đặt thư viện:
 ```bash
 npm install
+```
+
+Engine Python (tuỳ chọn):
+```bash
+pip install -r python/requirements.txt
+# Interpreter khác (ví dụ venv): PYTHON_BIN=.venv/bin/python npm start
+```
+
+CSS Tailwind đã được build sẵn trong `public/css/tailwind.css`. Chỉ cần build lại khi sửa class Tailwind trong `public/index.html` hoặc `public/js/`:
+```bash
+npm run build:css   # hoặc npm run watch:css khi đang phát triển
 ```
 
 ### 2. Khởi chạy server:
@@ -146,3 +160,15 @@ Truy cập theo port đã cấu hình (ví dụ: **[http://localhost:8080](http:
    - Tắt **Refine edges** để lấy đúng kết quả keyer như trước.
 6. Còn viền màu sót? Bật Pick rồi click **ngay trên khung Result** (Transparent): màu lấy từ ảnh gốc và chỉ bị xoá ở viền (trong 2 px quanh nền đã xoá), swatch có nhãn `⌇ edge`. Giữ **Shift** khi click để xoá màu đó ở mọi nơi. Pick trên Result không dùng được ở chế độ Pick Below Line.
 7. Kiểm tra kết quả trên checkerboard và tải PNG/WebP bằng nút **Download**. PNG giữ nguyên màu viền đã khử.
+
+### Python Precision Matting
+
+1. Cài `pip install -r python/requirements.txt`. Nhãn trạng thái trên panel chuyển xanh (`Python 3.x · OpenCV 4.x`) khi server gọi được engine; nút **Kiểm tra Python** để kiểm tra lại sau khi cài.
+2. Bật công tắc của panel. Tab **Video → Sprite**: áp khi nhấn **Generate** (cần bật Transparent WebP/PNG và có màu nền). Tab **Clean Sprite Sheet**: áp ngay sau Auto Remove/Apply, kéo slider là thấy kết quả.
+3. **Dải viền** rộng hơn sửa được viền mềm/tóc dày hơn; **Làm mịn** 0 = sắc, 1 = mượt; **Khử ám màu** bỏ màu nền ám trên viền; **Bỏ vụn** / **Lấp lỗ** xoá đốm nhỏ và lấp lỗ kín nhỏ (0 = tắt). Với sprite pixel art nên tắt Python hoặc để Làm mịn = 0.
+4. Xử lý hàng loạt ngoài trình duyệt bằng cùng engine:
+   ```bash
+   python3 python/remove_bg.py sprite.png -o sprite_clean.png
+   python3 python/remove_bg.py frames/ -o clean/ --key "#0024F5" --connected
+   python3 python/remove_bg.py clip.mp4 -o out/ --start 1 --end 2.5 --frames 24 --sheet 6
+   ```

@@ -12,6 +12,8 @@
 - Tạo ZIP: `archiver`.
 - Frontend: HTML/CSS/JavaScript thuần trong `public/`; xử lý frame và chroma key bằng `<video>`, Canvas 2D và `ImageData` ngay trên browser.
 - Icon UI: Lucide từ CDN `https://unpkg.com/lucide@latest`.
+- Giao diện: TailwindCSS v4 build bằng `@tailwindcss/cli` (devDependency), **không** dùng preflight. Output `public/css/tailwind.css` (đã minify) được commit nên chạy app không cần build. Font Inter + JetBrains Mono từ Google Fonts.
+- Engine Python tuỳ chọn (`python/`, NumPy + OpenCV) để tinh chỉnh viền chính xác hơn; app vẫn chạy đủ khi không có Python (xem mục 6e).
 - Các file chính:
   - `server.js`: static server, upload, audio extraction, ZIP export và cleanup.
   - `public/index.html`: layout, controls, input và các vùng preview.
@@ -39,10 +41,19 @@
   - `public/js/panel-visibility.js`: registry của các khung chức năng bật/tắt được ở tab Video → Sprite (id panel → danh sách id phần tử DOM), cộng phần đọc/ghi/chuẩn hoá trạng thái. Thuần tuý, không dùng DOM; phần wiring (dialog, hook tắt công cụ) nằm ở `app.js`. Test bằng `test/panel-visibility.test.mjs` — test này đọc `public/index.html` để chứng minh mọi id trong registry thật sự tồn tại trong markup.
   - `public/js/sprite-transform.js`: controller UI của tab Sprite Transform (lưới 4 cột 6 hàng, stage canvas tương tác kéo thả toạ độ trực tiếp, preview animation, 3 view modes, circle crop, export PNG/WebP).
   - `public/css/style.css`: giao diện và trạng thái tương tác.
+    - **Không** được link trực tiếp: `index.html` import nó vào cascade layer `legacy` bằng một `<style>` inline (`@import url("css/style.css") layer(legacy)`), nên sửa file này không cần build lại CSS.
+  - `public/css/tailwind.src.css`: entry của Tailwind. Thứ tự layer `properties, theme, base, legacy, components, utilities` — câu `@layer` này được lặp lại y hệt trong `<style>` của `index.html` và **hai chỗ phải khớp nhau** (khai báo đầu tiên chốt thứ tự). Utility luôn thắng rule của `style.css` bất kể specificity; rule `!important` trong `legacy` (ví dụ `.header-actions[hidden]`, `.panel-hidden`) vẫn thắng utility. Khối `@layer legacy { … }` cuối file là "modern skin": đổi token màu (`--bg-main`, `--accent-blue` …), gradient cho nút `.btn-primary-*`, card, form focus ring, toast, modal — cùng layer với `style.css` nhưng đứng sau nên thắng khi bằng specificity.
+    - Không có preflight nên `<button>` dùng class utility phải tự thêm `border-0 bg-transparent cursor-pointer font-sans`, nếu không sẽ hiện nền/viền xám mặc định của trình duyệt.
+    - Tailwind quét class trong `public/index.html` và `public/js/**`. Thêm class utility mới ở đó thì **phải** chạy `npm run build:css` (hoặc `npm run watch:css` khi dev) rồi commit `public/css/tailwind.css`; class chưa build sẽ không có tác dụng.
+    - Header (logo, tab segmented dùng biến thể `aria-selected:`, `#videoHeaderActions`) viết hoàn toàn bằng utility. Id, `role`, `aria-selected`, `aria-controls` của tab giữ nguyên vì code chuyển tab dựa vào chúng.
+  - `public/css/tailwind.css`: output build, đừng sửa tay.
+  - `public/js/python-engine.js`: client của engine Python — chuẩn hoá setting (`normalizePythonSettings`, bật chỉ khi giá trị lưu đúng là `true`), đóng/mở gói nhị phân gửi `/api/python/matte`, `fetchPythonStatus()` (có cache), `pythonRefine(original, keyed, options)` và `mountPythonMattingPanel()` dựng panel bằng Tailwind (dùng chung cho hai tab). Phần thuần tuý test bằng `test/python-engine.test.mjs`.
+  - `python-bridge.js`: giữ **một** process `python/worker.py` sống lâu, nói chuyện qua stdin/stdout bằng frame có tiền tố độ dài. Chỉ khởi động ở request đầu tiên; worker crash thì request đang chờ bị reject và request sau tự mở worker mới; thiếu interpreter/numpy/OpenCV thì trả về trạng thái "không có" chứ không throw lúc khởi động server. `PYTHON_BIN` chọn interpreter (mặc định `python3`, Windows `python`). Test: `test/python-bridge.test.mjs` (test cần Python tự skip khi máy không có numpy + OpenCV).
+  - `python/rmbg/matting.py`: lõi precision matting (`refine_matte`, `remove_background`). `python/rmbg/protocol.py`: framing. `python/worker.py`: vòng lặp worker (`ping`, `refine`, `key`). `python/remove_bg.py`: CLI dùng cùng engine ngoài trình duyệt (ảnh, thư mục ảnh, hoặc video → frame/sheet). Test Python ở `python/tests/` (`npm run test:python`).
     - Layout gọn của tab Video → Sprite nằm trong khối `Video → Sprite — compact layout` ở cuối file, mọi selector scope trong `#videoWorkspace` để không đụng 3 tab kia. Sidebar chia thành `.sb-section` (tiêu đề `.sb-heading`, field phẳng, `.sb-inline` = nhãn trái / input phải); section tự ẩn khi mọi panel con mang `.panel-hidden`. `#groupChromaKey` đứng đầu panel chroma, chia 2 cột `.ck-layout` (màu key | định dạng xuất + vùng tròn). Đoạn giải thích dài bọc trong `<details class="help-details">`.
     - Có `#videoWorkspace [hidden] { display: none !important }`: rule `display` của author thắng `[hidden]` của UA, nên thiếu dòng này thì `#regionControls` hiện ra dù đang `hidden`.
     - Các nút trùng chức năng (`#btnVideoPlayPause`, `#videoCurrentTimeDisplay`, `#btnBrowseFile`, `#lblSpeedSettings`, `#activeFilenameLabel`) vẫn còn trong DOM với `hidden` vì `app.js` còn cập nhật chúng; đừng xoá. Đổi thứ tự hiển thị thì cập nhật `applyTabOrder()` trong `app.js`.
-  - `public/samples/sample_blue_flower.mp4`: video demo được tự động load khi mở app.
+  - `public/samples/sample_blue_flower.mp4`: video demo, load khi bấm `Load Demo Video`.
 
 ## Chạy và kiểm tra
 
@@ -57,15 +68,16 @@ npm run dev
 - Mặc định mở `http://localhost:3000`.
 - Nếu port đang bận, server tự thử port kế tiếp.
 - `npm run dev` dùng `node --watch server.js`.
-- `npm test` chạy `node --test 'test/**/*.test.{mjs,js}'`. Repo không có lint hoặc build script. Khi thay đổi code, tối thiểu kiểm tra cú pháp bằng `node --check server.js` và `node --check public/js/app.js`, chạy `npm test`, sau đó chạy server và gọi `GET /api/health`.
-- Không commit `uploads/`, `temp/` hoặc các file phát sinh khi chạy local.
+- `npm run build:css` build lại `public/css/tailwind.css` từ `tailwind.src.css`; `npm run watch:css` build liên tục khi dev. Chỉ cần khi thêm/đổi class Tailwind; sửa `style.css` thì không cần.
+- Engine Python (tuỳ chọn): `pip install -r python/requirements.txt` (Python 3 + `numpy` + `opencv-python-headless`). Không cài thì panel Python báo "không có" và mọi thứ chạy bằng JS như cũ. `npm run test:python` chạy test của `python/tests/`.
+- `npm test` chạy `node --test 'test/**/*.test.{mjs,js}'`. Repo không có lint. Khi thay đổi code, tối thiểu kiểm tra cú pháp bằng `node --check server.js` và `node --check public/js/app.js`, chạy `npm test`, sau đó chạy server và gọi `GET /api/health`.
+- Không commit `uploads/`, `temp/`, `__pycache__/`, `.venv/` hoặc các file phát sinh khi chạy local.
 
 ## Danh mục đầy đủ chức năng hiện có
 
 ### 1. Nạp video
 
-- Tự động load video demo `/samples/sample_blue_flower.mp4` khi khởi động.
-- Nút `Load Demo Video` để load lại video mẫu.
+- Nút `Load Demo Video` load video mẫu `/samples/sample_blue_flower.mp4` (app không tự load khi khởi động).
 - Chọn file qua nút `Browse` ở action bar hoặc trong drop zone.
 - Kéo thả video ở cấp toàn trang, tại source-video viewport hoặc tại drop zone; có overlay báo vị trí thả.
 - Chấp nhận video theo MIME `video/*` hoặc phần mở rộng `.mp4`, `.webm`, `.mov`, `.avi`, `.mkv`, `.m4v`, `.ogv`, `.flv`.
@@ -185,7 +197,7 @@ Giải quyết đúng một chuyện mà pick màu toàn ảnh không làm đư�
 - Vùng vẽ trên Source Video áp cho **mọi** frame; vẽ trên một ô Preview mặc định chỉ áp cho **đúng ô đó**. Hàng `Vẽ trên Preview:` (`#btnRegionScopeFrame` / `#btnRegionScopeAll`, lưu ở `state.regionScope`) đặt mặc định, giữ `Shift` lúc `pointerdown` đảo phạm vi cho một vùng — đúng thoả thuận `Alt` với Erase/Restore.
 - Binding dùng lại **nguyên** `erase-frames.js`: `frame` + `frameTime`, gắn lại theo **thời gian** khi số frame đổi, binding hỏng thành `ORPHAN_FRAME` và không áp ở đâu cả. Cẩn thận `Number(null) === 0` như ghi chú ở `stroke-mask.js`: `frame`/`frameTime` thiếu phải là `null`, nếu không mọi vùng global hoá thành vùng của frame 0.
 - Màu **luôn** lấy từ ảnh gốc (`video` ở tab Video, `state.original` ở tab Cleaner), không lấy từ Result: pixel Result đã bị nhân alpha và có thể đã khử màu nền, không phải màu mà matcher sẽ so sánh.
-- Vị trí pipeline ở tab Video: `runKeyer → subjectGuard → colorReplace → colorGrade → region → erase → (detectSubjectBounds) → crossfade → sharpen`. Region đứng trước `detectSubjectBounds` vì đúng lý do của Bút Xóa: chi tiết đã xoá không được kéo lệch canh chủ thể. Không gate theo `chkTransparentFormat` — đây là lệnh xoá tường minh.
+- Vị trí pipeline ở tab Video: `runKeyer → (python) → subjectGuard → colorReplace → colorGrade → region → erase → (detectSubjectBounds) → crossfade → sharpen`. Region đứng trước `detectSubjectBounds` vì đúng lý do của Bút Xóa: chi tiết đã xoá không được kéo lệch canh chủ thể. Không gate theo `chkTransparentFormat` — đây là lệnh xoá tường minh.
 - `makeRegionProvider(frameCount, frameTimes)` trả `(frameIndex) => regions|null`, rẻ hơn `makeEraseMaskProvider` nhiều vì vùng không phải rasterize (chỉ lọc danh sách, không cache). Không có vùng nào ⇒ trả `null` ⇒ mỗi frame đi đúng đường cũ, output **giống hệt từng byte**.
 - `reapplyEraseMaskLive()` đã đổi tên thành `reapplyLocalEditsLive()` và áp cả hai theo thứ tự `region → erase`; `state.rawFrames` giờ là bản "trước vùng **và** trước erase". Nhờ vậy kéo `Tolerance` của một vùng cập nhật preview ngay, không seek lại clip (vẫn chỉ khi tắt Subject Alignment).
 - `saveClipState()` lưu `colorRegions` + `regionScope`, `schemaVersion` 4 → 5; clip schema 4 đọc lại vẫn chạy, thiếu `colorRegions` ⇒ `[]`. Vùng hỏng bị `normalizeRegions()` bỏ, không throw.
@@ -205,11 +217,33 @@ Cả hai keyer phán theo khoảng cách màu tới key, nên không phân biệ
 - Ghi lại theo khoảng cách tới phần vẫn là nền: pixel sát nền giữ nguyên output keyer (viền mềm của keyer là thứ chạm vào nền), pixel kế tiếp lấy nửa, sâu hơn thì lấy lại alpha **và màu** gốc. Bên trong thân (cách nền > `EDGE_BAND` = 2 px), phần đã bị despill cũng được trả lại màu gốc nên thân không bị bạc màu hay ám màu. Pixel được trả lại thì khoảng cách đi xuyên qua pixel không-đặc, băng 1 px.
 - Chỉ dùng **một** tolerance chung cho cả frame, không tách theo từng key. Tách theo key đã được thử: một màu của chủ thể tình cờ nằm gần key thứ hai (thêm vào cho bóng gradient) sẽ thừa hưởng độ trải rộng của key đó và không bao giờ được trả lại. Cách này tệ hơn trên mọi cảnh có bóng và không tốt hơn ở cảnh nào.
 - Control: `Subject Guard` bật/tắt (mặc định **tắt** ở cả hai tab), `Strength` 0–1 (mặc định 0.5, `minThicknessFor(s) = round(3 + (1−s)·13)`, tức 16 px ở 0 và 3 px ở 1), `Leak guard` 0–3 (mặc định 1). `luminanceWeight` lấy từ `Subject Protection` theo cùng công thức keyer dùng (`luminanceWeightFor`), nên "gần key" có cùng nghĩa với cả hai pass.
-- Tab Video → Sprite: panel `#panelSubjectGuard` trong khung chroma (registry id `subject-guard`). Pipeline: `runKeyer → subjectGuard → colorReplace → colorGrade → region → erase → (detectSubjectBounds) → crossfade → sharpen`. Gọi qua `keyFrameGuarded()`, dùng cả trong Generate lẫn `autoDetectSubjectGuideline`. Không chạy khi tắt `Transparent WebP/PNG` hoặc không có key color (`buildSubjectGuardOptions()` trả `null`). Auto Loop Finder vẫn gọi `runKeyer` trần, vì descriptor so khớp chuyển động, không phải chất lượng matte.
+- Tab Video → Sprite: panel `#panelSubjectGuard` trong khung chroma (registry id `subject-guard`). Pipeline: `runKeyer → (python) → subjectGuard → colorReplace → colorGrade → region → erase → (detectSubjectBounds) → crossfade → sharpen`. Gọi qua `keyFrameGuarded()`, dùng cả trong Generate lẫn `autoDetectSubjectGuideline`. Không chạy khi tắt `Transparent WebP/PNG` hoặc không có key color (`buildSubjectGuardOptions()` trả `null`). Auto Loop Finder vẫn gọi `runKeyer` trần, vì descriptor so khớp chuyển động, không phải chất lượng matte.
 - Tab Clean Sprite Sheet: section `#spriteSubjectGuardSection`, chạy giữa keyer và Edge Refine (`state.keyed → applySubjectGuardPass → state.guarded → applyEdgeRefine`). Dùng `state.lastKeyColors`, `state.seedPoints` (điểm pick nền tường minh luôn là nền, dù nằm sau khe hở) và `minPocket: 1`: sprite sheet là ảnh sạch, không nhiễu, nên mọi túi màu key kín bên trong đều là nền thật. Bật `Analyze each sprite cell` thì chạy riêng từng ô qua `rect`. Kéo slider chỉ chạy lại guard → refine → region trên `state.keyed` đã cache (debounce 80 ms). Trạng thái Result ghi thêm `· subject guard giữ lại N px`.
 - Lưu trong clip state: `subjectGuardEnabled`, `subjectGuardStrength`, `subjectGuardLeak`. `schemaVersion` vẫn là 5; clip thiếu field ⇒ tắt (Strength/Leak lấy giá trị mặc định); clip đã lưu `subjectGuardEnabled: true` vẫn bật.
 - **Giới hạn đã biết:** nếu chỉ pick một sắc của nền có bóng đổ, keyer có thể để lại một vòng kín của phần bóng chưa xoá, và guard sẽ coi phần bên trong vòng là lỗ thủng rồi trả lại. Lối ra: pick thêm màu của bóng (2–3 sắc đo được 0 lỗ, không tăng rò), đánh dấu điểm nền (Cleaner), hoặc tắt Subject Guard.
 - Bất biến của `applySubjectGuard()`: alpha **không bao giờ giảm** và không vượt alpha gốc; không đọc/ghi ngoài `rect`; không có key color, hoặc keyer không xoá/đổi gì ⇒ output **giống hệt từng byte**; tắt checkbox ⇒ pipeline đi đúng đường cũ, byte-identical.
+
+### 6e. Python Precision Matting (tuỳ chọn)
+
+Keyer JS quyết định *cái gì* là nền chỉ từ khoảng cách màu, từng pixel một — nhanh và đúng cho việc quyết định, nhưng ước lượng kém hai thứ mà viền thật sự cần: **alpha** (cùng một pixel trộn 50 % ra alpha khác nhau tuỳ màu chủ thể cách key bao xa; nền gradient thì màu key sai ở chỗ xa điểm pick) và **màu** (despill kẹp channel key nên lệch hue của mọi pixel hơi xanh ở viền). Engine Python giữ nguyên quyết định của keyer JS và chỉ ước lượng lại **dải viền**:
+
+1. Trimap từ matte của keyer: chắc chắn chủ thể (`α ≥ 0.985`), chắc chắn nền (`α ≤ 0.015`), mỗi loại erode `band` px; phần còn lại là dải unknown.
+2. Plate nền và plate chủ thể **cục bộ**, đẩy từ các pixel chắc chắn lân cận vào dải (pyramid push-pull) — màu nền ở một pixel viền là màu nền ngay sát nó, nên gradient, vignette, bóng đổ không còn kéo lệch alpha.
+3. Alpha bằng phép chiếu `I − B` lên `F − B` (nghiệm đóng của phương trình compositing cho một pixel); chỗ F và B quá giống nhau thì rơi về alpha của keyer.
+4. Guided filter màu bám cạnh trên dải (`Làm mịn`), để alpha đi theo cạnh của ảnh chứ không theo nhiễu của ước lượng từng pixel.
+5. Màu chủ thể bằng cách unmix `F = (I − (1−α)B) / α` với nền cục bộ, rồi despill nhẹ (`Khử ám màu`) **chỉ trên dải**. Pixel chắc chắn-chủ-thể giữ màu của keyer JS từng byte.
+6. Dọn dẹp tuỳ chọn, mặc định tắt: bỏ đốm chủ thể nhỏ hơn `Bỏ vụn` px, lấp lỗ kín nhỏ hơn `Lấp lỗ` px.
+
+Thuần NumPy + OpenCV, không mạng, không tải model.
+
+- **Luồng:** browser gửi `original RGBA + keyed RGBA` dạng nhị phân (`u32le headerLen | header JSON | payload`) tới `POST /api/python/matte` → `python-bridge.js` chuyển nguyên body cho worker → worker trả `RGBA` đã tinh chỉnh + `stats` (`bandPixels`, `changedPixels`, `islandPixels`, `holePixels`, `skipped`). Không có base64, không có JSON chứa pixel.
+- **Tab Video → Sprite:** panel `#panelPythonMatting` (mount bằng `mountPythonMattingPanel`, id control có tiền tố `videoPython…`, registry id `python-matting`). Chỉ chạy khi panel bật **và** bật `Transparent WebP/PNG` **và** có key color — giống điều kiện của Subject Guard. `buildPythonSession()` kiểm tra trạng thái một lần cho mỗi lần Generate; `keyFrameRefined()` chạy `runKeyer → pythonRefine → applySubjectGuard` cho từng frame full-res trong `renderCell()` (nên frame twin của crossfade cũng đi qua). Một frame lỗi thì frame đó dùng kết quả JS và đếm `failed`; Python mất kết nối (503/404/network) thì phần còn lại của lần Generate bỏ qua Python. Cuối Generate panel ghi `python tinh chỉnh X / Y px viền · N frame`, có lỗi thì thêm toast. Auto Loop Finder và `autoDetectSubjectGuideline` vẫn chỉ dùng JS.
+- **Tab Clean Sprite Sheet:** section `#spritePythonSection` (`#spritePythonMount`, tiền tố `spritePython…`, layout `compact`). `runProcessing()` lưu kết quả keyer vào `state.jsKeyed` rồi `applyPythonPass()` → `state.keyed`; kéo slider Python chỉ chạy lại `rerunFromPython()` (Python → guard → Edge Refine → region) trên `state.jsKeyed` đã cache, không chạy lại flood fill. Token `state.pythonRun` bỏ kết quả của lần chạy cũ về trễ (đổi ảnh, Reset, kéo slider liên tục). Lỗi ⇒ dùng `state.jsKeyed`, report đỏ + toast. Trạng thái Result ghi thêm `· python tinh chỉnh …` trước phần guard. Sheet pixel art (alpha 0/255) nên tắt Python hoặc để `Làm mịn` = 0.
+- **Setting là của máy, không của clip:** lưu localStorage `video-editor:python-matting` (tab Video) và `cleaner:python-matting` (tab Cleaner); **không** nằm trong `saveClipState()`, không đổi `schemaVersion`. Mặc định **tắt**. `Dải viền` 1–12 px (mặc định 4), `Làm mịn` 0–1 (0.5), `Khử ám màu` 0–1 (0.6), `Tách màu nền khỏi viền` bật, `Bỏ vụn` / `Lấp lỗ` 0–2000 px (0 = tắt).
+- Status pill của panel: xanh `Python x.y · OpenCV a.b` khi worker trả lời `ping`; đỏ kèm hướng dẫn cài khi không có; nút `Kiểm tra Python` hỏi lại (bỏ cache). Report phân biệt lý do bỏ qua: `no-edges` (không có viền), `no-foreground` (keyer không để lại chủ thể đặc nào — thường do key nhầm màu chủ thể), `no-background`.
+- Ẩn panel bằng dialog `Settings` **không** tắt Python (đúng quy tắc chỉ-hiển-thị của mục 9b); không có `deactivate` vì panel không bật công cụ con trỏ nào.
+- **Bất biến:** tắt Python, hoặc Python không có ⇒ pipeline đi đúng đường cũ, output **giống hệt từng byte**. Python chạy **sau** keyer và **trước** Subject Guard ở cả hai tab: guard đọc matte đã tinh chỉnh và vẫn so với ảnh gốc, Edge Refine (Cleaner) chạy trên kết quả đó. Python không đụng `public/js/keyer/` hay baseline. Sprite generation vẫn ở client — Python chỉ là một pass tinh chỉnh matte do client gọi, không phải đường generate server-side.
+- CLI `python3 python/remove_bg.py` dùng cùng engine cho batch ngoài app (ảnh, thư mục, hoặc video với `--start/--end/--frames/--sheet`; `--key` chọn màu, `--connected` chỉ xoá nền chạm biên); xem docstring đầu file.
 
 ### 7. Generate sprite sheet
 
@@ -269,7 +303,8 @@ Màn hình Video → Sprite có hơn 20 khung điều khiển; phần lớn ngư
 Tab riêng làm sạch sprite sheet tĩnh (PNG/WebP/JPEG), toàn bộ ở `public/js/sprite-remover.js`. Pipeline:
 
 ```
-state.original → runKeyer(connected, keyRegions) → state.keyed (cache)
+state.original → runKeyer(connected, keyRegions) → state.jsKeyed (cache)
+  → applyPythonPass() → state.keyed (cache; tắt Python ⇒ chính là state.jsKeyed)
   → applySubjectGuardPass() → state.guarded (cache)
   → applyEdgeRefine() → state.refined (cache)
   → applyRegionKeys() → state.result → hiển thị
@@ -318,6 +353,17 @@ Trả JSON `{ status: "ok", uptime }`.
 - Nếu video có sẵn, gọi FFmpeg để tạo MP3 theo vùng trim rồi thêm vào ZIP.
 - Trả `application/zip` với tên `<downloadName>_bundle.zip` và cleanup file tạm sau khi archive kết thúc.
 
+### `GET /api/python/status`
+
+- Ping worker Python (khởi động nếu chưa chạy). Trả `{ available: true, version, python, numpy, opencv, pythonBin }` hoặc `{ available: false, error, hint, pythonBin }` — luôn HTTP 200.
+
+### `POST /api/python/matte`
+
+- Body `application/octet-stream` (tối đa 600 MB): `u32le headerLength | header JSON {op, width, height, options} | payload`.
+- `op: 'refine'`: payload = original RGBA + keyed RGBA; `op: 'key'`: payload = original RGBA (worker tự key bằng engine Python, frontend hiện chưa dùng).
+- Kiểm tra `op`, kích thước (≤ 8192×8192) và độ dài payload → 400 nếu sai. Thành công trả body cùng định dạng: header `{ok, stats}` + RGBA kết quả.
+- Lỗi do worker xử lý (input hỏng…) ⇒ 422; không có Python / worker chết ⇒ 503 kèm `hint` cài đặt. Frontend coi 503/404 là "Python không có".
+
 ## Runtime và lưu trữ tạm
 
 - Server tự tạo `uploads/`, `temp/`, `public/` nếu thiếu.
@@ -333,12 +379,14 @@ Trả JSON `{ status: "ok", uptime }`.
 - Giữ các giới hạn trim, rows/cols, crop, speed, FPS và quy tắc sanitize tên file nhất quán với UI hiện tại.
 - Nếu sửa pipeline audio hoặc ZIP, kiểm tra cả trường hợp input là file local và trường hợp video demo URL.
 - Nếu sửa Canvas/chroma key, kiểm tra cả hai format PNG/WebP, trạng thái transparent bật/tắt, nhiều key colors, alpha edge và preview mode `Anim`/`Sheet`.
-- Bút Xóa phải giữ nguyên vị trí trong pipeline: keyer → subject guard → color replace → erase → (bounds detection nếu có alignment) → crossfade. Không đẩy erase vào `public/js/keyer/` vì sẽ phải sửa whitelist option và regenerate baseline.
-- Vùng tròn phải giữ nguyên vị trí trong pipeline: keyer → subject guard → color replace → **region** → erase → (bounds detection nếu có alignment) → crossfade. Không đẩy `region-key.js` vào `public/js/keyer/` vì sẽ phải sửa whitelist option và regenerate baseline. Ở tab Cleaner, region chạy **sau** Edge Refine.
+- Bút Xóa phải giữ nguyên vị trí trong pipeline: keyer → (python) → subject guard → color replace → erase → (bounds detection nếu có alignment) → crossfade. Không đẩy erase vào `public/js/keyer/` vì sẽ phải sửa whitelist option và regenerate baseline.
+- Vùng tròn phải giữ nguyên vị trí trong pipeline: keyer → (python) → subject guard → color replace → **region** → erase → (bounds detection nếu có alignment) → crossfade. Không đẩy `region-key.js` vào `public/js/keyer/` vì sẽ phải sửa whitelist option và regenerate baseline. Ở tab Cleaner, region chạy **sau** Edge Refine.
 - Không có vùng nào ⇒ output **giống hệt từng byte** với trước khi có feature, ở **cả hai** tab.
 - `applyRegionKeys()` không bao giờ tăng alpha và không đọc/ghi ngoài bounding box của vùng.
 - `frame`/`frameTime` của vùng (và của nét Bút Xóa) thiếu thì phải là `null`, không phải `0` — `Number(null) === 0` sẽ biến mọi binding global thành frame 0. Xem ghi chú ở `stroke-mask.js` và `erase-frames.js`.
 - Subject Guard chạy **ngay sau** keyer, trước mọi bước khác ở cả hai tab (ở Cleaner: trước Edge Refine, vì refine unmix dải viền **cuối cùng**, và guard có thể dời dải viền đó). Giữ `subject-guard.js` ngoài `public/js/keyer/`. Tắt guard ⇒ output byte-identical với trước khi có feature; guard không bao giờ hạ alpha, không vượt alpha gốc, không đọc/ghi ngoài `rect`. Ở tab Video, frame đưa vào guard phải là frame gốc chưa bị keyer sửa — `runKeyer` direct trả `ImageData` mới nên điều này đúng; đổi keyer sang mutate tại chỗ thì phải clone trước.
+- Python Precision Matting chạy ngay sau keyer, trước Subject Guard, ở cả hai tab; tắt hoặc không có Python ⇒ output byte-identical. Setting Python là global (localStorage), không lưu vào clip state. Không chuyển sprite generation sang server — Python chỉ tinh chỉnh matte theo yêu cầu của client. Đổi định dạng gói nhị phân thì sửa đồng bộ `python-engine.js`, `python-bridge.js` và `python/rmbg/protocol.py`, rồi chạy cả `npm test` lẫn `npm run test:python`.
+- UI: thêm class Tailwind mới thì chạy `npm run build:css` và commit `public/css/tailwind.css`. Giữ câu khai báo thứ tự `@layer` giống nhau ở `index.html` và `tailwind.src.css`.
 - Clean Sprite Sheet: giữ Edge Refine ngoài `public/js/keyer/`; tắt Edge Refine phải cho output byte-identical với keyer; refine không được tăng alpha hay đổi pixel lõi. Key `edge` không được tham gia BFS chính và không tạo seed point. Không đổi `test/keyer/baseline/`.
 - Dialog `Settings` chỉ được ẩn DOM, không được gate pipeline: ẩn một panel phải cho output **giống hệt từng byte**. Panel nào bật được công cụ thì phải khai `deactivate` để công cụ bị tắt khi panel bị ẩn.
 - Thêm panel mới vào registry thì thêm `id` vào `public/index.html` trước — `test/panel-visibility.test.mjs` đọc markup và fail nếu id không tồn tại.

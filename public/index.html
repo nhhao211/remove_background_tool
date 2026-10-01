@@ -4,7 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video to Sprite Sheet & Background Remover</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+  <!-- Layer order must match css/tailwind.src.css. style.css is imported at
+       runtime into the `legacy` layer (no rebuild needed to edit it); Tailwind
+       utilities sit in a later layer, so they win over it. -->
+  <style>
+    @layer properties, theme, base, legacy, components, utilities;
+    @import url("css/style.css") layer(legacy);
+  </style>
+  <link rel="stylesheet" href="css/tailwind.css">
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
 </head>
@@ -21,38 +31,45 @@
   </div>
 
   <!-- Header -->
-  <header class="app-header">
-    <div class="brand-title">
-      <i data-lucide="layers" style="color: #3b82f6; width: 24px; height: 24px;"></i>
-      <span>SpriteSheet Studio</span>
-      <span class="brand-badge">PRO Chroma Key</span>
+  <header class="app-header mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-white/[0.06] pb-3">
+    <div class="flex min-w-0 items-center gap-3">
+      <span class="relative grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 shadow-lg shadow-indigo-500/30 ring-1 ring-white/20">
+        <i data-lucide="layers" class="text-white" style="width: 20px; height: 20px;"></i>
+      </span>
+      <div class="min-w-0 leading-tight">
+        <div class="flex items-center gap-2">
+          <span class="text-[1.08rem] font-semibold tracking-tight text-white">SpriteSheet Studio</span>
+          <span class="rounded-full bg-gradient-to-r from-indigo-500/20 to-fuchsia-500/20 px-2 py-0.5 text-[0.62rem] font-semibold tracking-wider text-indigo-200 uppercase ring-1 ring-indigo-400/30 max-sm:hidden">Pro Chroma Key</span>
+        </div>
+        <span class="text-[0.72rem] text-slate-400 max-md:hidden">Video → sprite sheet · chroma key · precision matting</span>
+      </div>
     </div>
-    <nav class="workspace-tabs" role="tablist" aria-label="Studio workspace">
-      <button id="tabVideoWorkspace" class="workspace-tab active" type="button" role="tab" aria-selected="true" aria-controls="videoWorkspace">
-        <i data-lucide="clapperboard" style="width: 15px; height: 15px;"></i>
-        <span>Video → Sprite</span>
+    <nav class="flex items-center gap-1 rounded-2xl border border-white/[0.07] bg-slate-900/60 p-1 shadow-inner shadow-black/40 backdrop-blur max-[1280px]:order-3 max-[1280px]:w-full max-[1280px]:justify-center" role="tablist" aria-label="Studio workspace">
+      <button id="tabVideoWorkspace" class="group inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl border-0 bg-transparent px-3.5 font-sans text-[0.8rem] font-semibold whitespace-nowrap text-slate-400 transition hover:bg-white/[0.05] hover:text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 aria-selected:bg-gradient-to-br aria-selected:from-indigo-500 aria-selected:to-violet-600 aria-selected:text-white aria-selected:shadow-lg aria-selected:shadow-indigo-500/30 aria-selected:ring-1 aria-selected:ring-white/15 max-sm:flex-1 max-sm:justify-center max-sm:px-2" type="button" role="tab" aria-selected="true" aria-controls="videoWorkspace">
+        <i data-lucide="clapperboard" class="opacity-80 group-aria-selected:opacity-100" style="width: 15px; height: 15px;"></i>
+        <span class="max-sm:hidden">Video → Sprite</span>
       </button>
-      <button id="tabSpriteCleaner" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="spriteCleanerWorkspace">
-        <i data-lucide="scan-line" style="width: 15px; height: 15px;"></i>
-        <span>Clean Sprite Sheet</span>
+      <button id="tabSpriteCleaner" class="group inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl border-0 bg-transparent px-3.5 font-sans text-[0.8rem] font-semibold whitespace-nowrap text-slate-400 transition hover:bg-white/[0.05] hover:text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 aria-selected:bg-gradient-to-br aria-selected:from-indigo-500 aria-selected:to-violet-600 aria-selected:text-white aria-selected:shadow-lg aria-selected:shadow-indigo-500/30 aria-selected:ring-1 aria-selected:ring-white/15 max-sm:flex-1 max-sm:justify-center max-sm:px-2" type="button" role="tab" aria-selected="false" aria-controls="spriteCleanerWorkspace">
+        <i data-lucide="scan-line" class="opacity-80 group-aria-selected:opacity-100" style="width: 15px; height: 15px;"></i>
+        <span class="max-sm:hidden">Clean Sprite Sheet</span>
       </button>
-      <button id="tabSpriteReframe" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="spriteReframeWorkspace">
-        <i data-lucide="panel-top-open" style="width: 15px; height: 15px;"></i>
-        <span>Reframe 16:9</span>
+      <button id="tabSpriteReframe" class="group inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl border-0 bg-transparent px-3.5 font-sans text-[0.8rem] font-semibold whitespace-nowrap text-slate-400 transition hover:bg-white/[0.05] hover:text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 aria-selected:bg-gradient-to-br aria-selected:from-indigo-500 aria-selected:to-violet-600 aria-selected:text-white aria-selected:shadow-lg aria-selected:shadow-indigo-500/30 aria-selected:ring-1 aria-selected:ring-white/15 max-sm:flex-1 max-sm:justify-center max-sm:px-2" type="button" role="tab" aria-selected="false" aria-controls="spriteReframeWorkspace">
+        <i data-lucide="panel-top-open" class="opacity-80 group-aria-selected:opacity-100" style="width: 15px; height: 15px;"></i>
+        <span class="max-sm:hidden">Reframe 16:9</span>
       </button>
-      <button id="tabSpriteTransform" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="spriteTransformWorkspace">
-        <i data-lucide="move" style="width: 15px; height: 15px;"></i>
-        <span>Sprite Transform</span>
+      <button id="tabSpriteTransform" class="group inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl border-0 bg-transparent px-3.5 font-sans text-[0.8rem] font-semibold whitespace-nowrap text-slate-400 transition hover:bg-white/[0.05] hover:text-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 aria-selected:bg-gradient-to-br aria-selected:from-indigo-500 aria-selected:to-violet-600 aria-selected:text-white aria-selected:shadow-lg aria-selected:shadow-indigo-500/30 aria-selected:ring-1 aria-selected:ring-white/15 max-sm:flex-1 max-sm:justify-center max-sm:px-2" type="button" role="tab" aria-selected="false" aria-controls="spriteTransformWorkspace">
+        <i data-lucide="move" class="opacity-80 group-aria-selected:opacity-100" style="width: 15px; height: 15px;"></i>
+        <span class="max-sm:hidden">Sprite Transform</span>
       </button>
     </nav>
-    <div id="videoHeaderActions" class="header-actions">
+    <div id="videoHeaderActions" class="header-actions flex items-center gap-2">
       <button id="btnLoadDemo" class="sample-btn" title="Load sample video with audio">
         <i data-lucide="play-circle" style="width: 16px; height: 16px;"></i>
-        <span>Load Demo Video</span>
+        <span class="max-xl:hidden">Load Demo Video</span>
       </button>
       <button id="btnToggleChecker" class="sample-btn" title="Toggle preview background style">
         <i data-lucide="grid" style="width: 16px; height: 16px;"></i>
-        <span>Grid / Dark BG</span>
+        <span class="max-xl:hidden">Grid / Dark BG</span>
       </button>
       <button id="btnOpenPanelSettings" class="sample-btn" type="button" title="Settings — bật / tắt các khung chức năng hiển thị trên màn hình này">
         <i data-lucide="sliders-horizontal" style="width: 16px; height: 16px;"></i>
@@ -1042,6 +1059,9 @@
             </div>
           </div>
 
+          <!-- Python Precision Matting: controls are rendered by python-engine.js. -->
+          <div id="panelPythonMatting" class="col-span-full"></div>
+
           <div class="form-group protection-brush-group collapsible-section" id="groupProtectionBrush">
             <div class="section-collapse-header" id="headerProtectionBrush" role="button" tabindex="0" aria-expanded="true" aria-controls="bodyProtectionBrush" title="Click to collapse / expand Subject Protect Brush">
               <div class="section-collapse-title">
@@ -1534,6 +1554,11 @@
           <input id="numSpriteSubjectGuardLeak" class="form-input slider-number-input" type="number" min="0" max="3" step="1" value="1" aria-label="Subject guard leak guard in pixels">
           <span id="spriteSubjectGuardLeakValue" class="slider-value" style="display: none;">1 px</span>
         </div>
+      </div>
+
+      <div id="spritePythonSection" class="cleaner-control-section" data-section-key="python-matting">
+        <div class="cleaner-section-title"><span>Python Matting</span></div>
+        <div id="spritePythonMount"></div>
       </div>
 
       <div id="spriteEdgeRefineSection" class="cleaner-control-section cleaner-sliders" data-section-key="edge-refine" data-collapsed="true">

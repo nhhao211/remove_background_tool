@@ -10,12 +10,20 @@ import {
   clampCentreToCell, homeCellIndex, regionCopyForCell, replicateRegion
 } from './region-cells.js';
 import { initCollapsibleSections } from './sidebar-sections.js';
+import { mountPythonMattingPanel, pythonRefine, describeRefineStats } from './python-engine.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const byId = (id) => document.getElementById(id);
   // Fold the sidebar's sections before anything reads their layout: the column
   // is taller than any viewport with all of them open.
   initCollapsibleSections(byId('cleanerSidebar'), { storagePrefix: 'cleaner.section' });
+  // Mounted before anything else so no code path can reach it in its TDZ.
+  const pythonPanel = mountPythonMattingPanel(byId('spritePythonMount'), {
+    storageKey: 'cleaner:python-matting',
+    idPrefix: 'spritePython',
+    compact: true,
+    onChange: () => rerunFromPython()
+  });
   const tabVideo = byId('tabVideoWorkspace');
   const tabCleaner = byId('tabSpriteCleaner');
   const tabReframe = byId('tabSpriteReframe');
@@ -119,6 +127,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const state = {
     original: null,
+    // Raw JS keyer output. `keyed` is this after the optional Python edge pass,
+    // so toggling Python reruns only Python and what follows, not the flood fill.
+    jsKeyed: null,
+    pythonStats: null,
+    pythonRun: 0,
     keyed: null,
     // Keyer output after Subject Guard, cached so the guard sliders rerun only
     // the guard and what follows it, never the flood fill.
@@ -531,6 +544,8 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error('Nguồn ảnh không hợp lệ.');
       }
 
+      state.jsKeyed = null;
+      state.pythonStats = null;
       state.keyed = null;
       state.guarded = null;
       state.subjectGuardStats = null;
@@ -625,6 +640,47 @@ document.addEventListener('DOMContentLoaded', () => {
       rows: Number(rows.value),
       cols: Number(cols.value)
     };
+  }
+
+  /**
+   * Optional Python Precision Matting between the keyer and Subject Guard:
+   * re-estimates the uncertain edge band of the JS matte from the original
+   * (python-engine.js). Off, or any failure ⇒ the JS matte unchanged.
+   */
+  async function applyPythonPass(jsKeyed) {
+    state.pythonStats = null;
+    if (!pythonPanel?.isEnabled() || !jsKeyed || !state.original) return jsKeyed;
+    const run = state.pythonRun;
+    try {
+      const { imageData, stats } = await pythonRefine(state.original, jsKeyed, pythonPanel.refineOptions(state.lastKeyColors));
+      if (run !== state.pythonRun) return jsKeyed;
+      state.pythonStats = stats;
+      pythonPanel.setReport(describeRefineStats(stats));
+      return imageData;
+    } catch (error) {
+      if (run === state.pythonRun) {
+        pythonPanel.setReport(error.hint || error.message, { error: true });
+        showToast(`Python matting không chạy, dùng kết quả JS: ${error.message}`, 'error');
+      }
+      return jsKeyed;
+    }
+  }
+
+  // Python settings changed: rerun Python and everything after it on the
+  // cached JS matte. A newer run supersedes an older one still in flight.
+  async function rerunFromPython() {
+    if (!state.jsKeyed || state.isProcessing) return;
+    state.pythonRun += 1;
+    const run = state.pythonRun;
+    if (pythonPanel.isEnabled()) resultStatus.textContent = 'Python đang tinh chỉnh viền…';
+    const keyed = await applyPythonPass(state.jsKeyed);
+    if (run !== state.pythonRun || state.isProcessing || !state.jsKeyed) return;
+    state.keyed = keyed;
+    state.guarded = applySubjectGuardPass(state.keyed);
+    state.refined = applyEdgeRefine(state.guarded);
+    recomposeResult();
+    renderPreview();
+    resultStatus.textContent = resultStatusText();
   }
 
   /**
@@ -760,9 +816,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function resultStatusText() {
     const guard = state.subjectGuardStats;
+    const python = state.pythonStats ? `${state.resultStatusBase} · ${describeRefineStats(state.pythonStats)}` : state.resultStatusBase;
     const guarded = guard?.restoredPixels
-      ? `${state.resultStatusBase} · subject guard giữ lại ${guard.restoredPixels.toLocaleString()} px`
-      : state.resultStatusBase;
+      ? `${python} · subject guard giữ lại ${guard.restoredPixels.toLocaleString()} px`
+      : python;
     const stats = state.edgeRefineStats;
     const base = stats ? `${guarded} · edge refined (${stats.band.toLocaleString()} px)` : guarded;
     const region = state.regionStats;
@@ -790,8 +847,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const working = cloneImageData(state.original);
       const options = processOptions(autoDetect);
       const result = runKeyer(working, { connected: true, ...options });
-      state.keyed = result.imageData;
+      state.jsKeyed = result.imageData;
       state.lastKeyColors = result.keyColors;
+      if (pythonPanel?.isEnabled()) resultStatus.textContent = 'Python đang tinh chỉnh viền…';
+      state.pythonRun += 1;
+      state.keyed = await applyPythonPass(state.jsKeyed);
       state.keyerTuning = {
         similarity: options.similarity,
         feather: options.feather,
@@ -822,6 +882,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function resetResult() {
     if (!state.original) return;
+    state.pythonRun += 1;
+    state.jsKeyed = null;
+    state.pythonStats = null;
     state.keyed = null;
     state.guarded = null;
     state.subjectGuardStats = null;

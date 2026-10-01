@@ -46,6 +46,7 @@ export const PANEL_GROUPS = [
       { id: 'edge-cleanup', label: 'Edge Cleanup', hint: 'Bào 0–3 px viền màu', elements: ['panelEdgeCleanup'] },
       { id: 'chroma-smooth', label: 'Chroma Smoothing', hint: 'Làm mịn 4:2:0 trước khi khóa', elements: ['panelChromaSmooth'] },
       { id: 'subject-guard', label: 'Subject Guard', hint: 'Lấp lỗ thủng giữa thân, giữ màu gốc chủ thể', elements: ['panelSubjectGuard'] },
+      { id: 'python-matting', label: 'Python Precision Matting', hint: 'Tinh chỉnh viền bằng NumPy + OpenCV khi Generate', elements: ['panelPythonMatting'] },
       { id: 'protect-brush', label: 'Subject Protect Brush', hint: 'Bôi bảo vệ chủ thể', elements: ['groupProtectionBrush'], deactivate: 'protectionBrush' },
       { id: 'erase-brush', label: 'Erase Brush · Bút Xóa', hint: 'Bôi xóa trên video / preview', elements: ['groupEraseBrush'], deactivate: 'eraseBrush' },
       { id: 'color-replace', label: 'Subject Color Replace', hint: 'Đổi màu chi tiết trên chủ thể', elements: ['groupColorReplace'] },

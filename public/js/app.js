@@ -47,6 +47,7 @@ import {
   frameTime,
   seekTimeFor
 } from './frame-grid.js';
+import { mountPythonMattingPanel, fetchPythonStatus, pythonRefine, describeRefineStats } from './python-engine.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const DEFAULT_AUTO_FPS = 12;
@@ -791,6 +792,58 @@ document.addEventListener('DOMContentLoaded', () => {
     return result;
   }
 
+  /**
+   * Python Precision Matting for one Generate run, or null when it has nothing
+   * to do (panel off, keying off, no key colour). Counters are filled in by
+   * keyFrameRefined() and reported by showGenerateNotes().
+   */
+  async function buildPythonSession() {
+    if (!pythonPanel?.isEnabled() || !chkTransparentFormat.checked || !state.keyColors.length) return null;
+    const session = {
+      options: pythonPanel.refineOptions(state.keyColors),
+      frames: 0,
+      changed: 0,
+      band: 0,
+      failed: 0,
+      error: null,
+      disabled: false
+    };
+    const status = await fetchPythonStatus();
+    if (!status.available) {
+      session.disabled = true;
+      session.error = status.hint || status.error || 'Python chưa sẵn sàng';
+    }
+    return session;
+  }
+
+  /**
+   * keyFrameGuarded() with the Python edge pass in between: keyer → Python →
+   * Subject Guard. Python only re-estimates the uncertain edge band of the
+   * keyer's matte, so the guard still sees the frame the keyer decided on. Any
+   * failure falls back to the JS matte for that frame; a missing interpreter
+   * switches Python off for the rest of the run.
+   */
+  async function keyFrameRefined(imageData, chromaOptions, guardOptions, python) {
+    let result = runKeyer(imageData, chromaOptions);
+    if (python && !python.disabled && result.imageData !== imageData) {
+      try {
+        const refined = await pythonRefine(imageData, result.imageData, python.options);
+        result = { ...result, imageData: refined.imageData };
+        python.frames += 1;
+        python.changed += Number(refined.stats.changedPixels) || 0;
+        python.band += Number(refined.stats.bandPixels) || 0;
+      } catch (error) {
+        python.failed += 1;
+        python.error = error.message;
+        if (error.unavailable) python.disabled = true;
+      }
+    }
+    if (guardOptions && result.imageData !== imageData) {
+      applySubjectGuard(result.imageData, imageData, guardOptions);
+    }
+    return result;
+  }
+
   function buildColorGradeOptions() {
     return {
       enabled: chkEnableColorGrade.checked,
@@ -982,6 +1035,16 @@ document.addEventListener('DOMContentLoaded', () => {
     defaultExpanded: true
   });
 
+
+  // === PYTHON PRECISION MATTING ===
+  // Optional server-side edge pass (python-engine.js). Settings are global, not
+  // per clip, and only read at Generate: the preview is a finished sheet, so a
+  // slider here has nothing live to update.
+  const pythonPanel = mountPythonMattingPanel(document.getElementById('panelPythonMatting'), {
+    storageKey: 'video-editor:python-matting',
+    idPrefix: 'videoPython',
+    applyHint: 'áp khi Generate'
+  });
 
   // === PANEL VISIBILITY (Video → Sprite) ===
   // Users who never touch Subject Color Replace should not have to scroll past
@@ -6259,6 +6322,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function showGenerateNotes(notes) {
     if (!notes) return;
+    const python = notes.python;
+    if (python) {
+      if (python.frames > 0) {
+        pythonPanel?.setReport(describeRefineStats({ changedPixels: python.changed, bandPixels: python.band })
+          + ` · ${python.frames} frame${python.failed ? ` · ${python.failed} frame lỗi` : ''}`);
+      }
+      if (python.failed > 0 || (python.disabled && python.frames === 0)) {
+        const reason = python.error || 'Python chưa sẵn sàng';
+        pythonPanel?.setReport(reason, { error: true });
+        showToast(python.frames > 0
+          ? `Python matting lỗi ở ${python.failed} frame, các frame đó dùng kết quả JS: ${reason}`
+          : `Python matting không chạy, sprite dùng keyer JS: ${reason}`, 'error');
+      }
+    }
     if (notes.duplicateFrames > 0) {
       showToast(`Vùng trim có ít frame gốc hơn số ô: ${notes.duplicateFrames} ô lặp lại frame trước nên animation sẽ khựng. Kéo dài trim hoặc giảm số frame.`, 'info');
     }
@@ -6327,6 +6404,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const subjectProtection = U.clampNumber(sliderSubjectProtection.value, 0, 1, 0.50);
     const cleanupRadius = Math.round(U.clampNumber(sliderEdgeCleanup.value, 0, 3, 0));
     const subjectGuardOptions = buildSubjectGuardOptions();
+    const pythonSession = await buildPythonSession();
 
     // Full video resolution canvas for 2D alignment so neither X nor Y is clipped
     const fullW = state.videoWidth;
@@ -6481,7 +6559,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Subject Guard runs right on the keyer's output, before anything paints
       // on top of it: it compares the matte with the source frame, and color
       // replace / grade / region / erase are edits the user asked for.
-      const fullKeyResult = keyFrameGuarded(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }), subjectGuardOptions);
+      const fullKeyResult = await keyFrameRefined(fullImgData, buildChromaOptions({ protectionMask: protectionMaskFull }), subjectGuardOptions, pythonSession);
       fullImgData = fullKeyResult.imageData;
       applyColorReplacement(fullImgData, colorReplaceOptions);
       // Grading is per-pixel, so it can run at full resolution with the rest of
@@ -6581,7 +6659,8 @@ document.addEventListener('DOMContentLoaded', () => {
       crossfadeApplied: crossfade.count,
       duplicateFrames: plan.duplicateFrames,
       pacing: describePacing(plan),
-      gridFps: plan.grid ? plan.grid.fps : null
+      gridFps: plan.grid ? plan.grid.fps : null,
+      python: pythonSession
     };
 
     if (crossfade.count > 0) {

@@ -7,6 +7,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import archiver from 'archiver';
 import { EditorUtils } from './public/js/editor-utils.js';
+import { PythonWorker, decodeBody, encodeBody } from './python-bridge.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -360,6 +361,69 @@ app.post('/api/export-bundle', upload.single('video'), async (req, res) => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Python precision matting (optional). See python-bridge.js / python/worker.py.
+// ---------------------------------------------------------------------------
+const pythonWorker = new PythonWorker();
+const PYTHON_OPS = new Set(['refine', 'key']);
+const PYTHON_HINT = 'Cài Python 3 cùng numpy + OpenCV: pip install -r python/requirements.txt (hoặc đặt PYTHON_BIN trỏ tới interpreter có sẵn các gói này).';
+
+app.get('/api/python/status', async (req, res) => {
+  try {
+    const { header } = await pythonWorker.request({ op: 'ping' });
+    res.json({
+      available: true,
+      version: header.version,
+      python: header.python,
+      numpy: header.numpy,
+      opencv: header.opencv,
+      pythonBin: pythonWorker.pythonBin
+    });
+  } catch (err) {
+    res.json({ available: false, error: err.message, hint: PYTHON_HINT, pythonBin: pythonWorker.pythonBin });
+  }
+});
+
+// Body: u32le headerLength | header JSON {op, width, height, options, matting?} | RGBA payload.
+// `refine` carries original RGBA followed by keyed RGBA; `key` only the original.
+app.post('/api/python/matte', express.raw({ type: 'application/octet-stream', limit: '600mb' }), async (req, res) => {
+  let request;
+  try {
+    request = decodeBody(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: `Request không hợp lệ: ${err.message}` });
+  }
+  const { header, payload } = request;
+  const width = Number(header.width);
+  const height = Number(header.height);
+  if (!PYTHON_OPS.has(header.op)) return res.status(400).json({ error: `op không hỗ trợ: ${header.op}` });
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 || width * height > 8192 * 8192) {
+    return res.status(400).json({ error: `Kích thước không hợp lệ: ${header.width}x${header.height}` });
+  }
+  const expected = width * height * 4 * (header.op === 'refine' ? 2 : 1);
+  if (payload.length !== expected) {
+    return res.status(400).json({ error: `Payload ${payload.length} byte, cần ${expected} byte` });
+  }
+  try {
+    const result = await pythonWorker.request({
+      op: header.op,
+      width,
+      height,
+      options: header.options || {},
+      matting: header.matting || {}
+    }, payload);
+    const { id, ...meta } = result.header;
+    res.type('application/octet-stream').send(encodeBody(meta, result.payload));
+  } catch (err) {
+    res.status(err.workerError ? 422 : 503).json({ error: err.message, hint: err.workerError ? undefined : PYTHON_HINT });
+  }
+});
+
+process.on('exit', () => pythonWorker.stop());
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => { pythonWorker.stop(); process.exit(0); });
+}
 
 // Start Server with auto-fallback if port is busy
 function startServer(port) {
