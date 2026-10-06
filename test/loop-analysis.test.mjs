@@ -6,11 +6,15 @@ import {
   descriptorDistance,
   findLoopCandidates,
   hasUsableMatte,
+  recommendCrossfade,
   refineSeamOnFrames,
   seamCostAt,
   seamJumpFrames,
   seamJumpRatio,
-  seamRefinementFrames
+  seamQualityScore,
+  seamRefinementFrames,
+  seamResidual,
+  seamResidualFrames
 } from '../public/js/loop-analysis.js';
 
 import { computeFrameDistance, computeLoopTimestamps } from '../public/js/loop-optimizer.js';
@@ -556,4 +560,71 @@ test('seamJumpFrames: lists the frames seamJumpRatio reads', () => {
   }, 4);
   assert.deepEqual([...read].sort((a, b) => a - b), [...listed]);
   assert.ok(listed.has(100) && listed.has(169));
+});
+
+// --- Seam residual: the ranking yardstick ------------------------------------
+
+test('seamResidual: measures the seam in ordinary steps of the loop', () => {
+  const dist = orbitDistance(48);
+  const at = (endFrame) => seamResidual({ startFrame: 10, endFrame, stepFrames: 2, windowRadius: 1 }, dist);
+  // The true period: the twin is the start pose again.
+  const exact = at(58);
+  assert.ok(exact.residual < 1e-9);
+  assert.equal(exact.verdict, 'smooth');
+  // One native frame off with two frames per cell: half a step.
+  const half = at(59);
+  assert.ok(Math.abs(half.residual - 0.5) < 0.02, `residual ${half.residual}`);
+  assert.equal(half.verdict, 'bump');
+  // Four frames off: two whole steps.
+  const far = at(62);
+  assert.ok(far.residual > 1.9 && far.residual < 2.1, `residual ${far.residual}`);
+  assert.equal(far.verdict, 'jump');
+  // The same miss in native frames is smaller on a loop that moves faster.
+  const fast = seamResidual({ startFrame: 10, endFrame: 59, stepFrames: 4, windowRadius: 1 }, dist);
+  assert.ok(fast.residual < half.residual);
+});
+
+test('seamResidual: no motion, no yardstick', () => {
+  assert.equal(seamResidual({ startFrame: 10, endFrame: 40, stepFrames: 2 }, () => 0), null);
+  // The cut itself must be readable.
+  assert.equal(seamResidual({ startFrame: 10, endFrame: 40, stepFrames: 2, maxFrame: 35 }, orbitDistance(30)), null);
+});
+
+test('seamResidualFrames: lists every frame seamResidual reads', () => {
+  const options = { startFrame: 12, endFrame: 60, stepFrames: 2.5, windowRadius: 1, samples: 8, minFrame: 0, maxFrame: 70 };
+  const listed = new Set(seamResidualFrames(options));
+  const read = new Set();
+  seamResidual(options, (a, b) => {
+    read.add(a);
+    read.add(b);
+    return 1 + (Math.abs(a - b) % 5);
+  });
+  assert.deepEqual([...read].sort((a, b) => a - b), [...listed]);
+  for (const k of listed) assert.ok(k >= 0 && k <= 70);
+});
+
+test('seamQualityScore: 1 at a perfect seam, falling with the residual', () => {
+  assert.equal(seamQualityScore(0), 1);
+  let prev = 1;
+  for (const r of [0.1, 0.3, 0.5, 0.75, 1, 1.5]) {
+    const q = seamQualityScore(r);
+    assert.ok(q < prev, `r=${r}`);
+    prev = q;
+  }
+  assert.ok(seamQualityScore(0.3) > 0.7);
+  assert.ok(seamQualityScore(1.2) < 0.01);
+  assert.equal(seamQualityScore(null), 0);
+  assert.equal(seamQualityScore(NaN), 0);
+});
+
+test('recommendCrossfade: none for an invisible seam, more for a bigger miss, capped', () => {
+  assert.equal(recommendCrossfade(0.1, 24), 0);
+  assert.equal(recommendCrossfade(0.3, 24), 2);
+  assert.equal(recommendCrossfade(0.6, 24), 3);
+  assert.equal(recommendCrossfade(1.5, 24), 4);
+  // Never more than a quarter of the loop.
+  assert.equal(recommendCrossfade(1.5, 8), 2);
+  assert.equal(recommendCrossfade(1.5, 3), 0);
+  assert.equal(recommendCrossfade(null, 24), 0);
+  assert.equal(recommendCrossfade(undefined, 24), 0);
 });

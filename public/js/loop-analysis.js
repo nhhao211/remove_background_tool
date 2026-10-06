@@ -37,6 +37,9 @@ const BLOCK = FINE_GRID / COARSE_GRID;
 /** Weight of each distance term when the frames carry a real alpha matte. */
 const MATTE_WEIGHTS = { shape: 0.45, color: 0.35, position: 0.20 };
 
+/** How the candidate score is composed; the scanner re-scores with the same mix. */
+export const LOOP_SCORE_WEIGHTS = Object.freeze({ seam: 0.50, period: 0.18, frameFit: 0.22, activity: 0.10 });
+
 /** Below this mean alpha a cell holds no usable colour. */
 const ALPHA_EPS = 0.004;
 
@@ -531,10 +534,7 @@ export function findLoopCandidates(descriptors, times, options = {}) {
 
   // --- Stage 5: fine scoring. ---
   const w = {
-    seam: 0.50,
-    period: 0.18,
-    frameFit: 0.22,
-    activity: 0.10,
+    ...LOOP_SCORE_WEIGHTS,
     ...(options.weights || {})
   };
   const weightSum = w.seam + w.period + w.frameFit + w.activity || 1;
@@ -687,6 +687,32 @@ function normaliseRefineOptions(options) {
 }
 
 /**
+ * Windowed seam cost on native frames: frames one output step before, at and
+ * after the cut on each side, weighted by WINDOW_WEIGHTS. Neighbours outside
+ * the decodable range are skipped; the centre pair is mandatory.
+ */
+function windowedFrameCost(a, b, o, weights, dist) {
+  let acc = 0;
+  let wsum = 0;
+  for (let m = 0; m < o.offsets.length; m++) {
+    const ka = a + o.offsets[m];
+    const kb = b + o.offsets[m];
+    if (ka < o.minFrame || kb < o.minFrame || ka > o.maxFrame || kb > o.maxFrame) {
+      if (m === o.windowRadius) return Infinity;
+      continue;
+    }
+    const d = dist(ka, kb);
+    if (d === null || d === undefined || !Number.isFinite(d)) {
+      if (m === o.windowRadius) return Infinity;
+      continue;
+    }
+    acc += weights[m] * d;
+    wsum += weights[m];
+  }
+  return wsum > 0 ? acc / wsum : Infinity;
+}
+
+/**
  * Native frames the seam refinement will ask `dist()` about, so the caller
  * can decode them all before the (synchronous) search runs.
  *
@@ -746,26 +772,7 @@ export function refineSeamOnFrames(options, dist) {
   const hasNominal = Number.isFinite(nominal) && nominal > 0;
   const stepFrames = Math.max(1, Number(options.stepFrames) || 1);
 
-  const costAt = (a, b) => {
-    let acc = 0;
-    let wsum = 0;
-    for (let m = 0; m < o.offsets.length; m++) {
-      const ka = a + o.offsets[m];
-      const kb = b + o.offsets[m];
-      if (ka < o.minFrame || kb < o.minFrame || ka > o.maxFrame || kb > o.maxFrame) {
-        if (m === o.windowRadius) return Infinity;
-        continue;
-      }
-      const d = dist(ka, kb);
-      if (d === null || d === undefined || !Number.isFinite(d)) {
-        if (m === o.windowRadius) return Infinity;
-        continue;
-      }
-      acc += weights[m] * d;
-      wsum += weights[m];
-    }
-    return wsum > 0 ? acc / wsum : Infinity;
-  };
+  const costAt = (a, b) => windowedFrameCost(a, b, o, weights, dist);
 
   // Near-tie breakers only: one percent per output frame of length drift, and
   // a vanishing preference for not moving at all.
@@ -874,4 +881,121 @@ export function seamJumpRatio(frameIndices, dist, samples = 6) {
   else if (ratio > 1.3) verdict = 'bump';
   else if (ratio < 0.35) verdict = 'hold';
   return { ratio, seam, typical, verdict };
+}
+
+/** Interior step pairs (k, k + one output step) spread over the loop. */
+function residualStepPairs(o, stepFrames, samples) {
+  const step = Math.max(1, Math.round(stepFrames));
+  const last = o.endFrame - step;
+  const pairs = [];
+  if (last < o.startFrame) return pairs;
+  const count = Math.max(1, Math.round(Number(samples) || 8));
+  const seen = new Set();
+  for (let s = 0; s < count; s++) {
+    const k = o.startFrame + Math.round(((s + 0.5) * (last - o.startFrame)) / count);
+    if (seen.has(k) || k < o.minFrame || k + step > o.maxFrame) continue;
+    seen.add(k);
+    pairs.push([k, k + step]);
+  }
+  return pairs;
+}
+
+function normaliseResidualOptions(options) {
+  return normaliseRefineOptions({ ...options, searchRadius: 0, windowRadius: options.windowRadius ?? 1 });
+}
+
+/**
+ * Frames seamResidual() reads, so the caller can decode them first.
+ *
+ * @param {Object} options - Same options as seamResidual()
+ * @returns {number[]} Sorted unique frame indices
+ */
+export function seamResidualFrames(options = {}) {
+  const o = normaliseResidualOptions(options);
+  const set = new Set();
+  for (const off of o.offsets) {
+    for (const k of [o.startFrame + off, o.endFrame + off]) {
+      if (k >= o.minFrame && k <= o.maxFrame) set.add(k);
+    }
+  }
+  for (const [a, b] of residualStepPairs(o, options.stepFrames, options.samples ?? 8)) {
+    set.add(a);
+    set.add(b);
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+/**
+ * How far off the seam is, in units of the loop's own motion per cell.
+ *
+ * The cut joins frame `endFrame` back to `startFrame`; on a perfect cycle the
+ * two (and their neighbours one output step away) are the same pose, so the
+ * windowed seam cost is ~0. Dividing it by the median distance of an ordinary
+ * step between cells turns it into "the wrap is off by this many steps": 0.1
+ * is invisible, 0.5 is a visible nudge, 1 is a whole frame skipped or
+ * repeated. Unlike the seam cost on its own this is comparable across
+ * candidates of different length and speed, and across clips — a fast subject
+ * has big steps and can absorb a bigger seam cost without anyone seeing it.
+ *
+ * @param {Object} options
+ * @param {number} options.startFrame - Loop start (native frame)
+ * @param {number} options.endFrame - Loop end: the twin of startFrame
+ * @param {number} options.stepFrames - Native frames per output cell
+ * @param {number} [options.windowRadius=1] - Output steps either side of the cut
+ * @param {number} [options.samples=8] - Interior steps to take the median of
+ * @param {number} [options.minFrame=0]
+ * @param {number} [options.maxFrame=Infinity]
+ * @param {(a:number, b:number)=>(number|null)} dist - Distance between frames
+ * @returns {{ residual:number, seamCost:number, typical:number, verdict:string }|null}
+ *   null when the subject barely moves (no step to measure against).
+ */
+export function seamResidual(options, dist) {
+  const o = normaliseResidualOptions(options || {});
+  const seamCost = windowedFrameCost(o.startFrame, o.endFrame, o, WINDOW_WEIGHTS[o.windowRadius], dist);
+  if (!Number.isFinite(seamCost)) return null;
+  const steps = [];
+  for (const [a, b] of residualStepPairs(o, options.stepFrames, options.samples ?? 8)) {
+    const d = dist(a, b);
+    if (d !== null && d !== undefined && Number.isFinite(d)) steps.push(d);
+  }
+  const typical = median(steps);
+  if (!(typical > 1e-4)) return null;
+  const residual = seamCost / typical;
+  let verdict = 'smooth';
+  if (residual > 0.75) verdict = 'jump';
+  else if (residual > 0.3) verdict = 'bump';
+  return { residual, seamCost, typical, verdict };
+}
+
+/**
+ * Seam quality from a residual (seamResidual): 1 at a perfect seam, ~0.74 at
+ * 0.3 steps, ~0.16 at 0.75, ~0 past 1.2.
+ */
+export function seamQualityScore(residual) {
+  // Number(null) is 0, which would read a missing measurement as a perfect seam.
+  if (residual === null || residual === undefined) return 0;
+  const r = Number(residual);
+  if (!Number.isFinite(r) || r < 0) return 0;
+  return Math.exp(-((r / 0.55) ** 2));
+}
+
+/**
+ * Loop crossfade cells worth spending on a seam that is `residual` steps off.
+ * An invisible seam gets none (a crossfade always softens detail a little);
+ * a bigger miss is spread over more cells so no single step absorbs it. Never
+ * more than a quarter of the loop, nor the six the slider allows.
+ *
+ * @param {number|null} residual
+ * @param {number} cellCount - Cells in the loop
+ * @returns {number}
+ */
+export function recommendCrossfade(residual, cellCount) {
+  const r = Number(residual);
+  if (residual === null || residual === undefined || !Number.isFinite(r)) return 0;
+  let cells = 0;
+  if (r > 0.8) cells = 4;
+  else if (r > 0.45) cells = 3;
+  else if (r > 0.2) cells = 2;
+  const cap = Math.min(6, Math.floor((Math.round(Number(cellCount)) || 0) / 4));
+  return Math.max(0, Math.min(cells, cap));
 }

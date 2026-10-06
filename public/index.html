@@ -768,8 +768,12 @@
                     <input type="number" id="numLoopCrossfade" class="form-input compact-number" min="0" max="6" step="1" value="0" style="width: 44px; text-align: center;">
                   </div>
                   <div class="hint" style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px;">
-                    Hòa trộn mờ dần k frame cuối với đầu chu kỳ (tối ưu cho lửa, khói, nước, chuyển động ngẫu nhiên).
+                    Trộn k ô sát mối nối với frame cách đúng một chu kỳ, để cú nối chia đều qua nhiều ô thay vì dồn vào một bước. Auto Loop Finder tự gợi ý k theo độ lệch đo được.
                   </div>
+                  <label class="checkbox-row loop-morph-row" style="font-size: 0.78rem; margin-top: 6px;" title="Ước lượng độ dời giữa ô và frame sinh đôi rồi hoà ở vị trí giữa hai pose, thay vì chồng hai hình mờ lên nhau (bóng ma). Tự rơi về hoà mờ thường khi không đo được chuyển động đáng tin.">
+                    <input type="checkbox" id="chkLoopMorph" checked>
+                    <span><strong>Bù chuyển động khi crossfade</strong> (morph, chống bóng ma)</span>
+                  </label>
                 </div>
 
                 <!-- Ping-Pong Loop Option -->

@@ -47,6 +47,7 @@ import {
   frameTime,
   seekTimeFor
 } from './frame-grid.js';
+import { recommendCrossfade } from './loop-analysis.js';
 import { mountPythonMattingPanel, fetchPythonStatus, pythonRefine, describeRefineStats } from './python-engine.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -356,6 +357,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const sliderLoopCrossfade = document.getElementById('sliderLoopCrossfade');
   const numLoopCrossfade = document.getElementById('numLoopCrossfade');
   const lblLoopCrossfadeVal = document.getElementById('lblLoopCrossfadeVal');
+  const chkLoopMorph = document.getElementById('chkLoopMorph');
   const chkPingPongLoop = document.getElementById('chkPingPongLoop');
   const btnAutoLoopFinder = document.getElementById('btnAutoLoopFinder');
   const btnOpenLoopModalFromSettings = document.getElementById('btnOpenLoopModalFromSettings');
@@ -448,7 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'inputDownloadName',
       'btnSelectWatermark', 'btnClearWatermark', 'btnCancelWatermarkSelect',
       'headerSubjectAlignment', 'chkEnableGuideline', 'inputGuidelineX', 'selectGuidelineMode', 'chkEnableGuidelineY', 'inputGuidelineY', 'selectGuidelineYMode', 'btnGuidelineAutoDetect', 'btnGuidelineCenter', 'btnGuidelineResetCrop', 'chkShowGuidelineVideo', 'chkGuidelinePreview',
-      'headerLoopSettings', 'chkClosedLoop', 'sliderLoopCrossfade', 'numLoopCrossfade', 'chkPingPongLoop', 'btnOpenLoopModalFromSettings',
+      'headerLoopSettings', 'chkClosedLoop', 'sliderLoopCrossfade', 'numLoopCrossfade', 'chkLoopMorph', 'chkPingPongLoop', 'btnOpenLoopModalFromSettings',
       // Chroma panel: key colours + format + circle region first, as laid out
       'btnPickColor',
       'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
@@ -635,6 +637,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Loop Optimization & Periodicity Seeker state
     isClosedLoop: true,
     loopCrossfade: 0,
+    loopMorph: true,
     pingPongLoop: false,
     pingPongDirection: 1,
     loopCandidates: [],
@@ -727,6 +730,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showGuidelinePreview: state.showGuidelinePreview,
       isClosedLoop: state.isClosedLoop,
       loopCrossfade: state.loopCrossfade,
+      loopMorph: state.loopMorph,
       pingPongLoop: state.pingPongLoop,
       updatedAt: Date.now()
     };
@@ -1881,6 +1885,12 @@ document.addEventListener('DOMContentLoaded', () => {
     sliderLoopCrossfade.value = String(state.loopCrossfade);
     numLoopCrossfade.value = String(state.loopCrossfade);
     lblLoopCrossfadeVal.textContent = state.loopCrossfade === 0 ? '0 frames (Off)' : `${state.loopCrossfade} frame${state.loopCrossfade > 1 ? 's' : ''}`;
+    chkLoopMorph?.closest('.loop-morph-row')?.classList.toggle('is-idle', state.loopCrossfade === 0);
+
+    // Clips saved before the option existed get the morph: it only changes
+    // anything when crossfade is on, and falls back to the dissolve by itself.
+    state.loopMorph = saved?.loopMorph !== false;
+    if (chkLoopMorph) chkLoopMorph.checked = state.loopMorph;
 
     state.pingPongLoop = Boolean(saved?.pingPongLoop);
     chkPingPongLoop.checked = state.pingPongLoop;
@@ -6320,6 +6330,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  const SEAM_VERDICT_LABELS = {
+    smooth: 'nối mượt',
+    bump: 'nối hơi khựng',
+    jump: 'nối giật',
+    hold: 'nối đứng hình'
+  };
+
   function showGenerateNotes(notes) {
     if (!notes) return;
     const python = notes.python;
@@ -6343,6 +6360,21 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast(notes.crossfadeApplied > 0
         ? `Crossfade chỉ áp được ${notes.crossfadeApplied}/${notes.crossfadeRequested} frame: clip không đủ frame trước/sau vùng trim.`
         : 'Không crossfade được: clip không có frame nào trước hoặc sau vùng trim để hoà vào mối nối.', 'info');
+    }
+    const seam = notes.finalSeam;
+    if (seam && seam.verdict !== 'smooth') {
+      const label = SEAM_VERDICT_LABELS[seam.verdict] || seam.verdict;
+      if (seam.verdict === 'hold') {
+        showToast(`Mối nối ${label} (×${seam.ratio.toFixed(2)}): ô cuối gần trùng ô đầu nên loop đứng một nhịp. Lùi Trim End 1 frame hoặc dùng Auto Loop Finder.`, 'info');
+      } else {
+        // A wrap of ratio r carries about (r − 1) steps more motion than a
+        // normal step; that excess is what a crossfade has to spread out.
+        const suggest = recommendCrossfade(Math.max(0, seam.ratio - 1), state.generatedFrames.length);
+        const advice = notes.crossfadeApplied > 0
+          ? 'Thử Auto Loop Finder để tìm điểm cắt khớp hơn.'
+          : (suggest > 0 ? `Thử bật Loop crossfade = ${suggest} rồi Generate lại, hoặc dùng Auto Loop Finder.` : 'Thử Auto Loop Finder để tìm điểm cắt khớp hơn.');
+        showToast(`Mối nối loop ${label} (×${seam.ratio.toFixed(2)} so với một bước thường). ${advice}`, 'info');
+      }
     }
   }
 
@@ -6648,19 +6680,30 @@ document.addEventListener('DOMContentLoaded', () => {
     // Twins come after every cell, so the sheet is complete even if a twin
     // seek fails, and the blend runs on the cell before region/erase (the
     // unaligned path applies those below, after the crossfade).
+    // With morph on, each pair is blended along the measured displacement
+    // between cell and twin (seam-morph.js) so a pose a few pixels off is
+    // drawn once, in between, rather than twice at half opacity.
+    let morphedCells = 0;
     for (let j = 0; j < crossfade.pairs.length; j++) {
       const pair = crossfade.pairs[j];
       await renderCell(pair.seekTime, pair.cell);
-      blendLoopTwin(state.generatedFrames[pair.cell], frameCanvas, pair.weight);
+      const blend = blendLoopTwin(state.generatedFrames[pair.cell], frameCanvas, pair.weight, { morph: state.loopMorph });
+      if (blend?.mode === 'morph') morphedCells++;
       progressBarFill.style.width = `${Math.round(((totalFrames + j + 1) / totalRenders) * 100)}%`;
     }
     state.lastGenerateNotes = {
       crossfadeRequested: crossfade.requested,
       crossfadeApplied: crossfade.count,
+      morphedCells,
       duplicateFrames: plan.duplicateFrames,
       pacing: describePacing(plan),
       gridFps: plan.grid ? plan.grid.fps : null,
-      python: pythonSession
+      python: pythonSession,
+      // The wrap as the finished sheet plays it (last cell → first, after any
+      // crossfade), so the toast can say whether the seam still shows.
+      finalSeam: state.isClosedLoop && !state.pingPongLoop && totalFrames >= 6
+        ? measureLoopSeam(state.generatedFrames)
+        : null
     };
 
     if (crossfade.count > 0) {
@@ -7251,12 +7294,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return cvs;
   }
 
-  const SEAM_VERDICT_LABELS = {
-    smooth: 'nối mượt',
-    bump: 'nối hơi khựng',
-    jump: 'nối giật',
-    hold: 'nối đứng hình'
-  };
 
   selectLoopSpeed?.addEventListener('change', updateLoopTargetHint);
   inputLoopTargetFrames?.addEventListener('input', updateLoopTargetHint);
@@ -7407,11 +7444,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // 7. Judge the wrap as it will play: last cell → first cell, against an
     // ordinary step of the same loop. Start/end similarity alone cannot see a
     // loop whose seam repeats a pose (a hold) or skips one (a jump).
-    const seam = measureLoopSeam(fullCycleFrames);
+    // `endFrame` is the frame one loop length after cell 0 — what the wrap
+    // stands in for — so the residual here is the scanner's yardstick too.
+    const seam = measureLoopSeam(fullCycleFrames, { nextFrame: endFrame });
     if (seam && loopSeamScoreBadge && badgeText) {
-      loopSeamScoreBadge.textContent = `${badgeText} · ${SEAM_VERDICT_LABELS[seam.verdict] || seam.verdict} ×${seam.ratio.toFixed(2)}`;
-      loopSeamScoreBadge.title = 'Độ chênh của bước nối (frame cuối → frame đầu) so với một bước bình thường trong loop. ×1.00 là nối mượt như mọi bước khác.';
-      if (seam.verdict !== 'smooth') loopSeamScoreBadge.className = 'loop-score-badge medium';
+      const residualText = seam.residual != null ? ` · lệch ${seam.residual.toFixed(2)} bước` : '';
+      loopSeamScoreBadge.textContent = `${badgeText} · ${SEAM_VERDICT_LABELS[seam.verdict] || seam.verdict} ×${seam.ratio.toFixed(2)}${residualText}`;
+      loopSeamScoreBadge.title = 'Độ chênh của bước nối (frame cuối → frame đầu) so với một bước bình thường trong loop. ×1.00 là nối mượt như mọi bước khác. "Lệch X bước": frame cách đúng một chu kỳ khác frame đầu bao nhiêu, tính bằng số bước bình thường.';
+      if (seam.verdict !== 'smooth' || seam.residualVerdict === 'jump') loopSeamScoreBadge.className = 'loop-score-badge medium';
+      // A nudged trim changes the seam; keep the suggestion in step with it.
+      // Untouched candidates keep the scanner's (windowed) measurement.
+      if (seam.residual != null && activeSeamCandidate === cand && cand.nudged) {
+        cand.seamResidual = Math.round(seam.residual * 100) / 100;
+        cand.seamVerdict = seam.residualVerdict;
+        cand.recommendedCrossfade = seam.recommendedCrossfade;
+      }
     }
   }
 
@@ -7577,7 +7624,9 @@ document.addEventListener('DOMContentLoaded', () => {
         frameMode: selectLoopFrameMode?.value || 'exact',
         maxSamples: 320,
         refine: true,
-        refineCandidates: 3,
+        // Every candidate gets the per-frame seam search, so the final ranking
+        // (residual, loop-analysis.js) compares refined seams with refined ones.
+        refineCandidates: 6,
         chromaOptions,
         cropOptions: crop,
         seekVideoAsync,
@@ -7642,6 +7691,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const seamNote = cand.seamJump
         ? `<span style="color:${cand.seamJump.verdict === 'smooth' ? '#10b981' : '#f59e0b'};">↻ ${SEAM_VERDICT_LABELS[cand.seamJump.verdict] || cand.seamJump.verdict} ×${cand.seamJump.ratio.toFixed(2)}</span>`
         : '';
+      const residualLine = cand.seamResidual != null
+        ? `<span class="loop-residual-line" title="Độ lệch tại điểm nối, tính bằng số bước chuyển động bình thường giữa hai ô. Dưới 0.3 là không nhìn thấy; 1.0 là lệch nguyên một ô.">${describeResidual(cand.seamResidual, cand.seamVerdict)}${cand.recommendedCrossfade > 0 ? ` · <span style="color:#38bdf8;">gợi ý crossfade ${cand.recommendedCrossfade} ô</span>` : ''}</span>`
+        : '';
       const pacingNote = cand.pacing
         ? ` · <span style="color:${cand.pacing.even ? '#94a3b8' : '#f59e0b'};">${cand.pacing.label} frame gốc/ô${cand.pacing.even ? '' : ' (nhịp không đều)'}</span>`
         : '';
@@ -7658,6 +7710,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <span>${formatTime(cand.startTime)} → ${formatTime(cand.endTime)} (${cand.duration.toFixed(3)}s video)</span>
           <span>⚡ ${candSpeed}x Speed ➔ <strong>${candFrames} frames</strong> @ ${candFps} FPS (${cand.effectiveDuration.toFixed(2)}s)${frameNote}</span>
           ${gridLine}
+          ${residualLine}
         </div>
         <div class="loop-card-thumbs">
           <img class="loop-card-thumb-img" src="${cand.startThumb}" alt="Start" title="Frame 0 (Start)">
@@ -7694,6 +7747,12 @@ document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons({ root: loopCandidatesList });
   }
 
+  /** "lệch 0.12 bước" coloured by the residual verdict (see seamResidual). */
+  function describeResidual(residual, verdict) {
+    const colour = verdict === 'smooth' ? '#10b981' : (verdict === 'bump' ? '#f59e0b' : '#f87171');
+    return `<span style="color:${colour};">⌁ lệch ${residual.toFixed(2)} bước</span>`;
+  }
+
   function applyCandidateToTimeline(cand) {
     if (!cand) return;
     // Snapping here would undo the sub-frame refinement and, with it, the
@@ -7727,9 +7786,21 @@ document.addEventListener('DOMContentLoaded', () => {
       state.previewFpsIsManual = true;
     }
 
+    // The crossfade the measured seam needs: none for an invisible seam (a
+    // blend always softens a little), more cells the further off it is.
+    let crossfadeNote = '';
+    if (Number.isFinite(cand.recommendedCrossfade) && sliderLoopCrossfade) {
+      const cells = Math.max(0, Math.min(6, Math.round(cand.recommendedCrossfade)));
+      if (cells !== (parseInt(sliderLoopCrossfade.value, 10) || 0)) {
+        sliderLoopCrossfade.value = String(cells);
+        sliderLoopCrossfade.dispatchEvent(new Event('input'));
+      }
+      crossfadeNote = cells > 0 ? `, crossfade ${cells} ô` : ', không cần crossfade';
+    }
+
     updateSpeedEffectiveHint();
     saveClipStateDebounced();
-    showToast(`Đã áp dụng chu kỳ: ${formatTime(cand.startTime)} → ${formatTime(cand.endTime)} (${cand.calculatedFrames || 24} frames @ ${cand.speed || 1}x)`, 'success');
+    showToast(`Đã áp dụng chu kỳ: ${formatTime(cand.startTime)} → ${formatTime(cand.endTime)} (${cand.calculatedFrames || 24} frames @ ${cand.speed || 1}x${crossfadeNote})`, 'success');
     closeLoopModal();
   }
 
@@ -7768,6 +7839,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     cand.duration = Math.max(minSpan, cand.endTime - cand.startTime);
     cand.effectiveDuration = cand.duration / (cand.speed || 1);
+    cand.nudged = true;
     await inspectSeamCandidate(cand);
   }
 
@@ -7804,8 +7876,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (lblLoopCrossfadeVal) {
         lblLoopCrossfadeVal.textContent = val === 0 ? '0 frames (Off)' : `${val} frame${val > 1 ? 's' : ''}`;
       }
+      chkLoopMorph?.closest('.loop-morph-row')?.classList.toggle('is-idle', val === 0);
       saveClipStateDebounced();
     }
+  });
+
+  chkLoopMorph?.addEventListener('change', () => {
+    state.loopMorph = chkLoopMorph.checked;
+    saveClipStateDebounced();
   });
 
   chkPingPongLoop?.addEventListener('change', () => {

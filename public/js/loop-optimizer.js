@@ -11,16 +11,21 @@
  */
 
 import { runKeyer } from './keyer/index.js';
-import { SRGB_TO_LINEAR, linearToSrgb8 } from './keyer/color.js';
+import { dissolveImageData, morphBlendImageData } from './seam-morph.js';
 import {
   buildFrameDescriptor,
   descriptorDistance,
   findLoopCandidates,
   hasUsableMatte,
+  LOOP_SCORE_WEIGHTS,
+  recommendCrossfade,
   refineSeamOnFrames,
   seamJumpFrames,
   seamJumpRatio,
-  seamRefinementFrames
+  seamQualityScore,
+  seamRefinementFrames,
+  seamResidual,
+  seamResidualFrames
 } from './loop-analysis.js';
 import {
   describePacing,
@@ -33,6 +38,10 @@ import {
   planLoopFrames,
   sampleTimes
 } from './frame-grid.js';
+
+function toPercent(value01) {
+  return Math.round(Math.max(0, Math.min(1, value01)) * 1000) / 10;
+}
 
 /**
  * Calculates sampling timestamps for animation generation.
@@ -492,15 +501,35 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
     cand.duration = cand.endTime - cand.startTime;
   }
 
-  // --- Pass 4: judge each seam on the frames the sheet will really hold. ---
-  // The search scores a cut between two source frames; the loop that plays is
-  // the planned cells, one output step apart. Measuring the wrap from the last
-  // cell to the first against an ordinary step between cells is the check that
-  // matches what the eye sees, including the pacing rounding the plan does.
-  onProgress(86, 'Đang kiểm tra bước nhảy tại điểm nối trên đúng các frame sẽ xuất...');
+  // --- Pass 4: judge every seam with one yardstick, then rank on it. ---
+  // Two measurements on native frames, for every candidate (refined or not):
+  //  - the residual: windowed seam cost divided by an ordinary step of the
+  //    loop's own motion, i.e. "the wrap is off by this many cells". Unlike
+  //    the contrast-normalised coarse cost it compares across candidates of
+  //    different length and speed, and refined candidates are not scored on a
+  //    different scale from unrefined ones;
+  //  - the as-played wrap on the planned cells (last cell → first against a
+  //    step between cells), which also sees the pacing rounding of the plan.
+  // The final score is re-composed from these with the same weights the
+  // search used, so the order on screen is the order of the seams you see.
+  onProgress(86, 'Đang đo độ lệch điểm nối trên đúng các frame sẽ xuất...');
   for (let c = 0; c < candidates.length; c++) {
     const cand = candidates[c];
-    onProgress(86 + Math.round((c / candidates.length) * 8), `Kiểm tra điểm nối ${c + 1}/${candidates.length}...`);
+    onProgress(86 + Math.round((c / candidates.length) * 8), `Đo điểm nối ${c + 1}/${candidates.length}...`);
+
+    const residualOptions = {
+      startFrame: cand.startFrame,
+      endFrame: cand.endFrame,
+      // Cells sit one output step apart at the candidate's own tempo.
+      stepFrames: (cand.speed / targetFps) / delta,
+      windowRadius: 1,
+      samples: 8,
+      minFrame: 0,
+      maxFrame
+    };
+    await captureFrames(seamResidualFrames(residualOptions));
+    const residual = seamResidual(residualOptions, dist);
+
     const plan = planLoopFrames({
       start: cand.startTime,
       end: cand.endTime,
@@ -510,18 +539,45 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
       duration
     });
     cand.pacing = nativeGrid ? describePacing(plan) : null;
-    if (!plan.frameIndices) continue;
-    await captureFrames(seamJumpFrames(plan.frameIndices, 4));
-    const jump = seamJumpRatio(plan.frameIndices, dist, 4);
+    let jump = null;
+    if (plan.frameIndices) {
+      await captureFrames(seamJumpFrames(plan.frameIndices, 4));
+      jump = seamJumpRatio(plan.frameIndices, dist, 4);
+    }
     cand.seamJump = jump ? { ratio: Math.round(jump.ratio * 100) / 100, verdict: jump.verdict } : null;
-    if (!jump) continue;
 
     // 1 while the wrap reads like any other step, falling to 0 once it is
     // more than ~2.6 steps; a hold (the pose repeats) costs half as much.
-    let played = 1 - (Math.max(0, jump.ratio - 1.15) / 1.5);
-    if (jump.ratio < 0.35) played = 0.5 + (0.5 * (jump.ratio / 0.35));
-    played = Math.max(0, Math.min(1, played));
-    cand.score = Math.round(cand.score * (0.85 + (0.15 * played)) * 10) / 10;
+    let played = null;
+    if (jump) {
+      played = 1 - (Math.max(0, jump.ratio - 1.15) / 1.5);
+      if (jump.ratio < 0.35) played = 0.5 + (0.5 * (jump.ratio / 0.35));
+      played = Math.max(0, Math.min(1, played));
+    }
+
+    if (residual) {
+      const seamQ = seamQualityScore(residual.residual);
+      const seamTerm = played === null ? seamQ : (0.75 * seamQ) + (0.25 * played);
+      const w = LOOP_SCORE_WEIGHTS;
+      const combined = (
+        (w.seam * seamTerm) +
+        (w.period * (cand.periodScore / 100)) +
+        (w.frameFit * (cand.frameFitScore / 100)) +
+        (w.activity * (cand.motionActivityScore / 100))
+      ) / (w.seam + w.period + w.frameFit + w.activity);
+      cand.score = toPercent(combined);
+      cand.visualScore = toPercent(seamQ);
+      cand.seamResidual = Math.round(residual.residual * 100) / 100;
+      cand.seamVerdict = residual.verdict;
+      cand.recommendedCrossfade = recommendCrossfade(residual.residual, cand.calculatedFrames);
+    } else {
+      // Subject barely moves: there is no step to measure against, so keep
+      // the search's score and only let the as-played check weigh in.
+      if (played !== null) cand.score = Math.round(cand.score * (0.85 + (0.15 * played)) * 10) / 10;
+      cand.seamResidual = null;
+      cand.seamVerdict = null;
+      cand.recommendedCrossfade = 0;
+    }
   }
 
   candidates.sort((a, b) => b.score - a.score);
@@ -558,6 +614,9 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
       refined: !!cand.refined,
       seamCost: Number(cand.seamCost.toFixed(4)),
       seamJump: cand.seamJump || null,
+      seamResidual: cand.seamResidual ?? null,
+      seamVerdict: cand.seamVerdict ?? null,
+      recommendedCrossfade: cand.recommendedCrossfade ?? 0,
       pacing: cand.pacing || null,
       startThumb: thumbUrl(startSample.imgData),
       endThumb: thumbUrl(endSample.imgData)
@@ -582,52 +641,43 @@ export async function scanVideoForOptimalLoops(video, options = {}) {
  * the frames that really come before or after the seam, instead of pulling
  * tail cells toward the head of the loop — which played the head twice.
  *
+ * With `morph` on, the two frames are blended at their meeting point along
+ * the estimated displacement (seam-morph.js) instead of dissolved, so a limb
+ * a few pixels off is drawn once, in between, rather than twice at half
+ * opacity. The morph falls back to the plain dissolve on its own whenever the
+ * flow does not explain the difference; with `morph` off the result is the
+ * dissolve, byte for byte as before.
+ *
  * @param {HTMLCanvasElement} target - Cell canvas, modified in place
  * @param {HTMLCanvasElement} twin - Twin frame, same size
  * @param {number} weight - Share of the twin, 0..1
+ * @param {{ morph?: boolean }} [options]
+ * @returns {{ mode: ('morph'|'dissolve'|'none'), gain?: number, meanShift?: number }}
  */
-export function blendLoopTwin(target, twin, weight) {
+export function blendLoopTwin(target, twin, weight, options = {}) {
   const w = Math.max(0, Math.min(1, Number(weight) || 0));
-  if (!target || !twin || w <= 0) return;
+  if (!target || !twin || w <= 0) return { mode: 'none' };
   const width = target.width;
   const height = target.height;
-  if (!width || !height || twin.width !== width || twin.height !== height) return;
+  if (!width || !height || twin.width !== width || twin.height !== height) return { mode: 'none' };
 
   const targetCtx = target.getContext('2d');
   const targetImgData = targetCtx.getImageData(0, 0, width, height);
   const twinImgData = twin.getContext('2d').getImageData(0, 0, width, height);
-  const cellData = targetImgData.data;
-  const twinData = twinImgData.data;
-  const weightCell = 1 - w;
 
-  // Blend in linear light, not in sRGB code values. Averaging two gamma-
-  // encoded numbers lands darker than the light the two frames actually carry,
-  // so a gamma-space crossfade dips in brightness and saturation across the
-  // seam — the frames it touches read as a dull smudge against their
-  // neighbours. Decoding, mixing, then re-encoding keeps the seam at the same
-  // exposure as the rest of the loop.
-  for (let i = 0; i < cellData.length; i += 4) {
-    const wCell = (cellData[i + 3] / 255) * weightCell;
-    const wTwin = (twinData[i + 3] / 255) * w;
-    const alphaOut = wCell + wTwin;
-
-    if (alphaOut > 0.001) {
-      cellData[i] = linearToSrgb8(
-        ((SRGB_TO_LINEAR[cellData[i]] * wCell) + (SRGB_TO_LINEAR[twinData[i]] * wTwin)) / alphaOut
-      );
-      cellData[i + 1] = linearToSrgb8(
-        ((SRGB_TO_LINEAR[cellData[i + 1]] * wCell) + (SRGB_TO_LINEAR[twinData[i + 1]] * wTwin)) / alphaOut
-      );
-      cellData[i + 2] = linearToSrgb8(
-        ((SRGB_TO_LINEAR[cellData[i + 2]] * wCell) + (SRGB_TO_LINEAR[twinData[i + 2]] * wTwin)) / alphaOut
-      );
-      cellData[i + 3] = Math.round(alphaOut * 255);
-    } else {
-      cellData[i + 3] = 0;
-    }
+  // Both paths blend in linear light, not in sRGB code values: averaging two
+  // gamma-encoded numbers lands darker than the light the frames carry, so
+  // the seam would dip in brightness against its neighbours.
+  let result;
+  if (options.morph) {
+    result = morphBlendImageData(targetImgData, twinImgData, w);
+  } else {
+    dissolveImageData(targetImgData, twinImgData, w);
+    result = { mode: 'dissolve' };
   }
 
   targetCtx.putImageData(targetImgData, 0, 0);
+  return result;
 }
 
 /**
@@ -636,24 +686,60 @@ export function blendLoopTwin(target, twin, weight) {
  * against an ordinary step between neighbours. Same yardstick the scanner's
  * seam check uses, so a nudged or hand-made trim gets a comparable verdict.
  *
+ * With `nextFrame` — the frame one loop length after the first cell, i.e. the
+ * frame the wrap stands in for — it also reports the residual the scanner
+ * ranks on: how far that frame is from the first cell, in ordinary steps.
+ *
  * @param {HTMLCanvasElement[]} canvases - The loop's cells, in order
- * @returns {{ ratio:number, seam:number, typical:number, verdict:string }|null}
+ * @param {{ nextFrame?: HTMLCanvasElement }} [options]
+ * @returns {{ ratio:number, seam:number, typical:number, verdict:string,
+ *   residual:(number|null), residualVerdict:(string|null),
+ *   recommendedCrossfade:number }|null}
  */
-export function measureLoopSeam(canvases) {
+export function measureLoopSeam(canvases, options = {}) {
   if (!Array.isArray(canvases) || canvases.length < 3) return null;
-  const descriptors = [];
-  for (const canvas of canvases) {
-    const ctx = canvas?.getContext?.('2d');
-    if (!ctx || !canvas.width || !canvas.height) return null;
-    descriptors.push(buildFrameDescriptor(ctx.getImageData(0, 0, canvas.width, canvas.height), canvas.width, canvas.height));
+  const descriptorOf = (canvas) => {
+    const c2d = canvas?.getContext?.('2d');
+    if (!c2d || !canvas.width || !canvas.height) return null;
+    return buildFrameDescriptor(c2d.getImageData(0, 0, canvas.width, canvas.height), canvas.width, canvas.height);
+  };
+  // Only the cells the check reads are reduced: after Generate these are
+  // full-resolution frames and a long sheet would otherwise be read whole.
+  const indices = canvases.map((_, i) => i);
+  const samples = Math.min(8, canvases.length - 1);
+  const descriptors = new Map();
+  for (const i of [0, ...seamJumpFrames(indices, samples)]) {
+    if (descriptors.has(i)) continue;
+    const d = descriptorOf(canvases[i]);
+    if (!d) return null;
+    descriptors.set(i, d);
   }
-  const ctx = { matte: hasUsableMatte(descriptors), coarse: false };
-  const indices = descriptors.map((_, i) => i);
-  return seamJumpRatio(
+  const ctx = { matte: hasUsableMatte(Array.from(descriptors.values())), coarse: false };
+  const distance = (a, b) => descriptorDistance(a, b, ctx);
+  const jump = seamJumpRatio(
     indices,
-    (a, b) => descriptorDistance(descriptors[a], descriptors[b], ctx),
-    Math.min(8, canvases.length - 1)
+    (a, b) => distance(descriptors.get(a), descriptors.get(b)),
+    samples
   );
+  if (!jump) return null;
+
+  let residual = null;
+  let residualVerdict = null;
+  const next = options.nextFrame
+    && options.nextFrame.width === canvases[0].width
+    && options.nextFrame.height === canvases[0].height
+    ? descriptorOf(options.nextFrame)
+    : null;
+  if (next) {
+    residual = distance(descriptors.get(0), next) / jump.typical;
+    residualVerdict = residual > 0.75 ? 'jump' : (residual > 0.3 ? 'bump' : 'smooth');
+  }
+  return {
+    ...jump,
+    residual,
+    residualVerdict,
+    recommendedCrossfade: recommendCrossfade(residual, canvases.length)
+  };
 }
 
 /**
