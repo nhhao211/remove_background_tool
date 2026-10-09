@@ -61,7 +61,10 @@ def read_message(stream):
 
 
 def write_message(stream, header: dict, payload: bytes = b"") -> None:
-    body = encode_body(header, payload)
-    stream.write(struct.pack("<I", len(body)))
-    stream.write(body)
+    # Written in pieces: joining a 64 MB payload onto its header only copies it.
+    raw = json.dumps(header, separators=(",", ":")).encode("utf-8")
+    stream.write(struct.pack("<II", 4 + len(raw) + len(payload), len(raw)))
+    stream.write(raw)
+    if len(payload):
+        stream.write(payload)
     stream.flush()

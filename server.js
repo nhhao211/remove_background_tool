@@ -405,6 +405,9 @@ app.post('/api/python/matte', express.raw({ type: 'application/octet-stream', li
   if (payload.length !== expected) {
     return res.status(400).json({ error: `Payload ${payload.length} byte, cần ${expected} byte` });
   }
+  // The client gave up (aborted fetch, closed tab): skip it if still queued.
+  const abort = new AbortController();
+  res.on('close', () => { if (!res.writableFinished) abort.abort(); });
   try {
     const result = await pythonWorker.request({
       op: header.op,
@@ -412,10 +415,11 @@ app.post('/api/python/matte', express.raw({ type: 'application/octet-stream', li
       height,
       options: header.options || {},
       matting: header.matting || {}
-    }, payload);
+    }, payload, { signal: abort.signal });
     const { id, ...meta } = result.header;
     res.type('application/octet-stream').send(encodeBody(meta, result.payload));
   } catch (err) {
+    if (err.aborted || res.writableEnded || res.destroyed) return;
     res.status(err.workerError ? 422 : 503).json({ error: err.message, hint: err.workerError ? undefined : PYTHON_HINT });
   }
 });

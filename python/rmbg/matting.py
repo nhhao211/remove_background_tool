@@ -200,13 +200,16 @@ def _box(x, radius):
 # --------------------------------------------------------------------------- #
 
 
-def fill_plate(values, weights):
+def fill_plate(values, weights, at=None):
     """Push-pull interpolation: fill every pixel from nearby pixels where ``weights`` > 0.
 
     ``values`` is HxWxC float32, ``weights`` HxW float32 in 0..1. A pixel with
     weight 1 keeps its own value exactly; a pixel with weight 0 takes the
     Gaussian-weighted mean of the nearest weighted pixels at whichever pyramid
     level first has any. The result is smooth, local, and O(N).
+
+    ``at = (ys, xs)`` returns only those pixels (MxC) and skips building the
+    full-resolution plate, which is most of the memory on a large frame.
     """
     weights = weights.astype(np.float32)
     values = values.astype(np.float32)
@@ -221,17 +224,23 @@ def fill_plate(values, weights):
     den = dens[-1][..., None]
     estimate = np.where(den > EPS, nums[-1] / np.maximum(den, EPS), 0.0).astype(np.float32)
     if not np.any(dens[-1] > EPS):
-        return estimate if len(nums) == 1 else np.zeros_like(values)
+        empty = estimate if len(nums) == 1 else np.zeros_like(values)
+        return empty if at is None else empty[at]
     # Coarsest level: spread its own weighted mean over any empty cells.
     if np.any(dens[-1] <= EPS):
         mean = nums[-1].reshape(-1, nums[-1].shape[-1]).sum(0) / max(float(dens[-1].sum()), EPS)
         estimate = np.where(den > EPS, estimate, mean[None, None, :]).astype(np.float32)
 
+    if at is not None and len(nums) == 1:
+        return estimate[at]
     for level in range(len(nums) - 2, -1, -1):
         h, w = dens[level].shape[:2]
         up = cv2.pyrUp(estimate, dstsize=(w, h))
         if up.ndim == 2:
             up = up[..., None]
+        if level == 0 and at is not None:
+            d = np.clip(dens[0][at], 0.0, 1.0)[:, None]
+            return (nums[0][at] + (1.0 - d) * up[at]).astype(np.float32)
         d = np.clip(dens[level], 0.0, 1.0)[..., None]
         # nums = d * local_mean, so this is d*local + (1-d)*coarser.
         estimate = (nums[level] + (1.0 - d) * up).astype(np.float32)
@@ -364,20 +373,23 @@ def _despill(rgb, key_colors, amount):
 
 
 def _cleanup(alpha, min_island, max_hole):
-    """Drop small opaque specks and fill small enclosed holes. Returns (alpha, filled_mask)."""
+    """Drop small opaque specks and fill small enclosed holes on a uint8 alpha.
+
+    Returns ``(alpha, filled_mask)``. "Solid" is ``alpha >= 128``, i.e. ``>= 0.5``.
+    """
     filled = np.zeros(alpha.shape, dtype=bool)
     if min_island > 0:
-        solid = (alpha >= 0.5).astype(np.uint8)
+        solid = (alpha >= 128).astype(np.uint8)
         n, labels, stats, _ = cv2.connectedComponentsWithStats(solid, connectivity=8)
         small = np.zeros(n, dtype=bool)
         small[1:] = stats[1:, cv2.CC_STAT_AREA] < min_island
         if small.any():
             specks = small[labels]
             # Take the speck's own soft fringe with it, but never eat into a big blob.
-            fringe = _dilate(specks, 1) & ~((~small[labels]) & (labels > 0))
-            alpha = np.where(fringe, 0.0, alpha)
+            fringe = _dilate(specks, 1) & ~((~specks) & (labels > 0))
+            alpha = np.where(fringe, np.uint8(0), alpha)
     if max_hole > 0:
-        clear = (alpha < 0.5).astype(np.uint8)
+        clear = (alpha < 128).astype(np.uint8)
         n, labels, stats, _ = cv2.connectedComponentsWithStats(clear, connectivity=4)
         border = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
         fill = np.zeros(n, dtype=bool)
@@ -386,8 +398,61 @@ def _cleanup(alpha, min_island, max_hole):
         fill[0] = False
         if fill.any():
             filled = fill[labels]
-            alpha = np.where(filled, 1.0, alpha)
+            alpha = np.where(filled, np.uint8(255), alpha)
     return alpha, filled
+
+
+GF_TILE = 128
+
+
+def _guided_filter_where(guide, src, mask, radius, eps, tile=GF_TILE):
+    """``guided_filter_color(guide, src)`` evaluated only on tiles that contain ``mask``.
+
+    The guided filter is float64 and builds a couple of dozen full-size
+    temporaries, which on a whole 4K frame is gigabytes for a strip that covers
+    a few percent of it. A pixel's output depends only on its ``2*radius``
+    neighbourhood, so each run of occupied tiles is filtered with that much
+    context and the result is the same as filtering the whole image (borders
+    of the image still reflect exactly as before). Pixels outside every
+    occupied tile keep ``src``.
+    """
+    h, w = mask.shape
+    out = src.astype(np.float32, copy=True)
+    r = max(1, int(radius))
+    pad = 2 * r + 1
+    ty, tx = -(-h // tile), -(-w // tile)
+    padded = np.zeros((ty * tile, tx * tile), dtype=bool)
+    padded[:h, :w] = mask
+    occupied = padded.reshape(ty, tile, tx, tile).any(axis=(1, 3))
+    for i in range(ty):
+        row = occupied[i]
+        j = 0
+        while j < tx:
+            if not row[j]:
+                j += 1
+                continue
+            start = j
+            while j < tx and row[j]:
+                j += 1
+            # Tiles [start, j) of row i form one strip.
+            y0, y1 = i * tile, min(h, (i + 1) * tile)
+            x0, x1 = start * tile, min(w, j * tile)
+            py0, py1 = max(0, y0 - pad), min(h, y1 + pad)
+            px0, px1 = max(0, x0 - pad), min(w, x1 + pad)
+            filtered = guided_filter_color(guide[py0:py1, px0:px1], src[py0:py1, px0:px1], r, eps)
+            out[y0:y1, x0:x1] = filtered[y0 - py0 : y1 - py0, x0 - px0 : x1 - px0]
+    return out
+
+
+def _erode_nonempty(mask, radius):
+    """Erode by `radius`, halving it while the result would be empty."""
+    r = int(radius)
+    while r > 0:
+        eroded = _erode(mask, r)
+        if eroded.any():
+            return eroded
+        r //= 2
+    return mask.copy()
 
 
 def refine_matte(original_rgba, keyed_rgba, options: MattingOptions):
@@ -395,6 +460,11 @@ def refine_matte(original_rgba, keyed_rgba, options: MattingOptions):
 
     Both are HxWx4 uint8. Returns ``(rgba_uint8, stats)``. Pixels outside the
     unknown strip keep the keyed input exactly (unless a cleanup touched them).
+
+    Only the plates need the whole neighbourhood of the strip; everything else
+    (alpha by projection, guided filter, unmixing, despill) is evaluated on the
+    strip's pixels alone, so cost and memory follow the length of the edges,
+    not the size of the frame.
     """
     original_rgba = np.ascontiguousarray(original_rgba, dtype=np.uint8)
     keyed_rgba = np.ascontiguousarray(keyed_rgba, dtype=np.uint8)
@@ -405,12 +475,15 @@ def refine_matte(original_rgba, keyed_rgba, options: MattingOptions):
     h, w = keyed_rgba.shape[:2]
     stats = {"bandPixels": 0, "changedPixels": 0, "islandPixels": 0, "holePixels": 0, "skipped": None}
 
-    a0 = keyed_rgba[..., 3].astype(np.float32) / 255.0
-    # The source's own alpha caps everything: a transparent source pixel stays transparent.
-    source_alpha = original_rgba[..., 3].astype(np.float32) / 255.0
+    a0 = keyed_rgba[..., 3]
+    # Integer thresholds equal to alpha >= 0.985 and alpha <= 0.015.
     band = options.band
-    sure_fg = _erode(a0 >= 0.985, band)
-    sure_bg = _erode(a0 <= 0.015, band)
+    solid = a0 >= 252
+    clear = a0 <= 3
+    # Thin subjects (small sprites, pixel art) can vanish under a wide
+    # erosion; shrink the erosion per side rather than skip the whole frame.
+    sure_fg = _erode_nonempty(solid, band)
+    sure_bg = _erode_nonempty(clear, band)
     unknown = ~(sure_fg | sure_bg)
 
     if not sure_bg.any():
@@ -420,88 +493,82 @@ def refine_matte(original_rgba, keyed_rgba, options: MattingOptions):
     elif not unknown.any():
         stats["skipped"] = "no-edges"
 
-    alpha = a0.copy()
-    rgb_out = keyed_rgba[..., :3].astype(np.float32) / 255.0
+    alpha = a0.copy()  # uint8, before the source-alpha cap
 
     if stats["skipped"] is None:
         # Work inside the bounding box of the strip, padded so the plates have
         # sure pixels of both kinds to pull from.
-        ys, xs = np.nonzero(unknown)
+        rows = np.flatnonzero(unknown.any(axis=1))
+        cols = np.flatnonzero(unknown.any(axis=0))
         pad = max(48, 6 * band)
-        y0, y1 = max(0, ys.min() - pad), min(h, ys.max() + pad + 1)
-        x0, x1 = max(0, xs.min() - pad), min(w, xs.max() + pad + 1)
-        crop = (slice(y0, y1), slice(x0, x1))
-
-        image = original_rgba[crop][..., :3].astype(np.float32) / 255.0
-        u = unknown[crop]
-        fg_w = sure_fg[crop].astype(np.float32)
-        bg_w = sure_bg[crop].astype(np.float32)
-        if not bg_w.any() or not fg_w.any():
+        y0, y1 = max(0, rows[0] - pad), min(h, rows[-1] + pad + 1)
+        x0, x1 = max(0, cols[0] - pad), min(w, cols[-1] + pad + 1)
+        fg = sure_fg[y0:y1, x0:x1]
+        bg = sure_bg[y0:y1, x0:x1]
+        if not bg.any() or not fg.any():
             # The pad did not reach any sure pixel of one kind; use the whole frame.
             y0, y1, x0, x1 = 0, h, 0, w
-            crop = (slice(0, h), slice(0, w))
-            image = original_rgba[..., :3].astype(np.float32) / 255.0
-            u = unknown
-            fg_w = sure_fg.astype(np.float32)
-            bg_w = sure_bg.astype(np.float32)
+            fg, bg = sure_fg, sure_bg
+        u = unknown[y0:y1, x0:x1]
+        image = original_rgba[y0:y1, x0:x1, :3].astype(np.float32) * np.float32(1 / 255.0)
+        fg_w = fg.astype(np.float32)
 
-        back = fill_plate(image, bg_w)
-        fore = fill_plate(image, fg_w)
+        ys, xs = np.nonzero(u)
+        pix = image[ys, xs]
+        b_pix = fill_plate(image, bg.astype(np.float32), at=(ys, xs))
+        f_pix = fill_plate(image, fg_w, at=(ys, xs))
 
         # Closed-form alpha for one pixel given its local F and B.
-        diff = fore - back
+        diff = f_pix - b_pix
         norm2 = (diff * diff).sum(-1)
-        a_proj = np.clip(((image - back) * diff).sum(-1) / np.maximum(norm2, EPS), 0.0, 1.0)
+        a_proj = np.clip(((pix - b_pix) * diff).sum(-1) / np.maximum(norm2, EPS), 0.0, 1.0)
         # Where F and B are nearly the same colour the projection is noise;
         # lean on the keyer's own decision there.
         confidence = _smoothstep(0.035, 0.12, np.sqrt(norm2))
-        a_coarse = a0[crop]
+        a_coarse = a0[y0 + ys, x0 + xs].astype(np.float32) / 255.0
         a_est = confidence * a_proj + (1.0 - confidence) * a_coarse
 
         # Edge-aware smoothing. Small eps keeps hard edges hard; the slider
         # widens the window and relaxes eps.
-        radius = 1 + int(round(options.smooth * 3))
-        eps = 1e-5 + options.smooth * 4e-3
         if options.smooth > 0:
-            constrained = np.where(fg_w > 0, 1.0, np.where(bg_w > 0, 0.0, a_est)).astype(np.float32)
-            a_gf = np.clip(guided_filter_color(image, constrained, radius, eps), 0.0, 1.0)
-            a_est = np.where(u, a_gf, a_est)
+            radius = 1 + int(round(options.smooth * 3))
+            eps = 1e-5 + options.smooth * 4e-3
+            constrained = fg_w  # sure fg 1, sure bg 0, strip = estimate
+            constrained[ys, xs] = a_est
+            a_gf = _guided_filter_where(image, constrained, u, radius, eps)
+            a_est = np.clip(a_gf[ys, xs], 0.0, 1.0)
+            del constrained, a_gf
 
         # Snap the almost-certain ends so a refined edge does not leave a haze
         # of 1/255 alphas around the subject.
-        a_est = np.where(a_est < 0.02, 0.0, np.where(a_est > 0.985, 1.0, a_est))
-        a_new = np.where(u, a_est, a_coarse)
-        alpha[crop] = a_new
+        a_new = np.where(a_est < 0.02, 0.0, np.where(a_est > 0.985, 1.0, a_est)).astype(np.float32)
 
         if options.decontaminate:
-            safe = np.maximum(a_new, 0.05)[..., None]
-            unmixed = np.clip((image - (1.0 - a_new[..., None]) * back) / safe, 0.0, 1.0)
+            safe = np.maximum(a_new, 0.05)[:, None]
+            unmixed = np.clip((pix - (1.0 - a_new[:, None]) * b_pix) / safe, 0.0, 1.0)
             # Thin alpha cannot carry its own colour reliably; hand those pixels
             # the interior colour instead.
-            trust = _smoothstep(0.05, 0.45, a_new)[..., None]
-            rim = trust * unmixed + (1.0 - trust) * fore
+            trust = _smoothstep(0.05, 0.45, a_new)[:, None]
+            rim = trust * unmixed + (1.0 - trust) * f_pix
         else:
-            rim = image
+            rim = pix
         rim = _despill(rim, options.key_colors, options.spill)
-        region = rgb_out[crop]
-        region[u] = rim[u]
-        rgb_out[crop] = region
-        stats["bandPixels"] = int(u.sum())
+
+        gy, gx = y0 + ys, x0 + xs
+        alpha[gy, gx] = np.clip(np.round(a_new * 255.0), 0, 255).astype(np.uint8)
+        out[gy, gx, :3] = np.clip(np.round(rim * 255.0), 0, 255).astype(np.uint8)
+        stats["bandPixels"] = int(len(ys))
 
     alpha, filled = _cleanup(alpha, options.min_island, options.max_hole)
     if filled.any():
-        source_rgb = original_rgba[..., :3].astype(np.float32) / 255.0
-        rgb_out[filled] = _despill(source_rgb, options.key_colors, options.spill)[filled]
+        source_rgb = original_rgba[..., :3][filled].astype(np.float32) / 255.0
+        out[..., :3][filled] = np.clip(np.round(_despill(source_rgb, options.key_colors, options.spill) * 255.0), 0, 255).astype(np.uint8)
         stats["holePixels"] = int(filled.sum())
     if options.min_island > 0:
-        stats["islandPixels"] = int(((a0 >= 0.5) & (alpha < 0.5)).sum())
+        stats["islandPixels"] = int(((a0 >= 128) & (alpha < 128)).sum())
 
-    alpha = np.minimum(alpha, source_alpha)
-    out[..., 3] = np.clip(np.round(alpha * 255.0), 0, 255).astype(np.uint8)
-    touched = unknown | filled | (alpha != a0)
-    rgb_bytes = np.clip(np.round(rgb_out * 255.0), 0, 255).astype(np.uint8)
-    # Pixels nobody touched are the keyed input, byte for byte.
-    out[..., :3] = np.where(touched[..., None], rgb_bytes, keyed_rgba[..., :3])
+    # The source's own alpha caps everything: a transparent source pixel stays transparent.
+    out[..., 3] = np.minimum(alpha, original_rgba[..., 3])
     stats["changedPixels"] = int(np.any(out != keyed_rgba, axis=-1).sum())
     return out, stats
 

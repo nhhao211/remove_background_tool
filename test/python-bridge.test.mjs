@@ -62,3 +62,31 @@ test('worker answers ping and refines a keyed frame', { skip }, async () => {
     worker.stop();
   }
 });
+
+test('frames split across many small chunks (and several per chunk) are decoded', () => {
+  const worker = new PythonWorker({ log: null });
+  const seen = [];
+  for (const id of [1, 2, 3]) worker.pending.set(id, { timer: null, reject: assert.fail, resolve: (m) => seen.push(m) });
+  const frame = (id, size) => {
+    const body = encodeBody({ id, ok: true }, Buffer.alloc(size, id));
+    const prefix = Buffer.alloc(4);
+    prefix.writeUInt32LE(body.length, 0);
+    return Buffer.concat([prefix, body]);
+  };
+  const stream = Buffer.concat([frame(1, 70000), frame(2, 0), frame(3, 5)]);
+  // 3-byte pieces split even the length prefix.
+  for (let i = 0; i < stream.length; i += 3) worker.onData(stream.subarray(i, i + 3));
+  assert.deepEqual(seen.map((m) => m.header.id), [1, 2, 3]);
+  assert.equal(seen[0].payload.length, 70000);
+  assert.ok(seen[0].payload.every((v) => v === 1));
+  assert.deepEqual([...seen[2].payload], [3, 3, 3, 3, 3]);
+  assert.equal(worker.buffered, 0);
+});
+
+test('an aborted request is dropped before it reaches the worker', async () => {
+  const worker = new PythonWorker({ pythonBin: 'definitely-not-python-xyz', log: null });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(worker.request({ op: 'ping' }, null, { signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(worker.child, null, 'no process was started for it');
+});

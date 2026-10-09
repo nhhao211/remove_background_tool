@@ -18,6 +18,7 @@ from rmbg.matting import (  # noqa: E402
     KeyOptions,
     MattingOptions,
     detect_key_colors,
+    _guided_filter_where,
     fill_plate,
     guided_filter_color,
     parse_color,
@@ -70,6 +71,27 @@ class FilterTest(unittest.TestCase):
         out = guided_filter_color(guide, src, 2, 1e-5)
         self.assertLess(np.abs(out - src).max(), 0.02)
 
+    def test_fill_plate_at_matches_the_full_plate(self):
+        rng = np.random.default_rng(3)
+        values = rng.random((90, 70, 3), dtype=np.float32)
+        weights = (rng.random((90, 70)) > 0.7).astype(np.float32)
+        at = np.nonzero(weights == 0)
+        np.testing.assert_allclose(fill_plate(values, weights, at=at), fill_plate(values, weights)[at], atol=1e-6)
+
+    def test_tiled_guided_filter_matches_the_whole_image(self):
+        rng = np.random.default_rng(4)
+        guide = rng.random((300, 260, 3), dtype=np.float32)
+        src = rng.random((300, 260), dtype=np.float32)
+        mask = np.zeros((300, 260), bool)
+        mask[5:40, 250:258] = True  # touches the image border
+        mask[150:152, 100:230] = True  # spans tiles
+        full = guided_filter_color(guide, src, 3, 1e-4)
+        tiled = _guided_filter_where(guide, src, mask, 3, 1e-4, tile=64)
+        np.testing.assert_allclose(tiled[mask], full[mask], atol=1e-5)
+        far = np.zeros_like(mask)
+        far[260:, :60] = True  # no tile there is occupied
+        np.testing.assert_array_equal(tiled[far], src[far])
+
 
 class RefineTest(unittest.TestCase):
     def setUp(self):
@@ -104,6 +126,25 @@ class RefineTest(unittest.TestCase):
         out, stats = refine_matte(self.rgba, opaque, MattingOptions())
         np.testing.assert_array_equal(out, opaque)
         self.assertEqual(stats["skipped"], "no-background")
+
+    def test_thin_subject_is_refined_not_skipped(self):
+        # A 5 px wide figure disappears under the default 4 px erosion; the
+        # trimap must shrink its erosion instead of reporting no-foreground.
+        h, w = 40, 40
+        rgba = np.zeros((h, w, 4), np.uint8)
+        rgba[...] = (0, 36, 245, 255)
+        rgba[5:35, 18:23, :3] = (200, 120, 60)
+        rgba[5:35, 17, :3] = (100, 78, 152)
+        rgba[5:35, 23, :3] = (100, 78, 152)
+        keyed = rgba.copy()
+        keyed[..., 3] = 0
+        keyed[5:35, 18:23, 3] = 255
+        keyed[5:35, 17, 3] = 255
+        keyed[5:35, 23, 3] = 255
+        out, stats = refine_matte(rgba, keyed, MattingOptions(band=4))
+        self.assertIsNone(stats["skipped"])
+        self.assertGreater(stats["changedPixels"], 0)
+        np.testing.assert_array_equal(out[5:35, 19:22], keyed[5:35, 19:22])
 
     def test_transparent_source_stays_transparent(self):
         source = self.rgba.copy()

@@ -132,6 +132,9 @@ document.addEventListener('DOMContentLoaded', () => {
     jsKeyed: null,
     pythonStats: null,
     pythonRun: 0,
+    // Aborts the request of a superseded run so the server drops it while it
+    // is still queued, instead of refining every intermediate slider value.
+    pythonAbort: null,
     keyed: null,
     // Keyer output after Subject Guard, cached so the guard sliders rerun only
     // the guard and what follows it, never the flood fill.
@@ -651,18 +654,33 @@ document.addEventListener('DOMContentLoaded', () => {
     state.pythonStats = null;
     if (!pythonPanel?.isEnabled() || !jsKeyed || !state.original) return jsKeyed;
     const run = state.pythonRun;
+    state.pythonAbort?.abort();
+    const controller = new AbortController();
+    state.pythonAbort = controller;
     try {
-      const { imageData, stats } = await pythonRefine(state.original, jsKeyed, pythonPanel.refineOptions(state.lastKeyColors));
+      const { imageData, stats } = await pythonRefine(state.original, jsKeyed, pythonPanel.refineOptions(state.lastKeyColors), { signal: controller.signal });
       if (run !== state.pythonRun) return jsKeyed;
       state.pythonStats = stats;
       pythonPanel.setReport(describeRefineStats(stats));
       return imageData;
     } catch (error) {
-      if (run === state.pythonRun) {
+      if (run === state.pythonRun && error.name !== 'AbortError') {
         pythonPanel.setReport(error.hint || error.message, { error: true });
         showToast(`Python matting không chạy, dùng kết quả JS: ${error.message}`, 'error');
       }
       return jsKeyed;
+    }
+  }
+
+  // The Python pass only touches the edge strip, so "nothing happened" is a
+  // real question. Say it out loud instead of leaving it in the panel report.
+  function notifyPythonOutcome({ quietSuccess = false } = {}) {
+    if (!pythonPanel?.isEnabled() || !state.pythonStats) return;
+    const stats = state.pythonStats;
+    if (stats.skipped || !stats.changedPixels) {
+      showToast(`Python không đổi gì: ${describeRefineStats(stats).replace(/^python:\s*/, '')}`, 'info');
+    } else if (!quietSuccess) {
+      showToast(`Python đã tinh chỉnh ${Number(stats.changedPixels).toLocaleString()} px viền (chỉ dải viền, phóng to để thấy).`, 'success');
     }
   }
 
@@ -681,6 +699,7 @@ document.addEventListener('DOMContentLoaded', () => {
     recomposeResult();
     renderPreview();
     resultStatus.textContent = resultStatusText();
+    notifyPythonOutcome({ quietSuccess: true });
   }
 
   /**
@@ -868,6 +887,7 @@ document.addEventListener('DOMContentLoaded', () => {
       state.resultStatusBase = `${result.removedPixels.toLocaleString()} pixels cleaned · edge-connected mask${preserveColors.checked ? ' · RGB preserved' : ''}`;
       resultStatus.textContent = resultStatusText();
       showToast(`Đã làm sạch ${result.removedPixels.toLocaleString()} pixels nền.`, 'success');
+      notifyPythonOutcome();
     } catch (error) {
       resultStatus.textContent = 'Processing failed';
       showToast(error.message || 'Không thể xử lý sprite sheet.', 'error');
@@ -883,6 +903,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function resetResult() {
     if (!state.original) return;
     state.pythonRun += 1;
+    state.pythonAbort?.abort();
     state.jsKeyed = null;
     state.pythonStats = null;
     state.keyed = null;

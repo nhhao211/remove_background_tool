@@ -48,7 +48,8 @@ export class PythonWorker {
     this.timeoutMs = timeoutMs;
     this.log = log;
     this.child = null;
-    this.buffer = Buffer.alloc(0);
+    this.chunks = [];
+    this.buffered = 0;
     this.pending = new Map();
     this.nextId = 1;
     this.stderrTail = '';
@@ -61,7 +62,8 @@ export class PythonWorker {
     if (this.child) return this.child;
     const child = spawn(this.pythonBin, ['-u', this.workerPath], { stdio: ['pipe', 'pipe', 'pipe'] });
     this.child = child;
-    this.buffer = Buffer.alloc(0);
+    this.chunks = [];
+    this.buffered = 0;
     this.stderrTail = '';
 
     child.stdout.on('data', (chunk) => this.onData(chunk));
@@ -89,16 +91,29 @@ export class PythonWorker {
     return child;
   }
 
+  // Chunks are only collected until a whole frame has arrived, then joined
+  // once. Re-joining the growing buffer on every 64 KB chunk copied a 64 MB
+  // 4K response ~1000 times and blocked the event loop for seconds.
+  compactChunks() {
+    if (this.chunks.length > 1) this.chunks = [Buffer.concat(this.chunks, this.buffered)];
+  }
+
   onData(chunk) {
-    this.buffer = this.buffer.length ? Buffer.concat([this.buffer, chunk]) : chunk;
-    while (this.buffer.length >= 4) {
-      const size = this.buffer.readUInt32LE(0);
-      if (this.buffer.length < 4 + size) return;
-      const body = this.buffer.subarray(4, 4 + size);
-      this.buffer = this.buffer.subarray(4 + size);
+    this.chunks.push(chunk);
+    this.buffered += chunk.length;
+    while (this.buffered >= 4) {
+      if (this.chunks[0].length < 4) this.compactChunks();
+      const size = this.chunks[0].readUInt32LE(0);
+      if (this.buffered < 4 + size) return;
+      this.compactChunks();
+      const frame = this.chunks[0];
+      const body = frame.subarray(4, 4 + size);
+      const rest = frame.subarray(4 + size);
+      this.chunks = rest.length ? [rest] : [];
+      this.buffered = rest.length;
       let message;
       try {
-        message = decodeBody(Buffer.from(body));
+        message = decodeBody(body);
       } catch (error) {
         this.log?.error?.('[python] malformed frame', error);
         this.stop();
@@ -112,9 +127,20 @@ export class PythonWorker {
     }
   }
 
-  /** Sends one request; resolves to `{ header, payload }`. Rejects on `ok: false`. */
-  request(header, payload = null) {
+  /**
+   * Sends one request; resolves to `{ header, payload }`. Rejects on `ok: false`.
+   *
+   * `signal` drops a request that is still waiting for its turn (the browser
+   * moved a slider again, or the tab went away), so superseded frames never
+   * reach Python. A request already in Python runs to the end: the stream
+   * has no way to interrupt it and its answer keeps the frames in step.
+   */
+  request(header, payload = null, { signal } = {}) {
     const run = () => new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(Object.assign(new Error('Request đã bị huỷ'), { name: 'AbortError', aborted: true }));
+        return;
+      }
       const child = this.start();
       const id = this.nextId++;
       const body = encodeBody({ ...header, id }, payload);
