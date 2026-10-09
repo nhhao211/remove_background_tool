@@ -870,6 +870,19 @@
                   </select>
                 </div>
 
+                <!-- One-click bundle of edge / grade values. Off whenever a video is
+                     loaded; the values live in the Settings dialog. -->
+                <div class="quick-preset-row">
+                  <label class="checkbox-row" title="Áp nhanh bộ thông số đã đặt trong Settings. Bỏ chọn để trả về giá trị trước đó.">
+                    <input type="checkbox" id="chkQuickPreset">
+                    <span>Preset nhanh</span>
+                  </label>
+                  <span id="quickPresetSummary" class="hint quick-preset-summary"></span>
+                  <button id="btnQuickPresetSettings" class="time-btn quick-preset-gear" type="button" title="Tuỳ chỉnh các thông số của preset trong Settings" aria-label="Tuỳ chỉnh preset nhanh">
+                    <i data-lucide="sliders-horizontal" style="width: 12px; height: 12px;"></i>
+                  </button>
+                </div>
+
                 <!-- Quality only exists for WebP; PNG is lossless by definition.
                      100 is a cliff, not the top of a ramp: the canvas encoder
                      switches to lossless VP8L at exactly 1.0, which is why it
@@ -2340,6 +2353,23 @@
           khung bị ẩn vẫn giữ nguyên giá trị đang đặt và pipeline xuất ra <em>không đổi một byte nào</em>.
           Một khung đang bật công cụ (Bút Xóa, Protect Brush, Pick màu) sẽ được tắt công cụ trước khi ẩn.
         </p>
+
+        <section id="quickPresetSettings" class="quick-preset-settings" aria-labelledby="quickPresetSettingsTitle">
+          <div class="quick-preset-settings-head">
+            <div>
+              <div id="quickPresetSettingsTitle" class="quick-preset-settings-title">Preset nhanh</div>
+              <p class="panel-settings-help quick-preset-settings-help">
+                Giá trị mà ô <strong>Preset nhanh</strong> (trong khung <em>Định dạng xuất</em>) sẽ đặt khi được chọn.
+                Bỏ chọn thì các thanh trượt trở về giá trị trước khi chọn. Đây là cài đặt của máy, không nằm trong từng clip.
+              </p>
+            </div>
+            <button id="btnQuickPresetReset" class="time-btn" type="button" title="Đưa các giá trị về mặc định ban đầu">
+              <i data-lucide="rotate-ccw" style="width: 12px; height: 12px;"></i>
+              <span>Mặc định</span>
+            </button>
+          </div>
+          <div id="quickPresetSettingsFields" class="quick-preset-settings-fields"></div>
+        </section>
 
         <div class="panel-settings-toolbar">
           <input type="search" id="panelSettingsSearch" class="form-input panel-settings-search" placeholder="Tìm khung chức năng…" aria-label="Tìm khung chức năng">

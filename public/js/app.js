@@ -28,6 +28,14 @@ import { applySubjectGuard, luminanceWeightFor, SUBJECT_GUARD_DEFAULTS } from '.
 import { applyAlphaBleed } from './alpha-bleed.js';
 import { applyColorGrade, isColorGradeIdentity, COLOR_GRADE_DEFAULTS } from './color-grade.js';
 import { applySharpen, isSharpenIdentity, SHARPEN_DEFAULTS } from './sharpen.js';
+import {
+  QUICK_PRESET_STORAGE_KEY,
+  QUICK_PRESET_FIELDS,
+  QUICK_PRESET_DEFAULTS,
+  normalizeQuickPreset,
+  parseQuickPreset,
+  serializeQuickPreset
+} from './quick-preset.js';
 import { encodePNG, canEncodePNG } from './png-encoder.js';
 import { detectSubjectBounds, calculateGuidelineShift, alignFrameCanvas, drawSubImageSafe } from './subject-alignment.js';
 import {
@@ -368,6 +376,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnOpenPanelSettings = document.getElementById('btnOpenPanelSettings');
   const btnClosePanelSettings = document.getElementById('btnClosePanelSettings');
   const panelSettingsList = document.getElementById('panelSettingsList');
+  const chkQuickPreset = document.getElementById('chkQuickPreset');
+  const quickPresetSummary = document.getElementById('quickPresetSummary');
+  const btnQuickPresetSettings = document.getElementById('btnQuickPresetSettings');
+  const quickPresetSettings = document.getElementById('quickPresetSettings');
+  const quickPresetSettingsFields = document.getElementById('quickPresetSettingsFields');
+  const btnQuickPresetReset = document.getElementById('btnQuickPresetReset');
   const panelSettingsSearch = document.getElementById('panelSettingsSearch');
   const panelSettingsCount = document.getElementById('panelSettingsCount');
   const panelSettingsBadge = document.getElementById('panelSettingsBadge');
@@ -455,7 +469,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'btnPickColor',
       'manualColorInput', 'btnAddManualColor', 'btnClearKeyColors',
       'inputColorHex', 'inputColorRgb', 'btnApplyColorValue', 'btnCopyColor', 'btnPasteColor',
-      'chkTransparentFormat', 'selectFormat', 'sliderWebpQuality', 'numWebpQuality',
+      'chkTransparentFormat', 'selectFormat', 'chkQuickPreset', 'btnQuickPresetSettings', 'sliderWebpQuality', 'numWebpQuality',
       'btnRegionPick', 'btnRegionPickColor', 'btnRegionDrawNew',
       'sliderRegionTolerance', 'numRegionTolerance', 'sliderRegionSoftness', 'numRegionSoftness', 'sliderRegionDespill', 'numRegionDespill',
       'chkRegionConnected', 'btnRegionScopeFrame', 'btnRegionScopeAll',
@@ -1814,6 +1828,9 @@ document.addEventListener('DOMContentLoaded', () => {
     numSharpenRadius.value = sliderSharpenRadius.value;
     numSharpenThreshold.value = parseFloat(sliderSharpenThreshold.value).toFixed(2);
     updateColorGradeStatus();
+    // The quick preset is never on for a freshly loaded video, whatever values
+    // the clip came back with: the checkbox is a one-shot action, not clip state.
+    resetQuickPresetToggle();
 
     sliderWebpQuality.value = String(Math.round(U.clampNumber(saved?.webpQuality, WEBP_QUALITY_MIN, 100, WEBP_QUALITY_DEFAULT)));
     numWebpQuality.value = sliderWebpQuality.value;
@@ -5391,6 +5408,185 @@ document.addEventListener('DOMContentLoaded', () => {
     saveClipStateDebounced();
     showToast('Color & Detail reset', 'info');
   });
+
+  // === QUICK PRESET ===
+  // One checkbox that drops a fixed set of edge / grade values onto the sliders
+  // and puts them back when unticked. It only moves the same controls the user
+  // could drag by hand, so the pipeline needs to know nothing about it.
+  const QUICK_PRESET_TARGETS = {
+    blend: { slider: sliderBlend, number: numBlend },
+    spill: { slider: sliderSpill, number: numSpill },
+    edgeCleanup: { slider: sliderEdgeCleanup, number: numEdgeCleanup },
+    chromaSmooth: { slider: sliderChromaSmooth, number: numChromaSmooth },
+    vibrance: { slider: sliderGradeVibrance, number: numGradeVibrance },
+    saturation: { slider: sliderGradeSaturation, number: numGradeSaturation },
+    temperature: { slider: sliderGradeTemperature, number: numGradeTemperature },
+    sharpenAmount: { slider: sliderSharpenAmount, number: numSharpenAmount }
+  };
+  const quickPresetInputs = {};
+  let quickPreset = loadQuickPreset();
+  // What was on the sliders before the box was ticked, and what the preset put
+  // there. Unticking only restores a slider still holding the preset's value, so
+  // a tweak made while the preset was on is not thrown away.
+  let quickPresetSnapshot = null;
+
+  function loadQuickPreset() {
+    try {
+      return parseQuickPreset(localStorage.getItem(QUICK_PRESET_STORAGE_KEY));
+    } catch (_) {
+      return normalizeQuickPreset(null);
+    }
+  }
+
+  function saveQuickPreset() {
+    try {
+      localStorage.setItem(QUICK_PRESET_STORAGE_KEY, serializeQuickPreset(quickPreset));
+    } catch (_) { /* storage is optional */ }
+  }
+
+  function formatPresetValue(field, value) {
+    return field.decimals === 0 ? String(Math.round(value)) : Number(value).toFixed(field.decimals);
+  }
+
+  function setPresetControl(field, value) {
+    const target = QUICK_PRESET_TARGETS[field.key];
+    target.slider.value = String(value);
+    target.number.value = formatPresetValue(field, value);
+  }
+
+  function refreshQuickPresetDependents() {
+    updateChromaSliderLabels();
+    updateColorGradeStatus();
+    saveClipStateDebounced();
+  }
+
+  function updateQuickPresetSummary() {
+    if (!quickPresetSummary) return;
+    const full = QUICK_PRESET_FIELDS.map((field) => `${field.label} ${formatPresetValue(field, quickPreset[field.key])}`).join(' · ');
+    quickPresetSummary.textContent = QUICK_PRESET_FIELDS
+      .map((field) => formatPresetValue(field, quickPreset[field.key]))
+      .join(' · ');
+    quickPresetSummary.title = full;
+    chkQuickPreset.title = `${full}\nBỏ chọn để trả về giá trị trước đó.`;
+  }
+
+  function applyQuickPreset() {
+    for (const field of QUICK_PRESET_FIELDS) setPresetControl(field, quickPreset[field.key]);
+    // The grade sliders do nothing while the section is off, and smoothing is
+    // gated by its own checkbox, so both have to be on for the values to count.
+    chkChromaSmooth.checked = true;
+    chkEnableColorGrade.checked = true;
+    refreshQuickPresetDependents();
+  }
+
+  function readQuickPresetSnapshot() {
+    const values = {};
+    for (const field of QUICK_PRESET_FIELDS) {
+      values[field.key] = parseFloat(QUICK_PRESET_TARGETS[field.key].slider.value);
+    }
+    return {
+      values,
+      chromaSmoothEnabled: chkChromaSmooth.checked,
+      gradeEnabled: chkEnableColorGrade.checked
+    };
+  }
+
+  function revertQuickPreset() {
+    const snapshot = quickPresetSnapshot;
+    quickPresetSnapshot = null;
+    if (!snapshot) return;
+    for (const field of QUICK_PRESET_FIELDS) {
+      const current = parseFloat(QUICK_PRESET_TARGETS[field.key].slider.value);
+      if (Math.abs(current - quickPreset[field.key]) < 1e-6) {
+        setPresetControl(field, snapshot.values[field.key]);
+      }
+    }
+    chkChromaSmooth.checked = snapshot.chromaSmoothEnabled;
+    // Leave the grade on when a value the user still wants needs it.
+    chkEnableColorGrade.checked = snapshot.gradeEnabled || !isColorGradeIdentityFromUI();
+    refreshQuickPresetDependents();
+  }
+
+  function resetQuickPresetToggle() {
+    quickPresetSnapshot = null;
+    if (chkQuickPreset) chkQuickPreset.checked = false;
+  }
+
+  chkQuickPreset?.addEventListener('change', () => {
+    if (chkQuickPreset.checked) {
+      quickPresetSnapshot = readQuickPresetSnapshot();
+      applyQuickPreset();
+      showToast('Đã áp preset nhanh', 'success');
+    } else {
+      revertQuickPreset();
+      showToast('Đã trả về giá trị trước preset', 'info');
+    }
+  });
+
+  function renderQuickPresetSettings() {
+    if (!quickPresetSettingsFields) return;
+    quickPresetSettingsFields.innerHTML = '';
+    for (const field of QUICK_PRESET_FIELDS) {
+      const row = document.createElement('label');
+      row.className = 'quick-preset-field';
+
+      const text = document.createElement('span');
+      text.className = 'quick-preset-field-text';
+      const name = document.createElement('span');
+      name.textContent = field.label;
+      const hint = document.createElement('span');
+      hint.className = 'quick-preset-field-hint';
+      hint.textContent = field.hint;
+      text.appendChild(name);
+      text.appendChild(hint);
+
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'form-input slider-number-input';
+      input.min = String(field.min);
+      input.max = String(field.max);
+      input.step = String(field.step);
+      input.value = formatPresetValue(field, quickPreset[field.key]);
+      input.setAttribute('aria-label', `Preset nhanh: ${field.label}`);
+      input.addEventListener('change', () => {
+        quickPreset = normalizeQuickPreset({ ...quickPreset, [field.key]: input.value });
+        input.value = formatPresetValue(field, quickPreset[field.key]);
+        commitQuickPreset();
+      });
+      quickPresetInputs[field.key] = input;
+
+      row.appendChild(text);
+      row.appendChild(input);
+      quickPresetSettingsFields.appendChild(row);
+    }
+  }
+
+  function commitQuickPreset() {
+    saveQuickPreset();
+    updateQuickPresetSummary();
+    // Editing the preset while it is ticked re-applies it, so the sliders
+    // follow what the Settings dialog says without untick/tick.
+    if (chkQuickPreset?.checked) applyQuickPreset();
+  }
+
+  btnQuickPresetReset?.addEventListener('click', () => {
+    quickPreset = normalizeQuickPreset(QUICK_PRESET_DEFAULTS);
+    for (const field of QUICK_PRESET_FIELDS) {
+      if (quickPresetInputs[field.key]) quickPresetInputs[field.key].value = formatPresetValue(field, quickPreset[field.key]);
+    }
+    commitQuickPreset();
+    showToast('Preset nhanh về mặc định', 'info');
+  });
+
+  btnQuickPresetSettings?.addEventListener('click', () => {
+    openPanelSettings();
+    quickPresetSettings?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    quickPresetSettings?.classList.add('is-flash');
+    setTimeout(() => quickPresetSettings?.classList.remove('is-flash'), 1200);
+  });
+
+  renderQuickPresetSettings();
+  updateQuickPresetSummary();
 
   function setColorReplaceSource(hex, { enable = true } = {}) {
     const color = U.normalizeColor(hex);
