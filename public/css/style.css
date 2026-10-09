@@ -6280,3 +6280,56 @@ body.viewport-resizing {
   width: 76px;
   flex: none;
 }
+
+/* Subject Protect Brush (Clean Sprite Sheet). Same contract as the region
+   overlay: a sibling of .cleaner-canvas carrying its transform, inert until the
+   tool is armed. */
+.cleaner-protect-overlay {
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.cleaner-protect-overlay.active {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.cleaner-protect-banner {
+  border-color: rgba(74, 222, 128, 0.6);
+  color: #bbf7d0;
+}
+
+.cleaner-pick-button.protect.active,
+.cleaner-pick-button.protect:not(:disabled):hover {
+  border-color: rgba(74, 222, 128, 0.75);
+  color: #bbf7d0;
+}
+
+.cleaner-protect-controls {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.cleaner-protect-controls[hidden] {
+  display: none;
+}
+
+.cleaner-protect-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.cleaner-protect-row .time-btn.active {
+  border-color: rgba(74, 222, 128, 0.75);
+  color: #bbf7d0;
+}
+
+.cleaner-protect-label {
+  color: #94a3b8;
+  font-size: 0.74rem;
+}

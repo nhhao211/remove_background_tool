@@ -1573,6 +1573,53 @@
         </div>
       </div>
 
+      <div id="spriteProtectSection" class="cleaner-control-section cleaner-sliders" data-section-key="subject-protect">
+        <div class="cleaner-section-title"><span>Bút bảo vệ chủ thể</span><span id="spriteProtectCount">0 nét</span></div>
+        <button id="btnSpriteProtectToggle" class="eyedropper-trigger-btn cleaner-pick-button protect" type="button" disabled>
+          <i data-lucide="brush" style="width: 14px; height: 14px;"></i>
+          <span>Tô vùng cần bảo vệ</span>
+        </button>
+        <div id="spriteProtectControls" class="cleaner-protect-controls" hidden>
+          <div class="cleaner-protect-row" role="group" aria-label="Protect brush tool">
+            <button id="btnSpriteProtectAdd" class="time-btn active" type="button" title="Tô để trả lại màu và độ đặc gốc (giữ Alt = đảo sang Tẩy)">Bảo vệ</button>
+            <button id="btnSpriteProtectSub" class="time-btn" type="button" title="Tẩy nét bảo vệ đã tô (giữ Alt = đảo sang Bảo vệ)">Tẩy nét</button>
+          </div>
+          <div class="cleaner-protect-row" role="group" aria-label="Protect brush scope">
+            <span class="cleaner-protect-label">Áp dụng:</span>
+            <button id="btnSpriteProtectScopeFrame" class="time-btn active" type="button" title="Chỉ frame (ô) nơi bắt đầu tô. Giữ Shift lúc bắt đầu nét để đảo phạm vi">1 frame</button>
+            <button id="btnSpriteProtectScopeAll" class="time-btn" type="button" title="Lặp nét ở cùng vị trí tương đối trong mọi ô của Sprite grid. Giữ Shift lúc bắt đầu nét để đảo phạm vi">Mọi frame</button>
+          </div>
+          <p id="spriteProtectScopeHint" class="cleaner-region-hint" hidden>Cần bật "Sprite grid" và đặt Rows × Cols để "Mọi frame" có nhiều ô.</p>
+
+          <label class="form-label" for="spriteProtectSize"><span>Size (px)</span></label>
+          <div class="slider-group">
+            <input id="spriteProtectSize" type="range" min="2" max="400" step="1" value="28">
+            <input id="numSpriteProtectSize" class="form-input slider-number-input" type="number" min="2" max="400" step="1" value="28" aria-label="Protect brush size in sheet pixels">
+          </div>
+          <label class="form-label" for="spriteProtectStrength" title="Mức trả lại màu/độ đặc gốc: 1 = trả lại hoàn toàn"><span>Strength</span></label>
+          <div class="slider-group">
+            <input id="spriteProtectStrength" type="range" min="0.05" max="1" step="0.01" value="1">
+            <input id="numSpriteProtectStrength" class="form-input slider-number-input" type="number" min="0.05" max="1" step="0.01" value="1" aria-label="Protect brush strength">
+          </div>
+          <label class="form-label" for="spriteProtectHardness" title="1 = mép cứng, 0 = mép mềm"><span>Hardness</span></label>
+          <div class="slider-group">
+            <input id="spriteProtectHardness" type="range" min="0" max="1" step="0.01" value="0.8">
+            <input id="numSpriteProtectHardness" class="form-input slider-number-input" type="number" min="0" max="1" step="0.01" value="0.8" aria-label="Protect brush hardness">
+          </div>
+
+          <div class="cleaner-protect-row">
+            <button id="btnSpriteProtectUndo" class="time-btn" type="button" disabled>Undo</button>
+            <button id="btnSpriteProtectRedo" class="time-btn" type="button" disabled>Redo</button>
+            <button id="btnSpriteProtectClear" class="time-btn color-clear-btn" type="button" disabled>Clear</button>
+          </div>
+          <label class="checkbox-row">
+            <input id="spriteProtectShowMask" type="checkbox" checked>
+            <span>Hiện lớp tô (không ảnh hưởng kết quả xuất)</span>
+          </label>
+          <p class="cleaner-region-hint">Tô lên phần chủ thể bị mất màu hoặc bị khoét. Chỉ pixel xa màu nền mới được trả lại — tô lẹm ra nền sẽ không kéo nền về. Chạy sau Edge Refine. <kbd>[</kbd> <kbd>]</kbd> đổi size · <kbd>Alt</kbd> đảo Bảo vệ/Tẩy · <kbd>Esc</kbd> thoát.</p>
+        </div>
+      </div>
+
       <div id="spritePythonSection" class="cleaner-control-section" data-section-key="python-matting">
         <div class="cleaner-section-title"><span>Python Matting</span></div>
         <div id="spritePythonMount"></div>
@@ -1682,6 +1729,8 @@
           <div id="spriteOriginalStage" class="cleaner-canvas-stage checkerboard-bg">
             <canvas id="spriteOriginalCanvas" class="cleaner-canvas"></canvas>
             <canvas id="spriteRegionOverlayOriginal" class="cleaner-canvas cleaner-region-overlay"></canvas>
+            <canvas id="spriteProtectOverlayOriginal" class="cleaner-canvas cleaner-protect-overlay"></canvas>
+            <div id="spriteProtectBanner" class="cleaner-pick-banner cleaner-protect-banner"><i data-lucide="brush" style="width: 15px; height: 15px;"></i><span id="spriteProtectBannerText">Tô để bảo vệ</span></div>
             <div id="spriteRegionBanner" class="cleaner-pick-banner cleaner-region-banner"><i data-lucide="circle-dashed" style="width: 15px; height: 15px;"></i><span id="spriteRegionBannerText">Kéo để vẽ vùng tròn</span></div>
             <div id="spritePickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i><span id="spritePickBannerText">Click chọn màu hoặc dùng phím Mũi tên (↑ ↓ ← →) · Enter chọn · Esc thoát</span></div>
             <div id="spriteLowerHalfGuide" class="cleaner-lower-half-guide">
@@ -1710,6 +1759,8 @@
           <div id="spriteResultStage" class="cleaner-canvas-stage checkerboard-bg">
             <canvas id="spriteResultCanvas" class="cleaner-canvas"></canvas>
             <canvas id="spriteRegionOverlayResult" class="cleaner-canvas cleaner-region-overlay"></canvas>
+            <canvas id="spriteProtectOverlayResult" class="cleaner-canvas cleaner-protect-overlay"></canvas>
+            <div id="spriteProtectBannerResult" class="cleaner-pick-banner cleaner-protect-banner"><i data-lucide="brush" style="width: 15px; height: 15px;"></i><span id="spriteProtectBannerResultText">Tô để bảo vệ</span></div>
             <div id="spriteRegionBannerResult" class="cleaner-pick-banner cleaner-region-banner"><i data-lucide="circle-dashed" style="width: 15px; height: 15px;"></i><span id="spriteRegionBannerResultText">Kéo để vẽ vùng tròn</span></div>
             <div id="spriteResultPickBanner" class="cleaner-pick-banner"><i data-lucide="crosshair" style="width: 15px; height: 15px;"></i><span>Pick trên Result · chỉ xoá ở viền · Shift+Click = mọi nơi · Esc thoát</span></div>
             <div class="cleaner-empty-state"><i data-lucide="scan-line" style="width: 38px; height: 38px;"></i><span>Cleaned result</span></div>

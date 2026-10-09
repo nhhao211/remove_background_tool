@@ -94,13 +94,15 @@ function createBrushStamp(radius, hardness, strength, color, canvasFactory) {
 }
 
 /**
- * Rasterizes `strokes` (normalized 0..1 source coordinates) into `targetWidth`
- * x `targetHeight`, mapping through the crop window so a mask painted on the
- * full video lands correctly inside a cropped sprite cell.
+ * Stamps `strokes` onto an existing 2D context, mapping normalized source
+ * coordinates through the crop window into `targetWidth` x `targetHeight`.
+ * Nothing is read back, so a caller that only wants to *show* a mask (an
+ * overlay repainted on every pointer move) never pays for `getImageData`.
  *
- * @returns {{ canvas: HTMLCanvasElement, mask: Uint8ClampedArray }}
+ * `color` is a template with an `{alpha}` placeholder; `subtract` strokes use
+ * `destination-out`, so they rub out whatever the context already holds.
  */
-function rasterizeStrokeMask(strokes, options = {}) {
+function paintStrokes(ctx, strokes, options = {}) {
   const targetWidth = Math.max(1, Math.round(Number(options.targetWidth) || 1));
   const targetHeight = Math.max(1, Math.round(Number(options.targetHeight) || 1));
   const sourceWidth = Math.max(1, Number(options.sourceWidth) || targetWidth);
@@ -110,11 +112,6 @@ function rasterizeStrokeMask(strokes, options = {}) {
   const cropWidth = Math.max(1, Number(options.cropWidth) || sourceWidth);
   const cropHeight = Math.max(1, Number(options.cropHeight) || sourceHeight);
   const canvasFactory = options.canvasFactory || (() => document.createElement('canvas'));
-  const canvas = options.canvas || canvasFactory();
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.clearRect(0, 0, targetWidth, targetHeight);
 
   const normalized = normalizeStrokes(strokes);
   const scaleX = targetWidth / cropWidth;
@@ -152,6 +149,26 @@ function rasterizeStrokeMask(strokes, options = {}) {
     }
   }
   ctx.globalCompositeOperation = 'source-over';
+}
+
+/**
+ * Rasterizes `strokes` (normalized 0..1 source coordinates) into `targetWidth`
+ * x `targetHeight`, mapping through the crop window so a mask painted on the
+ * full video lands correctly inside a cropped sprite cell.
+ *
+ * @returns {{ canvas: HTMLCanvasElement, mask: Uint8ClampedArray }}
+ */
+function rasterizeStrokeMask(strokes, options = {}) {
+  const targetWidth = Math.max(1, Math.round(Number(options.targetWidth) || 1));
+  const targetHeight = Math.max(1, Math.round(Number(options.targetHeight) || 1));
+  const canvasFactory = options.canvasFactory || (() => document.createElement('canvas'));
+  const canvas = options.canvas || canvasFactory();
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.clearRect(0, 0, targetWidth, targetHeight);
+
+  paintStrokes(ctx, strokes, { ...options, canvasFactory });
 
   const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
   const mask = new Uint8ClampedArray(targetWidth * targetHeight);
@@ -161,4 +178,4 @@ function rasterizeStrokeMask(strokes, options = {}) {
   return { canvas, mask };
 }
 
-export { normalizeStroke, normalizeStrokes, rasterizeStrokeMask };
+export { normalizeStroke, normalizeStrokes, paintStrokes, rasterizeStrokeMask };

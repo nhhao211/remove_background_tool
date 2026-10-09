@@ -9,6 +9,10 @@ import {
   applyRegionAcrossCells, baseRegionId, cellIndexAt, cellRects, cellShift, CELL_ID_SEP,
   clampCentreToCell, homeCellIndex, regionCopyForCell, replicateRegion
 } from './region-cells.js';
+import { paintStrokes } from './stroke-mask.js';
+import {
+  applySubjectProtect, buildProtectionMask, normalizeProtectStroke, planProtectionWindows, protectionThresholdFor
+} from './subject-protect.js';
 import { initCollapsibleSections } from './sidebar-sections.js';
 import { mountPythonMattingPanel, pythonRefine, describeRefineStats } from './python-engine.js';
 
@@ -122,6 +126,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const regionBannerText = byId('spriteRegionBannerText');
   const regionBannerResult = byId('spriteRegionBannerResult');
   const regionBannerResultText = byId('spriteRegionBannerResultText');
+  const protectSection = byId('spriteProtectSection');
+  const protectCount = byId('spriteProtectCount');
+  const btnProtectToggle = byId('btnSpriteProtectToggle');
+  const protectControls = byId('spriteProtectControls');
+  const btnProtectAdd = byId('btnSpriteProtectAdd');
+  const btnProtectSub = byId('btnSpriteProtectSub');
+  const btnProtectScopeFrame = byId('btnSpriteProtectScopeFrame');
+  const btnProtectScopeAll = byId('btnSpriteProtectScopeAll');
+  const protectScopeHint = byId('spriteProtectScopeHint');
+  const protectSize = byId('spriteProtectSize');
+  const protectStrength = byId('spriteProtectStrength');
+  const protectHardness = byId('spriteProtectHardness');
+  const btnProtectUndo = byId('btnSpriteProtectUndo');
+  const btnProtectRedo = byId('btnSpriteProtectRedo');
+  const btnProtectClear = byId('btnSpriteProtectClear');
+  const protectShowMask = byId('spriteProtectShowMask');
+  const protectOverlayOriginal = byId('spriteProtectOverlayOriginal');
+  const protectOverlayResult = byId('spriteProtectOverlayResult');
+  const protectBanner = byId('spriteProtectBanner');
+  const protectBannerText = byId('spriteProtectBannerText');
+  const protectBannerResult = byId('spriteProtectBannerResult');
+  const protectBannerResultText = byId('spriteProtectBannerResultText');
   // A Result pick removes its colour only this many px from removed background.
   const EDGE_REACH = 2;
 
@@ -163,6 +189,20 @@ document.addEventListener('DOMContentLoaded', () => {
     pickSurface: 'original',
     pickShift: false,
     hoverPick: null,
+    // Subject Protect Brush. Arrays are replaced, never mutated, so an undo
+    // snapshot is just a reference.
+    protectStrokes: [],
+    protectUndo: [],
+    protectRedo: [],
+    protectRevision: 0,
+    protectMaskCache: null,
+    protectStats: null,
+    protectTimer: null,
+    protectMode: false,
+    protectTool: 'add',
+    protectScope: 'frame',
+    protectDraft: null,
+    protectHover: null,
     colorRegions: [],
     selectedRegionId: null,
     regionMode: 'off',
@@ -492,7 +532,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function setControlsEnabled(enabled) {
-    [btnAuto, btnApply, btnReset, btnPick, btnPickLower, btnRegionPick, adjustSplit, btnAddColor, btnDownload, btnSendToTransform, btnZoomOut, btnZoomIn, btnZoomFit, btnPreviewMode, previewFps]
+    [btnAuto, btnApply, btnReset, btnPick, btnPickLower, btnRegionPick, btnProtectToggle, adjustSplit, btnAddColor, btnDownload, btnSendToTransform, btnZoomOut, btnZoomIn, btnZoomFit, btnPreviewMode, previewFps]
       .filter(Boolean)
       .forEach((button) => { button.disabled = !enabled; });
     btnPreviewPlay.disabled = !enabled || state.previewMode !== 'anim' || !perCell.checked;
@@ -556,6 +596,7 @@ document.addEventListener('DOMContentLoaded', () => {
       state.result = cloneImageData(state.original);
       state.fileName = fileName || 'sprite_sheet.png';
       clearRegions();
+      clearProtectStrokes();
       state.manualColors = [];
       state.seedPoints = [];
       state.detectedColors = [];
@@ -818,7 +859,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function recomposeResult() {
     if (!state.original) return;
-    state.result = applyRegions(state.refined || state.original);
+    state.result = applyRegions(applyProtect(state.refined || state.original));
   }
 
   // Dragging a region slider reruns only the region pass over the cached
@@ -841,8 +882,12 @@ document.addEventListener('DOMContentLoaded', () => {
       : python;
     const stats = state.edgeRefineStats;
     const base = stats ? `${guarded} · edge refined (${stats.band.toLocaleString()} px)` : guarded;
+    const protect = state.protectStats;
+    const protectedText = protect?.changedPixels
+      ? `${base} · bút bảo vệ trả lại ${protect.changedPixels.toLocaleString()} px`
+      : base;
     const region = state.regionStats;
-    return region ? `${base} · ${region.count} vùng (${region.removedPixels.toLocaleString()} px)` : base;
+    return region ? `${protectedText} · ${region.count} vùng (${region.removedPixels.toLocaleString()} px)` : protectedText;
   }
 
   async function runProcessing({ autoDetect = state.autoEnabled } = {}) {
@@ -913,6 +958,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.edgeRefineStats = null;
     state.result = cloneImageData(state.original);
     clearRegions();
+    clearProtectStrokes();
     state.manualColors = [];
     state.seedPoints = [];
     state.detectedColors = [];
@@ -922,6 +968,7 @@ document.addEventListener('DOMContentLoaded', () => {
     resultStatus.textContent = 'Reset to original';
     deactivatePicker();
     setRegionMode('off');
+    setProtectMode(false);
     showToast('Đã reset kết quả về ảnh gốc.', 'info');
   }
 
@@ -1107,6 +1154,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function activatePicker(scope = 'full') {
     if (!state.original) return;
+    setProtectMode(false);
     stopPreviewAnimation();
     if (scope === 'lower') {
       if (!perCell.checked) {
@@ -1160,6 +1208,336 @@ document.addEventListener('DOMContentLoaded', () => {
     originalStage?.classList.remove('is-picking', 'pick-lower-half', 'adjust-split-line');
     splitHandle.disabled = true;
     if (pickerLoupe) pickerLoupe.style.display = 'none';
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Subject Protect Brush
+   *
+   * Paint over a part of the character that the automatic passes damaged and
+   * it gets its ORIGINAL colour and alpha back (subject-protect.js). Strokes
+   * are stored in normalised sheet coordinates; the cell a stroke belongs to is
+   * derived from its first point, so editing Rows × Cols moves it with the grid.
+   * `allFrames` strokes repeat at the same place in every cell.
+   * ---------------------------------------------------------------- */
+
+  const PROTECT_SCOPE_KEY = 'cleaner:protect-scope';
+  const PROTECT_HISTORY_LIMIT = 100;
+  const PROTECT_STROKE_LIMIT = 500;
+  const PROTECT_TINT = 'rgba(34,197,94,{alpha})';
+  let protectEntriesCache = null;
+  let protectScratch = null;
+  let protectRenderFrame = 0;
+
+  try {
+    if (localStorage.getItem(PROTECT_SCOPE_KEY) === 'all') state.protectScope = 'all';
+  } catch { /* storage can be blocked; the default is fine */ }
+
+  function protectEntries() {
+    if (!protectEntriesCache) {
+      protectEntriesCache = [
+        { canvas: protectOverlayOriginal, target: originalCanvas },
+        { canvas: protectOverlayResult, target: resultCanvas }
+      ];
+    }
+    return protectEntriesCache;
+  }
+
+  /** Strokes of the brush as the pipeline sees them (ids/limits already applied). */
+  function protectMask() {
+    if (state.protectStrokes.length === 0 || !state.original) return null;
+    const { width, height } = state.original;
+    const grid = gridDefinition();
+    const key = `${state.protectRevision}|${width}x${height}|${grid.rows}x${grid.cols}`;
+    if (state.protectMaskCache?.key === key) return state.protectMaskCache.mask;
+    if (!protectScratch) protectScratch = document.createElement('canvas');
+    const built = buildProtectionMask(state.protectStrokes, { width, height, cells: sheetCells(), canvas: protectScratch });
+    state.protectMaskCache = { key, mask: built ? built.mask : null };
+    return state.protectMaskCache.mask;
+  }
+
+  // Runs after Edge Refine: the brush has to see the final automatic result to
+  // be able to undo it. No strokes (or nothing keyed yet) ⇒ `base` untouched.
+  function applyProtect(base) {
+    state.protectStats = null;
+    if (state.protectStrokes.length === 0 || !state.refined || !state.original) return base;
+    const mask = protectMask();
+    if (!mask) return base;
+    const { imageData, changedPixels } = applySubjectProtect(base, state.original, mask, {
+      keyColors: state.lastKeyColors,
+      transparentThreshold: protectionThresholdFor(state.keyerTuning?.similarity ?? Number(similarity.value)),
+      luminanceWeight: luminanceWeightFor(state.keyerTuning?.subjectProtection ?? Number(protection.value))
+    });
+    state.protectStats = { changedPixels, strokes: state.protectStrokes.length };
+    return imageData;
+  }
+
+  function scheduleProtectUpdate() {
+    clearTimeout(state.protectTimer);
+    state.protectTimer = setTimeout(() => {
+      if (state.isProcessing || !state.original) return;
+      recomposeResult();
+      renderPreview();
+      resultStatus.textContent = resultStatusText();
+    }, 40);
+  }
+
+  function setProtectStrokes(next, { recordUndo = true } = {}) {
+    if (recordUndo) {
+      state.protectUndo.push(state.protectStrokes);
+      if (state.protectUndo.length > PROTECT_HISTORY_LIMIT) state.protectUndo.shift();
+      state.protectRedo = [];
+    }
+    state.protectStrokes = next.slice(-PROTECT_STROKE_LIMIT);
+    state.protectRevision += 1;
+    state.protectMaskCache = null;
+    syncProtectControls();
+    scheduleProtectUpdate();
+    scheduleProtectRender();
+  }
+
+  /** New image / Reset: strokes belong to one sheet, history goes with them. */
+  function clearProtectStrokes() {
+    state.protectStrokes = [];
+    state.protectUndo = [];
+    state.protectRedo = [];
+    state.protectDraft = null;
+    state.protectStats = null;
+    state.protectRevision += 1;
+    state.protectMaskCache = null;
+    syncProtectControls();
+  }
+
+  function undoProtect() {
+    if (state.protectUndo.length === 0) return;
+    state.protectRedo.push(state.protectStrokes);
+    setProtectStrokes(state.protectUndo.pop(), { recordUndo: false });
+  }
+
+  function redoProtect() {
+    if (state.protectRedo.length === 0) return;
+    state.protectUndo.push(state.protectStrokes);
+    setProtectStrokes(state.protectRedo.pop(), { recordUndo: false });
+  }
+
+  function setProtectTool(tool) {
+    state.protectTool = tool === 'subtract' ? 'subtract' : 'add';
+    syncProtectControls();
+  }
+
+  function setProtectScope(scope) {
+    state.protectScope = scope === 'all' ? 'all' : 'frame';
+    try { localStorage.setItem(PROTECT_SCOPE_KEY, state.protectScope); } catch { /* ignore */ }
+    syncProtectControls();
+  }
+
+  function setProtectMode(on) {
+    const next = Boolean(on) && Boolean(state.original);
+    if (next === state.protectMode) {
+      if (!next) syncProtectControls();
+      return;
+    }
+    state.protectMode = next;
+    if (next) {
+      deactivatePicker();
+      setRegionMode('off');
+      stopPreviewAnimation();
+    } else {
+      state.protectDraft = null;
+      state.protectHover = null;
+    }
+    syncProtectControls();
+    syncRegionOverlays();
+  }
+
+  function syncProtectControls() {
+    const hasImage = Boolean(state.original);
+    const armed = state.protectMode;
+    const count = state.protectStrokes.length;
+    if (protectCount) protectCount.textContent = `${count} nét`;
+    btnProtectToggle?.classList.toggle('active', armed);
+    if (btnProtectToggle) {
+      btnProtectToggle.disabled = !hasImage;
+      const label = btnProtectToggle.querySelector('span');
+      if (label) label.textContent = armed ? 'Tắt bút bảo vệ' : 'Tô vùng cần bảo vệ';
+    }
+    if (protectControls) protectControls.hidden = !armed && count === 0;
+    btnProtectAdd?.classList.toggle('active', state.protectTool === 'add');
+    btnProtectSub?.classList.toggle('active', state.protectTool === 'subtract');
+    btnProtectScopeFrame?.classList.toggle('active', state.protectScope === 'frame');
+    btnProtectScopeAll?.classList.toggle('active', state.protectScope === 'all');
+    if (protectScopeHint) protectScopeHint.hidden = !hasImage || gridDefinition().total > 1;
+    if (btnProtectUndo) btnProtectUndo.disabled = state.protectUndo.length === 0;
+    if (btnProtectRedo) btnProtectRedo.disabled = state.protectRedo.length === 0;
+    if (btnProtectClear) btnProtectClear.disabled = count === 0;
+    for (const entry of protectEntries()) entry.canvas.classList.toggle('active', armed);
+    [protectBanner, protectBannerResult].forEach((banner) => banner?.classList.toggle('active', armed));
+    if (armed) {
+      const scope = state.protectScope === 'all' ? 'MỌI frame' : 'CHỈ frame đang tô';
+      const tool = state.protectTool === 'add' ? 'Tô để trả lại màu gốc' : 'Tô để tẩy nét bảo vệ';
+      const text = `${tool} · phạm vi: ${scope} · Shift = đảo phạm vi · Alt = đảo Bảo vệ/Tẩy · [ ] đổi size · Esc thoát`;
+      if (protectBannerText) protectBannerText.textContent = text;
+      if (protectBannerResultText) protectBannerResultText.textContent = text;
+    }
+  }
+
+  /** Display point on a protect overlay → normalised sheet point (null if off the sheet). */
+  function protectPointFromEvent(event, entry, { clampToCanvas = false } = {}) {
+    const rect = entry.canvas.getBoundingClientRect();
+    if (!state.original || !rect.width || !rect.height) return null;
+    let px = ((event.clientX - rect.left) / rect.width) * entry.canvas.width;
+    let py = ((event.clientY - rect.top) / rect.height) * entry.canvas.height;
+    if (clampToCanvas) {
+      px = Math.min(entry.canvas.width, Math.max(0, px));
+      py = Math.min(entry.canvas.height, Math.max(0, py));
+    }
+    const mapped = makeSurfaceMapping(entry.canvas).toSource(px, py);
+    return mapped ? { sheet: mapped, canvas: { x: px, y: py } } : null;
+  }
+
+  function protectStrokeSettings(event) {
+    const flipTool = event.altKey;
+    const tool = flipTool ? (state.protectTool === 'add' ? 'subtract' : 'add') : state.protectTool;
+    const allFrames = (state.protectScope === 'all') !== event.shiftKey;
+    return {
+      mode: tool,
+      size: Number(protectSize.value) || 28,
+      strength: Number(protectStrength.value) || 1,
+      hardness: Number(protectHardness.value),
+      allFrames
+    };
+  }
+
+  function beginProtectStroke(event, entry) {
+    if (event.button !== 0 || !state.protectMode || !state.original) return;
+    const point = protectPointFromEvent(event, entry);
+    if (!point) return;
+    event.preventDefault();
+    const settings = protectStrokeSettings(event);
+    state.protectDraft = {
+      pointerId: event.pointerId,
+      entry,
+      stroke: { ...settings, points: [point.sheet], frame: null, frameTime: null }
+    };
+    entry.canvas.setPointerCapture?.(event.pointerId);
+    scheduleProtectRender();
+  }
+
+  function moveProtectStroke(event, entry) {
+    const draft = state.protectDraft;
+    if (!state.protectMode) return;
+    const point = protectPointFromEvent(event, entry, { clampToCanvas: Boolean(draft) });
+    state.protectHover = point ? { entry, ...point.canvas, shift: event.shiftKey } : null;
+    if (draft && draft.pointerId === event.pointerId && point) {
+      const last = draft.stroke.points[draft.stroke.points.length - 1];
+      const dx = (point.sheet.x - last.x) * state.original.width;
+      const dy = (point.sheet.y - last.y) * state.original.height;
+      if (Math.hypot(dx, dy) >= 0.75 && draft.stroke.points.length < 5000) draft.stroke.points.push(point.sheet);
+    }
+    scheduleProtectRender();
+  }
+
+  function endProtectStroke(event, { cancel = false } = {}) {
+    const draft = state.protectDraft;
+    if (!draft || draft.pointerId !== event.pointerId) return;
+    state.protectDraft = null;
+    try { draft.entry.canvas.releasePointerCapture?.(event.pointerId); } catch { /* already released */ }
+    const stroke = cancel ? null : normalizeProtectStroke(draft.stroke);
+    if (stroke) setProtectStrokes([...state.protectStrokes, stroke]);
+    else scheduleProtectRender();
+  }
+
+  function scheduleProtectRender() {
+    if (protectRenderFrame) return;
+    protectRenderFrame = requestAnimationFrame(() => {
+      protectRenderFrame = 0;
+      syncProtectOverlays();
+    });
+  }
+
+  // Overlays are sheet pixels one for one (like the region overlays), so the
+  // only thing that differs between Sheet and Anim is the origin of the cell.
+  function syncProtectOverlays() {
+    for (const entry of protectEntries()) {
+      const { canvas, target } = entry;
+      if (!state.original) {
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        continue;
+      }
+      if (canvas.width !== target.width) canvas.width = target.width;
+      if (canvas.height !== target.height) canvas.height = target.height;
+      canvas.style.width = `${target.width}px`;
+      canvas.style.height = `${target.height}px`;
+      canvas.style.transform = originalCanvas.style.transform;
+      renderProtectOverlay(entry);
+    }
+  }
+
+  function renderProtectOverlay(entry) {
+    const { canvas } = entry;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Like the region rings: only a live tool draws on the sheet, otherwise a
+    // green wash left behind would read as part of the image.
+    if (!state.protectMode) return;
+    const { width, height } = state.original;
+    const origin = cellOffset();
+    const cells = sheetCells();
+
+    if (protectShowMask.checked) {
+      const strokes = state.protectDraft
+        ? [...state.protectStrokes, normalizeProtectStroke(state.protectDraft.stroke)].filter(Boolean)
+        : state.protectStrokes;
+      for (const window of planProtectionWindows(strokes, { width, height, cells })) {
+        ctx.save();
+        if (window.rect) {
+          ctx.beginPath();
+          ctx.rect(window.rect.x0 - origin.x0, window.rect.y0 - origin.y0, window.rect.width, window.rect.height);
+          ctx.clip();
+        }
+        paintStrokes(ctx, window.strokes, {
+          targetWidth: canvas.width,
+          targetHeight: canvas.height,
+          sourceWidth: width,
+          sourceHeight: height,
+          cropX: origin.x0,
+          cropY: origin.y0,
+          cropWidth: canvas.width,
+          cropHeight: canvas.height,
+          color: PROTECT_TINT
+        });
+        ctx.restore();
+      }
+    }
+
+    const hover = state.protectHover;
+    if (hover && hover.entry === entry && !state.protectDraft) drawProtectRings(ctx, hover, origin, cells);
+  }
+
+  function drawProtectRings(ctx, hover, origin, cells) {
+    const { width, height } = state.original;
+    const radius = Math.max(1, (Number(protectSize.value) || 28) / 2);
+    const allFrames = (state.protectScope === 'all') !== hover.shift;
+    const sheetX = origin.x0 + hover.x;
+    const sheetY = origin.y0 + hover.y;
+    const spots = [{ x: hover.x, y: hover.y, home: true }];
+    if (allFrames && cells) {
+      const home = cellIndexAt(cells, sheetX, sheetY);
+      cells.forEach((cell, index) => {
+        if (index === home) return;
+        const { dx, dy } = cellShift(cells, home, index, width, height);
+        spots.push({ x: sheetX + (dx * width) - origin.x0, y: sheetY + (dy * height) - origin.y0, home: false });
+      });
+    }
+    ctx.save();
+    ctx.lineWidth = Math.max(1, 1.5 / Math.max(0.05, state.zoom));
+    for (const spot of spots) {
+      ctx.beginPath();
+      ctx.arc(spot.x, spot.y, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = spot.home ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.55)';
+      ctx.setLineDash(spot.home ? [] : [4, 3]);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /* ---------------------------------------------------------------- *
@@ -1293,6 +1671,7 @@ document.addEventListener('DOMContentLoaded', () => {
       entry.canvas.style.transform = transform;
       entry.overlay.render();
     }
+    syncProtectOverlays();
   }
 
   function setRegionMode(mode) {
@@ -1303,7 +1682,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (next === 'pick' && !selectedRegion()) next = state.colorRegions.length > 0 ? 'edit' : 'draw';
     state.regionMode = next;
     state.regionPicking = next === 'pick';
-    if (next !== 'off') deactivatePicker();
+    if (next !== 'off') {
+      deactivatePicker();
+      setProtectMode(false);
+    }
     if (next === 'off') {
       state.regionPicking = false;
       if (pickerLoupe) pickerLoupe.style.display = 'none';
@@ -1789,7 +2171,10 @@ document.addEventListener('DOMContentLoaded', () => {
     [subjectGuardStrength, byId('numSpriteSubjectGuardStrength'), byId('spriteSubjectGuardStrengthValue'), 2],
     [subjectGuardLeak, byId('numSpriteSubjectGuardLeak'), byId('spriteSubjectGuardLeakValue'), 0],
     [edgeWidth, byId('numSpriteEdgeWidth'), byId('spriteEdgeWidthValue'), 0],
-    [edgeSmooth, byId('numSpriteEdgeSmooth'), byId('spriteEdgeSmoothValue'), 2]
+    [edgeSmooth, byId('numSpriteEdgeSmooth'), byId('spriteEdgeSmoothValue'), 2],
+    [protectSize, byId('numSpriteProtectSize'), null, 0],
+    [protectStrength, byId('numSpriteProtectStrength'), null, 2],
+    [protectHardness, byId('numSpriteProtectHardness'), null, 2]
   ].forEach(([input, numInput, label, decimals]) => {
     function update(val, fromNum = false) {
       let num = parseFloat(val);
@@ -1865,6 +2250,52 @@ document.addEventListener('DOMContentLoaded', () => {
   edgeRefineSection.addEventListener('change', scheduleEdgeRefine);
   syncEdgeRefineControls();
 
+  btnProtectToggle?.addEventListener('click', () => setProtectMode(!state.protectMode));
+  btnProtectAdd?.addEventListener('click', () => setProtectTool('add'));
+  btnProtectSub?.addEventListener('click', () => setProtectTool('subtract'));
+  btnProtectScopeFrame?.addEventListener('click', () => setProtectScope('frame'));
+  btnProtectScopeAll?.addEventListener('click', () => setProtectScope('all'));
+  btnProtectUndo?.addEventListener('click', undoProtect);
+  btnProtectRedo?.addEventListener('click', redoProtect);
+  btnProtectClear?.addEventListener('click', () => {
+    if (state.protectStrokes.length > 0) setProtectStrokes([]);
+  });
+  protectShowMask?.addEventListener('change', scheduleProtectRender);
+  protectSize?.addEventListener('input', scheduleProtectRender);
+  protectControls?.addEventListener('change', scheduleProtectRender);
+  protectEntries().forEach((entry) => {
+    entry.canvas.addEventListener('pointerdown', (event) => beginProtectStroke(event, entry));
+    entry.canvas.addEventListener('pointermove', (event) => moveProtectStroke(event, entry));
+    entry.canvas.addEventListener('pointerup', (event) => endProtectStroke(event));
+    entry.canvas.addEventListener('pointercancel', (event) => endProtectStroke(event, { cancel: true }));
+    entry.canvas.addEventListener('pointerleave', () => {
+      if (state.protectHover?.entry === entry) { state.protectHover = null; scheduleProtectRender(); }
+    });
+    // Right button pans the stage while the brush owns the left one.
+    entry.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  });
+  window.addEventListener('keydown', (event) => {
+    if (!state.protectMode || !isCleanerActive()) return;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+    const key = event.key.toLowerCase();
+    if (event.key === 'Escape') {
+      if (state.protectDraft) state.protectDraft = null;
+      setProtectMode(false);
+    } else if ((event.ctrlKey || event.metaKey) && key === 'z') {
+      event.preventDefault();
+      if (event.shiftKey) redoProtect(); else undoProtect();
+    } else if ((event.ctrlKey || event.metaKey) && key === 'y') {
+      event.preventDefault();
+      redoProtect();
+    } else if (event.key === '[' || event.key === ']') {
+      const step = event.shiftKey ? 20 : 4;
+      const next = Number(protectSize.value) + (event.key === ']' ? step : -step);
+      protectSize.value = String(Math.max(Number(protectSize.min), Math.min(Number(protectSize.max), next)));
+      protectSize.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  syncProtectControls();
+
   btnZoomOut.addEventListener('click', () => zoomBy(0.8));
   btnZoomIn.addEventListener('click', () => zoomBy(1.25));
   btnZoomFit.addEventListener('click', fitToView);
@@ -1884,7 +2315,7 @@ document.addEventListener('DOMContentLoaded', () => {
     stage.addEventListener('pointerdown', (event) => {
       if (!state.original || state.isPicking) return;
       // While the region tool owns the left button, only middle/right pans.
-      if (state.regionMode !== 'off' && event.button === 0) return;
+      if ((state.regionMode !== 'off' || state.protectMode) && event.button === 0) return;
       state.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, panX: state.panX, panY: state.panY };
       stage.setPointerCapture(event.pointerId);
       stage.classList.add('is-panning');
